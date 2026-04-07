@@ -1,0 +1,87 @@
+# =============================================================================
+# Experiment: HMHP 128-feat ARCX H10
+# =============================================================================
+#
+# Cross-exchange comparison on ARCX PILLAR. Thinner book produces
+# sharper high-conviction signals.
+#
+# Results:
+#   Training: H10 test=58.79%, macro F1=0.5858, agreement=91.99%
+#   Confidence: agree=1.0+confirm>0.65 -> 78.63% acc, 97.21% dir acc (ARCX)
+#   ARCX high-conviction subset: 23.3% of samples at 97.21% dir acc
+#
+# Usage:
+#   hft-ops run experiments/nvda_hmhp_128feat_arcx_h10.yaml
+
+experiment:
+  name: "nvda_hmhp_128feat_arcx_h10"
+  description: >
+    HMHP with 119 active features on ARCX PILLAR. Cross-exchange validation.
+    ARCX produces sharper high-conviction signals (97.21% dir acc at confirm>0.65)
+    despite lower overall accuracy (58.79% vs 59.62% XNAS).
+  hypothesis: >
+    ARCX thinner book creates more decisive microstructure: when the model
+    is confident on ARCX, it is extremely confident. Preferred venue for
+    high-conviction 0DTE signals despite fewer events.
+  contract_version: "2.3"
+  tags:
+    - nvda
+    - arcx
+    - hmhp
+    - 128-features
+    - cross-exchange
+    - high-conviction
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/nvda_arcx_128feat_full.toml"
+    output_dir: "data/exports/nvda_arcx_128feat"
+    feature_count: 128
+    labeling_strategy: tlob
+    horizons: [10, 20, 50, 60, 100, 200, 300]
+
+  training:
+    enabled: true
+    config: "lob-model-trainer/configs/experiments/nvda_hmhp_128feat_arcx_h10.yaml"
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+    model_type: hmhp
+    feature_preset: analysis_ready_128
+    input_size: 119
+    hmhp_horizons: [10, 60, 300]
+    loss_weights: {H10: 0.50, H60: 0.25, H300: 0.10, consistency: 0.05, final: 0.10}
+    output_dir: "lob-model-trainer/outputs/experiments/nvda_hmhp_128feat_arcx_h10"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_hmhp_signals.py"
+    checkpoint: "${stages.training.output_dir}/checkpoints/best.pt"
+    split: test
+    output_dir: "${stages.training.output_dir}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_readability_backtest.py"
+    signals_dir: "${stages.signal_export.output_dir}"
+    readability:
+      min_agreement: 1.0
+      min_confidence: 0.65
+      max_spread_bps: 1.05
+    holding:
+      type: horizon_aligned
+      hold_events: 10
+    costs:
+      exchange: ARCX
+
+profiler_references:
+  statistical_profile: "mbo-statistical-profiler/output_arcx_full/ARCX_NVDA_STATISTICAL_PROFILE.md"
+  cross_exchange: "mbo-statistical-profiler/CROSS_EXCHANGE_COMPARISON.md"
+  statistical_basis:
+    ofi_signal_r_h10: 0.28
+    ofi_r_advantage_over_xnas: "+14pp at 1s"
+    vwes_bps: 1.10
+    spread_at_2plus_ticks_pct: 45.5

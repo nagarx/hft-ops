@@ -1,0 +1,271 @@
+"""
+Manifest YAML loader with variable resolution.
+
+Loads an experiment manifest YAML, resolves ${...} variable references,
+and returns a typed ExperimentManifest dataclass.
+
+Variable resolution supports:
+    ${experiment.name}              -- from manifest header
+    ${stages.extraction.output_dir} -- cross-reference within manifest
+    ${timestamp}                    -- execution timestamp (ISO 8601)
+    ${date}                         -- execution date (YYYY-MM-DD)
+    ${resolved.horizon_idx}         -- deferred: computed at runtime
+
+Unresolvable references (e.g., ${resolved.*}) are left as-is for
+runtime resolution by the stage runners.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict
+
+import yaml
+
+from hft_ops.manifest.schema import (
+    BacktestingStage,
+    BacktestParams,
+    DatasetAnalysisStage,
+    ExperimentHeader,
+    ExperimentManifest,
+    ExtractionStage,
+    RawAnalysisStage,
+    Stages,
+    SweepAxis,
+    SweepAxisValue,
+    SweepConfig,
+    TrainingStage,
+)
+
+_VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
+
+_DEFERRED_PREFIXES = ("resolved.",)
+
+
+from hft_ops.utils import get_nested as _get_nested
+
+
+def _resolve_variables(
+    raw: Dict[str, Any],
+    *,
+    now: datetime,
+    max_passes: int = 5,
+) -> Dict[str, Any]:
+    """Resolve ${...} variable references in a nested dict.
+
+    Performs multiple passes to handle transitive references
+    (e.g., A references B which references C). Deferred variables
+    (${resolved.*}) are left for runtime resolution.
+
+    Args:
+        raw: The raw parsed YAML dict.
+        now: Current timestamp for ${timestamp} and ${date}.
+        max_passes: Maximum resolution passes to prevent infinite loops.
+
+    Returns:
+        The dict with all resolvable variables substituted.
+    """
+    builtin_vars: Dict[str, str] = {
+        "timestamp": now.strftime("%Y%m%dT%H%M%S"),
+        "date": now.strftime("%Y-%m-%d"),
+    }
+
+    def _substitute(value: Any) -> Any:
+        if isinstance(value, str):
+            def _replacer(match: re.Match) -> str:
+                key = match.group(1)
+                if any(key.startswith(p) for p in _DEFERRED_PREFIXES):
+                    return match.group(0)
+                if key in builtin_vars:
+                    return builtin_vars[key]
+                resolved = _get_nested(raw, key)
+                if resolved is not None and isinstance(resolved, (str, int, float)):
+                    return str(resolved)
+                return match.group(0)
+
+            return _VAR_PATTERN.sub(_replacer, value)
+        elif isinstance(value, dict):
+            return {k: _substitute(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [_substitute(v) for v in value]
+        return value
+
+    resolved = raw
+    for _ in range(max_passes):
+        prev = str(resolved)
+        resolved = _substitute(resolved)
+        if str(resolved) == prev:
+            break
+
+    return resolved
+
+
+def _build_backtest_params(raw: Dict[str, Any]) -> BacktestParams:
+    """Build BacktestParams from a raw dict, ignoring unknown keys."""
+    known_fields = {f.name for f in BacktestParams.__dataclass_fields__.values()}
+    filtered = {k: v for k, v in raw.items() if k in known_fields}
+    return BacktestParams(**filtered)
+
+
+def _build_extraction(raw: Dict[str, Any]) -> ExtractionStage:
+    return ExtractionStage(
+        enabled=raw.get("enabled", True),
+        skip_if_exists=raw.get("skip_if_exists", True),
+        config=raw.get("config", ""),
+        output_dir=raw.get("output_dir", ""),
+    )
+
+
+def _build_raw_analysis(raw: Dict[str, Any]) -> RawAnalysisStage:
+    return RawAnalysisStage(
+        enabled=raw.get("enabled", False),
+        profile=raw.get("profile", "standard"),
+        symbol=raw.get("symbol", ""),
+        data_dir=raw.get("data_dir", ""),
+        analyzers=raw.get("analyzers", []),
+        output_dir=raw.get("output_dir", ""),
+    )
+
+
+def _build_dataset_analysis(raw: Dict[str, Any]) -> DatasetAnalysisStage:
+    return DatasetAnalysisStage(
+        enabled=raw.get("enabled", True),
+        profile=raw.get("profile", "quick"),
+        split=raw.get("split", "train"),
+        data_dir=raw.get("data_dir", ""),
+        analyzers=raw.get("analyzers", []),
+        output_dir=raw.get("output_dir", ""),
+    )
+
+
+def _build_training(raw: Dict[str, Any]) -> TrainingStage:
+    return TrainingStage(
+        enabled=raw.get("enabled", True),
+        config=raw.get("config", ""),
+        overrides=raw.get("overrides", {}),
+        horizon_value=raw.get("horizon_value"),
+        output_dir=raw.get("output_dir", ""),
+        extra_args=raw.get("extra_args", []),
+    )
+
+
+def _build_backtesting(raw: Dict[str, Any]) -> BacktestingStage:
+    params_raw = raw.get("params", {})
+    horizon_idx = raw.get("horizon_idx")
+    if isinstance(horizon_idx, str) and "${" in horizon_idx:
+        horizon_idx = None
+    elif horizon_idx is not None:
+        horizon_idx = int(horizon_idx)
+
+    return BacktestingStage(
+        enabled=raw.get("enabled", True),
+        model_checkpoint=raw.get("model_checkpoint", ""),
+        data_dir=raw.get("data_dir", ""),
+        horizon_idx=horizon_idx,
+        params=_build_backtest_params(params_raw) if params_raw else BacktestParams(),
+        extra_args=raw.get("extra_args", []),
+    )
+
+
+def _build_sweep(raw: Dict[str, Any]) -> SweepConfig:
+    """Build SweepConfig from raw YAML dict."""
+    axes_raw = raw.get("axes", [])
+    axes = []
+    for axis_raw in axes_raw:
+        values = []
+        for val_raw in axis_raw.get("values", []):
+            values.append(
+                SweepAxisValue(
+                    label=val_raw.get("label", ""),
+                    overrides={
+                        k: v for k, v in val_raw.items() if k != "label"
+                    } if "overrides" not in val_raw else val_raw.get("overrides", {}),
+                )
+            )
+        axes.append(
+            SweepAxis(
+                name=axis_raw.get("name", ""),
+                values=values,
+            )
+        )
+    return SweepConfig(
+        name=raw.get("name", ""),
+        strategy=raw.get("strategy", "grid"),
+        axes=axes,
+    )
+
+
+def load_manifest(
+    manifest_path: str | Path,
+    *,
+    now: datetime | None = None,
+) -> ExperimentManifest:
+    """Load and resolve an experiment manifest from a YAML file.
+
+    Args:
+        manifest_path: Path to the manifest YAML file.
+        now: Override timestamp for deterministic testing.
+
+    Returns:
+        A fully resolved ExperimentManifest.
+
+    Raises:
+        FileNotFoundError: If the manifest file does not exist.
+        yaml.YAMLError: If the YAML is malformed.
+        ValueError: If required fields are missing.
+    """
+    manifest_path = Path(manifest_path).resolve()
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    with open(manifest_path, "r") as f:
+        raw: Dict[str, Any] = yaml.safe_load(f)
+
+    if not raw or not isinstance(raw, dict):
+        raise ValueError(f"Manifest is empty or not a dict: {manifest_path}")
+
+    raw = _resolve_variables(raw, now=now)
+
+    experiment_raw = raw.get("experiment", {})
+    if not experiment_raw.get("name"):
+        raise ValueError(
+            f"Manifest missing required field: experiment.name ({manifest_path})"
+        )
+
+    header = ExperimentHeader(
+        name=experiment_raw["name"],
+        description=experiment_raw.get("description", ""),
+        hypothesis=experiment_raw.get("hypothesis", ""),
+        contract_version=experiment_raw.get("contract_version", ""),
+        tags=experiment_raw.get("tags", []),
+    )
+
+    stages_raw = raw.get("stages", {})
+    stages = Stages(
+        extraction=_build_extraction(stages_raw.get("extraction", {})),
+        raw_analysis=_build_raw_analysis(stages_raw.get("raw_analysis", {})),
+        dataset_analysis=_build_dataset_analysis(
+            stages_raw.get("dataset_analysis", {})
+        ),
+        training=_build_training(stages_raw.get("training", {})),
+        backtesting=_build_backtesting(stages_raw.get("backtesting", {})),
+    )
+
+    # Parse optional sweep section
+    sweep = None
+    sweep_raw = raw.get("sweep")
+    if sweep_raw and isinstance(sweep_raw, dict):
+        sweep = _build_sweep(sweep_raw)
+
+    return ExperimentManifest(
+        experiment=header,
+        pipeline_root=raw.get("pipeline_root", ".."),
+        stages=stages,
+        sweep=sweep,
+        manifest_path=str(manifest_path),
+    )

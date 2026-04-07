@@ -1,0 +1,88 @@
+# =============================================================================
+# Experiment: HMHP 40-feat XNAS H10 Readability-First
+# =============================================================================
+#
+# 40-feature OFI-core model (short_term_40 preset). Preferred model for
+# readability-first strategy: fewer features = purer confidence signal.
+#
+# Results:
+#   Training: H10 val=59.13% (epoch 24), 30 epochs completed
+#   Confidence: agree=1.0+confirm>0.65 -> 74.29% acc, 95.33% dir acc
+#   Spread: FULL_READABILITY (high_conf+1tick+dir) -> 95.50% dir acc
+#   Backtest: H10-hold -22.35%, H60-hold -3.68%, H300-hold -1.70%
+#   Root issue: XNAS costs (3.27 bps) > avg move per 10 events (1-2 bps)
+#
+# Usage:
+#   hft-ops run experiments/nvda_hmhp_40feat_xnas_h10.yaml
+
+experiment:
+  name: "nvda_hmhp_40feat_xnas_h10"
+  description: >
+    HMHP with 40 evidence-based features (short_term_40 preset).
+    Higher readability precision than 119-feat model (95.50% vs 94.07% dir acc).
+    Simpler, faster, fewer parameters, lower latency for live inference.
+  hypothesis: >
+    40 OFI-core features capture 99.2% of signal (59.13% vs 59.19% at H10).
+    Fewer features = less noise = sharper confidence = better readability detection.
+    Preferred model for 0DTE trading where precision > recall.
+  contract_version: "2.3"
+  tags:
+    - nvda
+    - xnas
+    - hmhp
+    - 40-features
+    - short-term-preset
+    - readability-first
+    - 0dte-aligned
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/nvda_xnas_128feat_full.toml"
+    output_dir: "data/exports/nvda_xnas_128feat"
+    feature_count: 128
+    labeling_strategy: tlob
+    horizons: [10, 20, 50, 60, 100, 200, 300]
+
+  training:
+    enabled: true
+    config: "lob-model-trainer/configs/experiments/nvda_hmhp_40feat_h10.yaml"
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+    model_type: hmhp
+    feature_preset: short_term_40
+    input_size: 40
+    hmhp_horizons: [10, 60, 300]
+    loss_weights: {H10: 0.50, H60: 0.25, H300: 0.10, consistency: 0.05, final: 0.10}
+    output_dir: "lob-model-trainer/outputs/experiments/nvda_hmhp_40feat_h10"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_hmhp_signals.py"
+    checkpoint: "${stages.training.output_dir}/checkpoints/best.pt"
+    split: test
+    output_dir: "${stages.training.output_dir}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_readability_backtest.py"
+    signals_dir: "${stages.signal_export.output_dir}"
+    readability:
+      min_agreement: 1.0
+      min_confidence: 0.65
+      max_spread_bps: 1.05
+    holding:
+      type: horizon_aligned
+      hold_events: 10
+    costs:
+      exchange: XNAS
+
+profiler_references:
+  statistical_basis:
+    ofi_signal_r_h10: 0.30
+    ofi_best_at_spread: "1-tick"
+    recommended_window_et: "14:00-15:30"
+    vwes_bps: 1.97

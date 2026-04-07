@@ -1,0 +1,74 @@
+# =============================================================================
+# Experiment: TLOB on NVDA, Horizon 100, Triple Barrier (Vol-Scaled)
+# =============================================================================
+#
+# Tests whether TLOB with volatility-scaled triple barrier labels achieves
+# better directional accuracy than fixed-threshold labeling at H=100.
+#
+# This manifest orchestrates:
+#   1. Feature extraction (skip if exports exist)
+#   2. Dataset health analysis (quick profile)
+#   3. TLOB training with H=100
+#   4. Backtesting with default cost model
+#
+# Usage:
+#   hft-ops run experiments/nvda_tlob_h100_tb_volscaled.yaml
+#   hft-ops validate experiments/nvda_tlob_h100_tb_volscaled.yaml
+#   hft-ops run experiments/nvda_tlob_h100_tb_volscaled.yaml --dry-run
+
+experiment:
+  name: "nvda_tlob_h100_tb_volscaled"
+  description: >
+    TLOB model on NVDA 11-month dataset with horizon 100 ticks (~10s).
+    Triple barrier labeling with per-day volatility-scaled barriers.
+    98 features (LOB + derived + MBO + signals).
+  hypothesis: >
+    Vol-scaled triple barrier labels produce more balanced class distributions
+    across market regimes, improving directional accuracy vs fixed thresholds.
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - tlob
+    - h100
+    - triple-barrier
+    - vol-scaled
+    - 98-features
+    - 11-month
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/nvda_11month_triple_barrier_volscaled.toml"
+    output_dir: "data/exports/nvda_11month_triple_barrier_volscaled"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: true
+    profile: "quick"
+    split: "train"
+
+  training:
+    enabled: true
+    config: "lob-model-trainer/configs/experiments/nvda_tlob_h100_v1.yaml"
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+      data.labeling_strategy: "triple_barrier"
+    horizon_value: 100
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  backtesting:
+    enabled: true
+    model_checkpoint: "${stages.training.output_dir}/checkpoints/best.pt"
+    data_dir: "${stages.extraction.output_dir}"
+    horizon_idx: "${resolved.horizon_idx}"
+    params:
+      initial_capital: 100000
+      position_size: 0.1
+      spread_bps: 1.0
+      slippage_bps: 0.5
+      threshold: 0.0

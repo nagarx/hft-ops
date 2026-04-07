@@ -1,0 +1,100 @@
+# =============================================================================
+# Experiment: HMHP 128-feat XNAS H10 Primary
+# =============================================================================
+#
+# Best overall HMHP model on XNAS. 119 active features (128 minus 9 dead),
+# trained with TLOB labels on 233-day profiler-aligned dataset.
+#
+# Results:
+#   Training: H10 test=59.62%, macro F1=0.5915, agreement=91.80%
+#   Confidence: agree=1.0+confirm>0.65 -> 68.72% acc, 93.88% dir acc (XNAS)
+#   Spread: FULL_READABILITY (high_conf+1tick+dir) -> 94.07% dir acc
+#
+# Usage:
+#   hft-ops run experiments/nvda_hmhp_128feat_xnas_h10.yaml
+
+experiment:
+  name: "nvda_hmhp_128feat_xnas_h10"
+  description: >
+    HMHP with 119 active features (analysis_ready_128 preset) on XNAS ITCH.
+    Primary horizon H10 with multi-horizon cascade [10, 60, 300].
+    Readability-first strategy: trade only when microstructure is readable.
+  hypothesis: >
+    Multi-horizon HMHP cascade produces a natural readability signal via
+    agreement_ratio. When all horizons agree (76.5% of samples), directional
+    accuracy reaches 89.52%. At high confidence (51.5%), 93.88%.
+  contract_version: "2.3"
+  tags:
+    - nvda
+    - xnas
+    - hmhp
+    - 128-features
+    - mlofi
+    - readability-first
+    - profiler-aligned
+    - h10-primary
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/nvda_xnas_128feat_full.toml"
+    output_dir: "data/exports/nvda_xnas_128feat"
+    feature_count: 128
+    labeling_strategy: tlob
+    horizons: [10, 20, 50, 60, 100, 200, 300]
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    config: "lob-model-trainer/configs/experiments/nvda_hmhp_128feat_h10_primary.yaml"
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+    model_type: hmhp
+    feature_preset: analysis_ready_128
+    input_size: 119
+    hmhp_horizons: [10, 60, 300]
+    loss_weights: {H10: 0.50, H60: 0.25, H300: 0.10, consistency: 0.05, final: 0.10}
+    output_dir: "lob-model-trainer/outputs/experiments/nvda_hmhp_128feat_xnas_h10"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_hmhp_signals.py"
+    checkpoint: "${stages.training.output_dir}/checkpoints/best.pt"
+    split: test
+    output_dir: "${stages.training.output_dir}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_readability_backtest.py"
+    signals_dir: "${stages.signal_export.output_dir}"
+    readability:
+      min_agreement: 1.0
+      min_confidence: 0.65
+      max_spread_bps: 1.05
+    holding:
+      type: horizon_aligned
+      hold_events: 10
+    costs:
+      exchange: XNAS
+
+profiler_references:
+  statistical_profile: "mbo-statistical-profiler/output_xnas_full/XNAS_NVDA_STATISTICAL_PROFILE.md"
+  unified_conclusion: "mbo-statistical-profiler/NVDA_UNIFIED_ANALYSIS_CONCLUSION.md"
+  tier1_findings: "mbo-statistical-profiler/TIER1_ANALYSIS_FINDINGS.md"
+  cross_exchange: "mbo-statistical-profiler/CROSS_EXCHANGE_COMPARISON.md"
+  statistical_basis:
+    ofi_signal_r_h10: 0.30
+    ofi_best_at_spread: "1-tick"
+    ofi_r_at_1tick: 0.546
+    ofi_r_at_2tick: 0.365
+    recommended_window_et: "14:00-15:30"
+    vwes_bps: 1.97
+    median_effective_spread_usd: 0.016

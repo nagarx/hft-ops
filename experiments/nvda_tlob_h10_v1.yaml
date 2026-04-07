@@ -1,0 +1,60 @@
+# =============================================================================
+# Experiment: TLOB on NVDA, Horizon 10, TLOB Labeling
+# =============================================================================
+#
+# Short-term prediction baseline with H=10 ticks (~1 second).
+# Uses standard TLOB labeling (smoothed midprice return).
+#
+# Usage:
+#   hft-ops run experiments/nvda_tlob_h10_v1.yaml
+
+experiment:
+  name: "nvda_tlob_h10_v1"
+  description: >
+    TLOB model on NVDA 11-month dataset with short-term horizon 10 ticks (~1s).
+    Standard TLOB labeling. Baseline for horizon sensitivity comparison.
+  hypothesis: >
+    H=10 achieves higher raw accuracy than H=100 due to stronger short-term
+    signal, but signal decays faster making it less actionable for trading.
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - tlob
+    - h10
+    - short-term
+    - 98-features
+    - baseline
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/nvda_11month_complete.toml"
+    output_dir: "data/exports/nvda_11month_complete"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    config: "lob-model-trainer/configs/experiments/nvda_tlob_h10_v1.yaml"
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+    horizon_value: 10
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  backtesting:
+    enabled: true
+    model_checkpoint: "${stages.training.output_dir}/checkpoints/best.pt"
+    data_dir: "${stages.extraction.output_dir}"
+    horizon_idx: "${resolved.horizon_idx}"
+    params:
+      initial_capital: 100000
+      position_size: 0.1
+      spread_bps: 1.0
+      slippage_bps: 0.5

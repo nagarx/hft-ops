@@ -1,0 +1,61 @@
+# =============================================================================
+# Experiment: HMHP Multi-Horizon on NVDA, Triple Barrier (Vol-Scaled)
+# =============================================================================
+#
+# Compares HMHP multi-horizon model against TLOB single-horizon at H=100.
+# HMHP processes horizons [50, 100, 200] jointly with a shared encoder.
+#
+# Usage:
+#   hft-ops run experiments/nvda_hmhp_tb_volscaled.yaml
+#   hft-ops diff <this_id> <tlob_h100_id>  # compare with TLOB
+
+experiment:
+  name: "nvda_hmhp_tb_volscaled"
+  description: >
+    HMHP multi-horizon model on NVDA 11-month dataset with volatility-scaled
+    triple barrier labels. Processes H=[50,100,200] jointly.
+  hypothesis: >
+    Multi-horizon joint training captures cross-horizon patterns that improve
+    H=100 accuracy compared to single-horizon TLOB.
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - hmhp
+    - multi-horizon
+    - triple-barrier
+    - vol-scaled
+    - 98-features
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/nvda_11month_triple_barrier_volscaled.toml"
+    output_dir: "data/exports/nvda_11month_triple_barrier_volscaled"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: true
+    profile: "quick"
+    split: "train"
+
+  training:
+    enabled: true
+    config: "lob-model-trainer/configs/experiments/nvda_hmhp_triple_barrier_volscaled.yaml"
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  backtesting:
+    enabled: true
+    model_checkpoint: "${stages.training.output_dir}/checkpoints/best.pt"
+    data_dir: "${stages.extraction.output_dir}"
+    params:
+      initial_capital: 100000
+      position_size: 0.1
+      spread_bps: 1.0
+      slippage_bps: 0.5

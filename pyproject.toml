@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hft-ops"
+version = "0.2.0"
+description = "Central experiment orchestrator for the HFT pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "hft-contracts",
+    "click>=8.0",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-tmp-files>=0.0.2"]
+
+[project.scripts]
+hft-ops = "hft_ops.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

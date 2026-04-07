@@ -1,0 +1,32 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Build artifacts
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Environment files
+.env
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Linting/typing
+.mypy_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Ledger runtime data (auto-rebuilt by code)
+ledger/index.json
+ledger/records/*.json
