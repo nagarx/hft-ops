@@ -1,0 +1,174 @@
+# =============================================================================
+# Sweep: E5 Phase 2 — CVML × Huber-delta ablation (Phase 5 Preview template)
+# =============================================================================
+#
+# Reproduces the 4-cell ablation that E5 Phase 2 previously required 4 separate
+# trainer configs to cover:
+#
+#   +------------+--------------+--------------+
+#   |            | delta=12.6   | delta=15.1   |
+#   +------------+--------------+--------------+
+#   | CVML OFF   | grid point 1 | grid point 2 |
+#   | CVML ON    | grid point 3 | grid point 4 |
+#   +------------+--------------+--------------+
+#
+# Each grid point produces one ledger record. axis_values (`{cvml: off|on,
+# loss_delta: d12_6|d15_1}`) are piped through from the axis definition
+# directly to the ledger — no lossy re-derivation from applied overrides.
+#
+# Both axes override trainer-config keys only (model.* and
+# model.regression_loss_delta); neither touches manifest-level fields
+# (horizon_value, output_dir), so validate_sweep's cross-axis conflict check
+# passes cleanly.
+#
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/e5_phase2_sweep.yaml
+#   hft-ops sweep run     experiments/sweeps/e5_phase2_sweep.yaml
+#   hft-ops sweep results experiments/sweeps/e5_phase2_sweep.yaml
+# =============================================================================
+
+experiment:
+  name: "e5_phase2"
+  description: >
+    E5 Phase 2 CVML × Huber-delta ablation. Single manifest replaces the 4
+    trainer configs that were previously copy-pasted. Validates that Phase 4
+    Batch 4c.3 fingerprint normalization and Phase 5 Preview axis-values
+    piping produce a clean 4-record ledger entry when this manifest is run.
+  hypothesis: >
+    CVML cross-feature mixing interacts with Huber delta. Specifically:
+    delta=12.6 is tuned from E5 kurtosis; delta=15.1 loosens the Huber
+    transition. Expect CVML-ON at either delta to match or slightly edge the
+    baseline IC=0.380; CVML-OFF at delta=15.1 expected marginally worse.
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - e5
+    - regression
+    - h10
+    - 60s
+    - huber
+    - sweep
+    - phase5-preview
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    # Base trainer config (inline, wrapper-less). The sweep axes override
+    # a subset of keys per grid point; everything else is shared.
+    trainer_config:
+      name: E5_phase2_base
+      description: "E5 Phase 2 sweep base; axes override CVML + loss_delta."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s"
+        feature_count: 98
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 0
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6        # <- overridden by axis `loss_delta`
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false                # <- overridden by axis `cvml`
+        tlob_cvml_out_channels: 49
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42
+        mixed_precision: false
+
+      output_dir: outputs/experiments/e5_phase2_base
+      log_level: INFO
+      tags: [e5, nvda, regression, h10, 60s, huber, sweep]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    horizon_value: 10
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: false
+
+  backtesting:
+    enabled: false
+
+# =============================================================================
+# Sweep definition
+# =============================================================================
+#
+# 2 axes × 2 values each = 4 grid points. No cross-axis key conflicts:
+#   - `cvml` owns:       model.tlob_use_cvml
+#   - `loss_delta` owns: model.regression_loss_delta
+#
+# Each axis value is a (label, overrides) pair. The label appears in the
+# ledger's axis_values field; the overrides merge into stages.training.overrides
+# and are applied by the trainer YAML materializer.
+# =============================================================================
+
+sweep:
+  name: "e5_phase2"
+  strategy: "grid"
+  axes:
+    - name: "cvml"
+      values:
+        - label: "off"
+          overrides:
+            model.tlob_use_cvml: false
+        - label: "on"
+          overrides:
+            model.tlob_use_cvml: true
+
+    - name: "loss_delta"
+      values:
+        - label: "d12_6"
+          overrides:
+            model.regression_loss_delta: 12.6
+        - label: "d15_1"
+          overrides:
+            model.regression_loss_delta: 15.1

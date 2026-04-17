@@ -1,0 +1,181 @@
+# =============================================================================
+# Sweep: Backtest cost sensitivity — spread × threshold (NESTED DATACLASS)
+# =============================================================================
+#
+# Purpose: Phase 5 FULL-A Block 1 nested-dataclass routing validator. Varies
+# backtesting.params.spread_bps (inside the BacktestParams nested dataclass)
+# and backtesting.params.threshold at fixed training — single training run
+# produces one signal set; 9 backtests vary cost parameters.
+#
+# Grid:
+#   +------------+---------+---------+---------+
+#   |            | t0_0    | t1_5    | t3_0    |
+#   +------------+---------+---------+---------+
+#   | s0_5       |    x    |    x    |    x    |
+#   | s1_0       |    x    |    x    |    x    |
+#   | s2_0       |    x    |    x    |    x    |
+#   +------------+---------+---------+---------+
+#
+# Cardinality: 3 × 3 = 9. Proves Block 1 can walk `backtesting.params.<field>`
+# dotted paths into the nested BacktestParams dataclass via
+# `_set_nested_dataclass_field`.
+#
+# Axes:
+#   spread_bps owns:  backtesting.params.spread_bps
+#   threshold  owns:  backtesting.params.threshold
+#
+# NB: training stage is SHARED across all points (single model checkpoint).
+# Only backtesting varies — efficient sweep (model trained once). Works via
+# `skip_if_exists: true` on extraction + shared training.output_dir without
+# per-point ${sweep.point_name} in the training output path.
+#
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/backtest_cost_sensitivity.yaml
+#   hft-ops sweep run     experiments/sweeps/backtest_cost_sensitivity.yaml
+#   hft-ops sweep results experiments/sweeps/backtest_cost_sensitivity.yaml
+# =============================================================================
+
+experiment:
+  name: "backtest_cost_sensitivity"
+  description: >
+    3 spread values × 3 threshold values on shared E5 60s TLOB backtest.
+    9-point grid exercising nested-dataclass axis routing
+    (backtesting.params.*).
+  hypothesis: >
+    Net return is most sensitive to spread (linear cost per trade) within the
+    tested range; threshold effect is non-monotonic — too low = every trade
+    a cost drain, too high = filter kills winning trades. Expected best cell:
+    moderate spread (1.0 bps) × moderate threshold (1.5 bps).
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - e5
+    - backtest
+    - cost_sensitivity
+    - nested_axis
+    - sweep
+    - phase5-full-a
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    trainer_config:
+      name: backtest_cost_base
+      data:
+        data_dir: "../data/exports/e5_timebased_60s"
+        feature_count: 98
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 0
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42
+        mixed_precision: false
+
+      output_dir: outputs/experiments/backtest_cost_shared
+      log_level: INFO
+      tags: [e5, nvda, backtest_cost_sensitivity, sweep]
+
+    horizon_value: 10
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: true
+    script: "scripts/export_signals.py"
+    checkpoint: "${stages.training.output_dir}/checkpoints/best.pt"
+    split: test
+    output_dir: "${stages.training.output_dir}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "scripts/run_regression_backtest.py"
+    data_dir: "${stages.extraction.output_dir}"
+    signals_dir: "${stages.signal_export.output_dir}"
+    horizon_idx: "${resolved.horizon_idx}"
+    params:
+      spread_bps: 1.0          # <- overridden by axis `spread`
+      threshold: 0.0           # <- overridden by axis `threshold`
+
+# =============================================================================
+# Sweep definition — NESTED-DATACLASS axes (backtesting.params.*).
+# Disjoint axis keys: spread.spread_bps vs threshold.threshold.
+# =============================================================================
+
+sweep:
+  name: "backtest_cost_sensitivity"
+  strategy: "grid"
+  axes:
+    - name: "spread"
+      values:
+        - label: "s0_5"
+          overrides:
+            backtesting.params.spread_bps: 0.5
+        - label: "s1_0"
+          overrides:
+            backtesting.params.spread_bps: 1.0
+        - label: "s2_0"
+          overrides:
+            backtesting.params.spread_bps: 2.0
+
+    - name: "threshold"
+      values:
+        - label: "t0_0"
+          overrides:
+            backtesting.params.threshold: 0.0
+        - label: "t1_5"
+          overrides:
+            backtesting.params.threshold: 1.5
+        - label: "t3_0"
+          overrides:
+            backtesting.params.threshold: 3.0

@@ -13,11 +13,12 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import click
 from rich.console import Console
@@ -29,17 +30,82 @@ from hft_ops.ledger.dedup import check_duplicate, compute_fingerprint
 from hft_ops.ledger.experiment_record import ExperimentRecord
 from hft_ops.ledger.ledger import ExperimentLedger
 from hft_ops.manifest.loader import load_manifest
-from hft_ops.manifest.validator import validate_manifest
+from hft_ops.manifest.validator import (
+    apply_resolved_context,
+    resolve_manifest_context,
+    validate_manifest,
+)
 from hft_ops.paths import PipelinePaths
 from hft_ops.provenance.lineage import build_provenance
 from hft_ops.stages.backtesting import BacktestRunner
+from hft_ops.stages.signal_export import SignalExportRunner
 from hft_ops.stages.base import StageResult, StageStatus
 from hft_ops.stages.dataset_analysis import DatasetAnalysisRunner
 from hft_ops.stages.extraction import ExtractionRunner
 from hft_ops.stages.raw_analysis import RawAnalysisRunner
 from hft_ops.stages.training import TrainingRunner
+from hft_ops.stages.validation import ValidationRunner
 
 console = Console()
+
+
+def _summarize_training_history(history: list) -> dict:
+    """Summarize a per-epoch training history list into a flat metrics dict.
+
+    Detects "best epoch" by minimizing ``val_loss`` (fallback: max ``val_macro_f1``
+    if val_loss absent) and exposes that epoch's metrics with ``best_`` prefix,
+    plus the final epoch's metrics with ``final_`` prefix.
+
+    This lets historical runs (which stored per-epoch trajectories) surface
+    the same summary fields that new hft-ops-orchestrated runs capture.
+    """
+    if not history:
+        return {}
+
+    # Determine best-epoch key — prefer val_loss (minimize), fallback val_macro_f1 (maximize)
+    has_val_loss = any("val_loss" in h for h in history if isinstance(h, dict))
+    has_val_f1 = any("val_macro_f1" in h for h in history if isinstance(h, dict))
+
+    if has_val_loss:
+        best = min(
+            (h for h in history if isinstance(h, dict) and "val_loss" in h),
+            key=lambda h: h["val_loss"],
+        )
+    elif has_val_f1:
+        best = max(
+            (h for h in history if isinstance(h, dict) and "val_macro_f1" in h),
+            key=lambda h: h["val_macro_f1"],
+        )
+    else:
+        best = history[-1] if isinstance(history[-1], dict) else {}
+
+    final = history[-1] if isinstance(history[-1], dict) else {}
+
+    summary: dict = {"n_epochs": len(history)}
+
+    for k, v in best.items():
+        if k == "epoch":
+            summary["best_epoch"] = v
+        elif k.startswith("val_") or k == "train_loss":
+            summary[f"best_{k}"] = v
+
+    for k, v in final.items():
+        if k == "epoch":
+            summary["final_epoch"] = v
+        elif k.startswith("val_") or k == "train_loss":
+            summary[f"final_{k}"] = v
+
+    # Provide common aliases the ledger-list view expects
+    if "best_val_macro_f1" in summary:
+        summary["macro_f1"] = summary["best_val_macro_f1"]
+    if "best_val_accuracy" in summary:
+        summary["accuracy"] = summary["best_val_accuracy"]
+    if "best_val_ic" in summary:
+        summary["ic"] = summary["best_val_ic"]
+    if "best_val_r2" in summary:
+        summary["r_squared"] = summary["best_val_r2"]
+
+    return summary
 
 
 def _resolve_pipeline_root(ctx_root: Optional[str]) -> Path:
@@ -142,15 +208,27 @@ def run(
             )
             sys.exit(0)
 
+    # Resolve runtime values (horizon_idx, feature_count) once and apply them
+    # explicitly to the manifest. validate_manifest is now side-effect free —
+    # this is the single orchestrator-level mutation point.
+    resolved_ctx = resolve_manifest_context(manifest, paths)
+    apply_resolved_context(manifest, resolved_ctx)
+
     requested_stages = None
     if stages:
         requested_stages = set(stages.split(","))
 
+    # Stage order mirrors the schema's pipeline: extraction → raw/dataset
+    # analysis → validation (Rule-13 IC gate) → training → signal_export →
+    # backtesting. Order matters: validation MUST run before training so a
+    # failing gate under on_fail=abort prevents wasted training compute.
     stage_runners = [
         ("extraction", manifest.stages.extraction.enabled, ExtractionRunner()),
         ("raw_analysis", manifest.stages.raw_analysis.enabled, RawAnalysisRunner()),
         ("dataset_analysis", manifest.stages.dataset_analysis.enabled, DatasetAnalysisRunner()),
+        ("validation", manifest.stages.validation.enabled, ValidationRunner()),
         ("training", manifest.stages.training.enabled, TrainingRunner()),
+        ("signal_export", manifest.stages.signal_export.enabled, SignalExportRunner()),
         ("backtesting", manifest.stages.backtesting.enabled, BacktestRunner()),
     ]
 
@@ -278,11 +356,26 @@ def _record_experiment(
             except (OSError, Exception):
                 pass  # Best effort — config may not exist in dry-run or failure
 
+    # Phase 4 Batch 4c.4 (2026-04-16): harvest `feature_set_ref` from
+    # signal_export's captured_metrics (populated by
+    # `SignalExportRunner._harvest_feature_set_ref` from signal_metadata.json).
+    # None iff signal_export stage was skipped/failed OR the trainer did not
+    # use DataConfig.feature_set. ExperimentRecord stores None gracefully.
+    feature_set_ref: Optional[Dict[str, str]] = None
+    if "signal_export" in results:
+        raw_ref = results["signal_export"].captured_metrics.get("feature_set_ref")
+        if isinstance(raw_ref, dict):
+            name = raw_ref.get("name")
+            content_hash = raw_ref.get("content_hash")
+            if isinstance(name, str) and isinstance(content_hash, str):
+                feature_set_ref = {"name": name, "content_hash": content_hash}
+
     record = ExperimentRecord(
         experiment_id=experiment_id,
         name=manifest.experiment.name,
         manifest_path=manifest.manifest_path,
         fingerprint=fingerprint,
+        feature_set_ref=feature_set_ref,
         provenance=provenance,
         contract_version=manifest.experiment.contract_version,
         training_config=training_config,
@@ -360,6 +453,13 @@ def compare(
 
     tags = filter_tags.split(",") if filter_tags else None
     entries = ledger.filter(tags=tags) if tags else ledger.list_all()
+
+    # Phase 5 FULL-A post-audit fix (Agent 4 Issue 3): exclude sweep-aggregate
+    # parent records from the cross-experiment comparison table — they have no
+    # training_metrics/backtest_metrics of their own (children carry those).
+    # Dashboards that want the aggregate can opt in by filtering
+    # record_type="sweep_aggregate" separately.
+    entries = [e for e in entries if e.get("record_type") != "sweep_aggregate"]
 
     if not entries:
         console.print("[yellow]No experiments found in ledger.[/yellow]")
@@ -453,6 +553,52 @@ def diff(ctx: click.Context, id_a: str, id_b: str) -> None:
 def ledger() -> None:
     """Browse and manage the experiment ledger."""
     pass
+
+
+@ledger.command(name="fingerprint-explain")
+@click.argument("manifest_path", type=click.Path(exists=True))
+@click.option(
+    "--indent",
+    type=int,
+    default=2,
+    show_default=True,
+    help="JSON indent for the explained-components dump.",
+)
+@click.pass_context
+def ledger_fingerprint_explain(
+    ctx: click.Context,
+    manifest_path: str,
+    indent: int,
+) -> None:
+    """Dump the normalized `components` dict that would be hashed for a manifest.
+
+    Phase 4 Batch 4c.3 Enhancement A: self-service debugging for "why do these
+    two manifests fingerprint differently?" + Phase 10 parity audits.
+
+    Prints the FULL components dict as pretty JSON to stderr, then the computed
+    fingerprint hex to stdout. Two manifests that normalize identically will
+    produce byte-equal stderr output. Redirect stderr to files and diff them.
+
+    Usage:
+        hft-ops ledger fingerprint-explain manifest_a.yaml 2> a.json
+        hft-ops ledger fingerprint-explain manifest_b.yaml 2> b.json
+        diff a.json b.json
+    """
+    import sys as _sys
+    from hft_ops.manifest.loader import load_manifest
+    from hft_ops.ledger.dedup import compute_fingerprint_explain
+
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    paths = PipelinePaths(pipeline_root=pipeline_root)
+
+    manifest = load_manifest(Path(manifest_path))
+    fp, components = compute_fingerprint_explain(manifest, paths)
+
+    # JSON-dump components to stderr (audit target); fingerprint to stdout
+    # (machine-parseable for diff tools / CI).
+    _sys.stderr.write(json.dumps(components, sort_keys=True, indent=indent, default=str))
+    _sys.stderr.write("\n")
+    console.print(f"fingerprint: {fp}")
 
 
 @ledger.command(name="list")
@@ -588,6 +734,184 @@ def ledger_search(
         )
 
 
+@ledger.command(name="backfill")
+@click.argument("manifest_path", type=click.Path(exists=True))
+@click.option(
+    "--metrics-file",
+    type=click.Path(exists=True),
+    required=False,
+    default=None,
+    help="Path to existing training_history.json / results.json / classification_table.json. "
+         "Optional for analysis-only / cancelled experiments.",
+)
+@click.option(
+    "--record-type",
+    type=click.Choice([
+        "training", "analysis", "calibration", "backtest", "evaluation", "sweep_aggregate",
+    ]),
+    default="training",
+    help="Type of record. See RecordType enum docstring for definitions.",
+)
+@click.option(
+    "--parent-id",
+    type=str,
+    default="",
+    help="Parent experiment ID (required for calibration / dependent backtest types).",
+)
+@click.option(
+    "--status",
+    type=click.Choice(["completed", "failed", "cancelled", "partial"]),
+    default="completed",
+    help="Final status of the historical experiment.",
+)
+@click.option(
+    "--notes",
+    type=str,
+    default="",
+    help="Free-form notes about this retroactive record (e.g., gaps in artifacts).",
+)
+@click.pass_context
+def ledger_backfill(
+    ctx: click.Context,
+    manifest_path: str,
+    metrics_file: Optional[str],
+    record_type: str,
+    parent_id: str,
+    status: str,
+    notes: str,
+) -> None:
+    """Backfill a ledger record from a historical experiment.
+
+    Used to populate the ledger retroactively for E1-E16-style experiments
+    that were run before hft-ops became the orchestrator. Marks the record
+    with provenance.retroactive=True; uses the NOT_GIT_TRACKED_SENTINEL
+    when the monorepo isn't a git repo.
+
+    The manifest_path is a metadata-only manifest (typically under
+    hft-ops/experiments/retroactive/) describing the historical experiment.
+    The actual training / analysis / backtest stages should be disabled in
+    that manifest — the artifacts already exist on disk.
+
+    Examples:
+
+        hft-ops ledger backfill experiments/retroactive/e4_tlob_h60.yaml \\
+            --metrics-file ../lob-model-trainer/outputs/experiments/e4_tlob_h60/training_history.json \\
+            --record-type training
+
+        hft-ops ledger backfill experiments/retroactive/e7_regime.yaml \\
+            --record-type analysis \\
+            --notes "Phase A analysis-only; no training run"
+    """
+    import json as _json
+    from datetime import datetime as _datetime, timezone as _timezone
+    from hft_ops.manifest.loader import load_manifest as _load_manifest
+    from hft_ops.provenance.lineage import build_provenance, NOT_GIT_TRACKED_SENTINEL
+
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    paths = PipelinePaths(pipeline_root=pipeline_root)
+    exp_ledger = ExperimentLedger(paths.ledger_dir)
+
+    manifest = _load_manifest(Path(manifest_path))
+
+    # Build provenance with retroactive marker. Use file mtime of metrics_file
+    # if provided, otherwise current time. Git info uses sentinel if monorepo
+    # isn't a repo.
+    if metrics_file:
+        ts_unix = Path(metrics_file).stat().st_mtime
+        timestamp_utc = _datetime.fromtimestamp(ts_unix, tz=_timezone.utc).isoformat()
+    else:
+        timestamp_utc = _datetime.now(_timezone.utc).isoformat()
+
+    prov = build_provenance(
+        pipeline_root=pipeline_root,
+        manifest_path=Path(manifest_path),
+        contract_version=manifest.experiment.contract_version,
+    )
+    prov.retroactive = True
+    prov.timestamp_utc = timestamp_utc
+
+    # Load metrics if provided. Best-effort; record gets minimal metrics if missing.
+    training_metrics: dict = {}
+    backtest_metrics: dict = {}
+    sub_records: list = []
+    if metrics_file:
+        try:
+            with open(metrics_file, "r") as f:
+                metrics_data = _json.load(f)
+
+            if isinstance(metrics_data, list):
+                # Heuristic: a list of per-epoch dicts (training history) vs
+                # a list of sub-experiments (sweep aggregate).
+                if metrics_data and isinstance(metrics_data[0], dict) and "epoch" in metrics_data[0]:
+                    # Training history: summarize as best-epoch + final-epoch metrics.
+                    training_metrics = _summarize_training_history(metrics_data)
+                else:
+                    # Sub-records for sweep_aggregate
+                    sub_records = metrics_data
+            elif "sub_runs" in metrics_data:
+                sub_records = metrics_data["sub_runs"]
+            else:
+                # Common training_history.json shape: {"train": [...], "val": [...]}
+                # OR a flat metrics dict — keep the whole thing
+                training_metrics = metrics_data.get("metrics", metrics_data)
+                if "backtest_metrics" in metrics_data:
+                    backtest_metrics = metrics_data["backtest_metrics"]
+        except (json.JSONDecodeError, OSError) as e:
+            console.print(
+                f"[yellow]Warning: failed to load metrics_file ({e}); "
+                f"creating record with empty metrics[/yellow]"
+            )
+
+    # Compute fingerprint of the manifest config (no actual run state)
+    fingerprint = compute_fingerprint(manifest, paths)
+
+    # Build experiment_id
+    short_ts = timestamp_utc.replace("-", "").replace(":", "").replace(".", "")[:15]
+    experiment_id = f"{manifest.experiment.name}_{short_ts}_{fingerprint[:8]}_retro"
+
+    # Check for duplicates before registering. `find_by_fingerprint` returns
+    # an index-entry dict (or None), NOT a list of records.
+    existing = exp_ledger.find_by_fingerprint(fingerprint)
+    if existing is not None:
+        existing_id = existing.get("experiment_id", "<unknown>")
+        console.print(
+            f"[yellow]Warning: a record with the same fingerprint already exists "
+            f"({existing_id}). Skipping; record not re-registered.[/yellow]"
+        )
+        # Exit 0: duplicate is a BENIGN SKIP in backfill context. Matches the
+        # behavior of `hft-ops run` (see line ~203) and sweep (~977). Idempotent
+        # re-runs of the retroactive generator should succeed, not fail.
+        sys.exit(0)
+
+    record = ExperimentRecord(
+        experiment_id=experiment_id,
+        name=manifest.experiment.name,
+        manifest_path=str(manifest_path),
+        fingerprint=fingerprint,
+        provenance=prov,
+        contract_version=manifest.experiment.contract_version,
+        training_metrics=training_metrics,
+        backtest_metrics=backtest_metrics,
+        sub_records=sub_records,
+        tags=list(manifest.experiment.tags) + ["retroactive"],
+        hypothesis=manifest.experiment.hypothesis,
+        description=manifest.experiment.description,
+        notes=notes,
+        record_type=record_type,
+        parent_experiment_id=parent_id,
+        status=status,
+        stages_completed=[],
+        created_at=timestamp_utc,
+    )
+
+    exp_ledger.register(record)
+    console.print(
+        f"[green]✓ Backfilled record:[/green] {experiment_id}\n"
+        f"  type: {record_type} | status: {status} | retroactive: True\n"
+        f"  git: {prov.git.commit_hash[:16] if prov.git.commit_hash != NOT_GIT_TRACKED_SENTINEL else NOT_GIT_TRACKED_SENTINEL}"
+    )
+
+
 # =============================================================================
 # Sweep Commands (Phase 4)
 # =============================================================================
@@ -686,7 +1010,14 @@ def sweep_run(
         console.print("[red]This manifest has no sweep section. Use 'hft-ops run' instead.[/red]")
         sys.exit(1)
 
-    experiments = expand_sweep(manifest)
+    # Phase 5 Preview fix (B1): use `expand_sweep_with_axis_values` so axis
+    # labels are piped through directly from the Cartesian-product expansion
+    # instead of being lossily re-derived from applied overrides. The prior
+    # back-derivation heuristic (deleted below) mislabeled grid points under
+    # multi-axis overlap.
+    from hft_ops.manifest.sweep import expand_sweep_with_axis_values
+    experiments_with_axes = expand_sweep_with_axis_values(manifest)
+    experiments = [exp for exp, _ in experiments_with_axes]
     sweep_name = manifest.sweep.name
     sweep_id = f"{sweep_name}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
 
@@ -721,8 +1052,11 @@ def sweep_run(
     requested_stages = set(stages.split(",")) if stages else None
     completed = 0
     failed = 0
+    # Phase 5 FULL-A Block 3: accumulate per-grid-point summaries for the
+    # aggregate record written at loop end.
+    child_summaries: list[dict] = []
 
-    for i, exp in enumerate(experiments, 1):
+    for i, (exp, axis_values) in enumerate(experiments_with_axes, 1):
         console.print(
             f"\n[bold cyan]{'='*60}[/bold cyan]"
             f"\n[bold cyan]Grid point {i}/{len(experiments)}: "
@@ -738,14 +1072,37 @@ def sweep_run(
                 console.print(
                     f"  [yellow]Duplicate found: {existing.get('experiment_id')}. Skipping.[/yellow]"
                 )
+                # Phase 5 FULL-A post-audit fix (Agent 2 B1): record the
+                # skipped-duplicate grid point in child_summaries so the
+                # aggregate record correctly represents sweep completeness.
+                # Otherwise the aggregate sub_records count differs from the
+                # expanded grid cardinality and CRITICAL-FIX 8's cross-invocation
+                # aggregate_fp stability is silently violated under mixed
+                # force/no-force re-runs.
+                child_summaries.append({
+                    "experiment_id": existing.get("experiment_id", ""),
+                    "name": exp.experiment.name,
+                    "fingerprint": fingerprint,
+                    "axis_values": axis_values,
+                    "status": "skipped_duplicate",
+                    "duration_seconds": 0.0,
+                    "training_metrics": {},
+                    "backtest_metrics": {},
+                })
                 continue
+
+        # Resolve per-grid-point runtime values (no shared-state mutation).
+        resolved_ctx = resolve_manifest_context(exp, paths)
+        apply_resolved_context(exp, resolved_ctx)
 
         # Build stage runners (same as `run` command)
         stage_runners = [
             ("extraction", exp.stages.extraction.enabled, ExtractionRunner()),
             ("raw_analysis", exp.stages.raw_analysis.enabled, RawAnalysisRunner()),
             ("dataset_analysis", exp.stages.dataset_analysis.enabled, DatasetAnalysisRunner()),
+            ("validation", exp.stages.validation.enabled, ValidationRunner()),
             ("training", exp.stages.training.enabled, TrainingRunner()),
+            ("signal_export", exp.stages.signal_export.enabled, SignalExportRunner()),
             ("backtesting", exp.stages.backtesting.enabled, BacktestRunner()),
         ]
 
@@ -781,18 +1138,11 @@ def sweep_run(
 
         point_duration = time.monotonic() - point_start
 
-        # Determine axis_values for this point
-        axis_values = {}
-        if manifest.sweep:
-            for axis in manifest.sweep.axes:
-                for val in axis.values:
-                    # Check if this value's overrides are in the experiment's overrides
-                    for k, v in val.overrides.items():
-                        if exp.stages.training.overrides.get(k) == v or (
-                            k == "horizon_value" and exp.stages.training.horizon_value == v
-                        ):
-                            axis_values[axis.name] = val.label
-                            break
+        # Phase 5 Preview (B1 fix): `axis_values` is now piped directly from
+        # expand_sweep_with_axis_values — ground truth from the Cartesian
+        # product, not a lossy heuristic over applied overrides. Prior code
+        # here had a match-wins bug under multi-axis overlap (deleted
+        # 2026-04-16).
 
         # Record this grid point
         _record_experiment(exp, paths, fingerprint, results, point_duration)
@@ -808,6 +1158,19 @@ def sweep_run(
             # Rebuild index with updated sweep fields
             ledger._rebuild_index()
 
+        # Phase 5 FULL-A Block 3: accumulate per-point summary for the
+        # aggregate record written at loop end.
+        child_summaries.append({
+            "experiment_id": record_id,
+            "name": exp.experiment.name,
+            "fingerprint": fingerprint,
+            "axis_values": axis_values,
+            "status": "failed" if point_failed else "completed",
+            "duration_seconds": point_duration,
+            "training_metrics": (record.training_metrics if record else {}),
+            "backtest_metrics": (record.backtest_metrics if record else {}),
+        })
+
         if point_failed:
             failed += 1
             if not continue_on_failure:
@@ -818,6 +1181,23 @@ def sweep_run(
                 break
         else:
             completed += 1
+
+    # Phase 5 FULL-A Block 3: write ONE sweep_aggregate record summarizing
+    # the entire sweep run. See SweepAggregateWriter for fingerprint,
+    # path-placement, and lifecycle semantics.
+    if child_summaries:
+        from hft_ops.ledger.sweep_aggregate import SweepAggregateWriter
+        SweepAggregateWriter().write(
+            ledger_dir=paths.ledger_dir,
+            sweep_id=sweep_id,
+            sweep_name=sweep_name,
+            manifest=manifest,
+            child_summaries=child_summaries,
+            completed=completed,
+            failed=failed,
+        )
+        # Rebuild index so the aggregate record is visible to ledger.filter.
+        ExperimentLedger(paths.ledger_dir)._rebuild_index()
 
     # Summary
     console.print(f"\n[bold]{'='*60}[/bold]")
@@ -850,6 +1230,12 @@ def sweep_results(
     ledger = ExperimentLedger(paths.ledger_dir)
 
     entries = ledger.filter(sweep_id=sweep_id)
+
+    # Phase 5 FULL-A CRITICAL-FIX 3: exclude the sweep_aggregate parent record
+    # so the results table shows grid points only. Dashboards that want to
+    # surface the aggregate can opt in by filtering record_type="sweep_aggregate"
+    # separately.
+    entries = [e for e in entries if e.get("record_type") != "sweep_aggregate"]
 
     if not entries:
         console.print(f"[yellow]No experiments found for sweep_id: {sweep_id}[/yellow]")
@@ -916,6 +1302,253 @@ def check_dup(ctx: click.Context, manifest_path: str) -> None:
         console.print(f"  Status: {existing.get('status', '')}")
     else:
         console.print("[green]No duplicate found. Safe to run.[/green]")
+
+
+# ===========================================================================
+# Phase 4: FeatureSet Registry CLI
+# ===========================================================================
+
+
+@main.command(name="evaluate")
+@click.option(
+    "--config",
+    "evaluator_config",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help="Path to the hft-feature-evaluator YAML config.",
+)
+@click.option(
+    "--criteria",
+    "criteria_yaml",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help="Path to the SelectionCriteria YAML.",
+)
+@click.option(
+    "--save-feature-set",
+    "save_name",
+    type=str,
+    required=True,
+    help="FeatureSet identifier (typically '<base>_v<N>', e.g. 'momentum_hft_v1'). "
+         "This becomes the <name>.json filename under contracts/feature_sets/.",
+)
+@click.option(
+    "--applies-to-assets",
+    type=str,
+    required=True,
+    help="Comma-separated ticker symbols (e.g. 'NVDA' or 'NVDA,MSFT').",
+)
+@click.option(
+    "--applies-to-horizons",
+    type=str,
+    required=True,
+    help="Comma-separated label horizons (e.g. '60' or '10,60,300').",
+)
+@click.option(
+    "--description",
+    type=str,
+    default="",
+    help="Free-text description (metadata, not hashed).",
+)
+@click.option(
+    "--notes",
+    type=str,
+    default="",
+    help="Free-text operator notes (metadata, not hashed).",
+)
+@click.option(
+    "--created-by",
+    type=str,
+    default="",
+    help="Producer/operator identifier.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite an existing FeatureSet with a DIFFERENT content hash. "
+         "Idempotent no-ops (same content) do not require --force.",
+)
+@click.pass_context
+def evaluate(
+    ctx: click.Context,
+    evaluator_config: str,
+    criteria_yaml: str,
+    save_name: str,
+    applies_to_assets: str,
+    applies_to_horizons: str,
+    description: str,
+    notes: str,
+    created_by: str,
+    force: bool,
+) -> None:
+    """Run the feature evaluator and persist the selected set as a FeatureSet.
+
+    Content-addressed: the output file's content_hash is SHA-256 over
+    product fields only (feature_indices + source_feature_count +
+    contract_version). Identical products produce identical hashes
+    regardless of criteria/name/asset differences.
+
+    Exits:
+        0 — success (new FeatureSet written OR idempotent match on existing)
+        1 — evaluator not installed OR evaluator run failed
+        2 — overwrite refused (different content exists, --force missing)
+    """
+    from hft_ops.feature_sets import (
+        EvaluatorNotInstalled,
+        FeatureSetExists,
+        NoFeaturesSelectedError,
+        produce_feature_set,
+        write_feature_set,
+    )
+
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    paths = PipelinePaths(pipeline_root=pipeline_root)
+
+    assets = [a.strip() for a in applies_to_assets.split(",") if a.strip()]
+    if not assets:
+        console.print("[red]--applies-to-assets must be non-empty[/red]")
+        sys.exit(1)
+    try:
+        horizons = [int(h.strip()) for h in applies_to_horizons.split(",") if h.strip()]
+    except ValueError as exc:
+        console.print(f"[red]--applies-to-horizons must be comma-separated ints: {exc}[/red]")
+        sys.exit(1)
+    if not horizons:
+        console.print("[red]--applies-to-horizons must be non-empty[/red]")
+        sys.exit(1)
+
+    target_path = paths.feature_sets_dir / f"{save_name}.json"
+    console.print(f"[cyan]Running evaluator → {target_path}[/cyan]")
+
+    try:
+        feature_set = produce_feature_set(
+            evaluator_config_path=Path(evaluator_config),
+            criteria_yaml_path=Path(criteria_yaml),
+            name=save_name,
+            applies_to_assets=assets,
+            applies_to_horizons=horizons,
+            pipeline_paths=paths,
+            description=description,
+            notes=notes,
+            created_by=created_by,
+        )
+    except EvaluatorNotInstalled as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+    except NoFeaturesSelectedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+
+    try:
+        written_path = write_feature_set(target_path, feature_set, force=force)
+    except FeatureSetExists as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        sys.exit(2)
+
+    console.print(
+        f"[green]FeatureSet '{save_name}' saved.[/green]\n"
+        f"  Path:         {written_path}\n"
+        f"  Content hash: {feature_set.content_hash[:16]}...\n"
+        f"  Features:     {len(feature_set.feature_indices)} / "
+        f"{feature_set.source_feature_count}\n"
+        f"  Contract:     {feature_set.contract_version}"
+    )
+
+
+@main.group(name="feature-sets")
+def feature_sets_group() -> None:
+    """Phase 4 FeatureSet registry browsing (list + show)."""
+
+
+@feature_sets_group.command(name="list")
+@click.pass_context
+def feature_sets_list(ctx: click.Context) -> None:
+    """List all FeatureSets in the registry.
+
+    Each entry shows name + first 16 hex chars of content_hash. Does
+    NOT verify integrity — call `feature-sets show <name>` for that.
+    """
+    from hft_ops.feature_sets import FeatureSetRegistry
+
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    paths = PipelinePaths(pipeline_root=pipeline_root)
+
+    reg = FeatureSetRegistry(paths.feature_sets_dir, allow_missing=True)
+    refs = reg.list_refs()
+
+    if not refs:
+        console.print(f"[dim]No FeatureSets found at {paths.feature_sets_dir}[/dim]")
+        return
+
+    table = Table(title=f"FeatureSets ({len(refs)})")
+    table.add_column("Name", style="cyan")
+    table.add_column("Content hash (short)")
+
+    for ref in refs:
+        table.add_row(ref.name, f"{ref.content_hash[:16]}...")
+
+    console.print(table)
+
+
+@feature_sets_group.command(name="show")
+@click.argument("name", type=str)
+@click.option(
+    "--no-verify",
+    is_flag=True,
+    help="Skip integrity verification (allow inspecting tampered files).",
+)
+@click.pass_context
+def feature_sets_show(
+    ctx: click.Context,
+    name: str,
+    no_verify: bool,
+) -> None:
+    """Show the full contents of a FeatureSet.
+
+    Runs integrity verification by default (fails with exit code 1 on
+    hash mismatch); pass --no-verify to inspect a known-bad file.
+    """
+    from hft_ops.feature_sets import (
+        FeatureSetIntegrityError,
+        FeatureSetNotFound,
+        FeatureSetRegistry,
+    )
+
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    paths = PipelinePaths(pipeline_root=pipeline_root)
+
+    reg = FeatureSetRegistry(paths.feature_sets_dir, allow_missing=True)
+
+    try:
+        fs = reg.get(name, verify=not no_verify)
+    except FeatureSetNotFound as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+    except FeatureSetIntegrityError as exc:
+        console.print(f"[red]Integrity check failed:[/red] {exc}")
+        sys.exit(1)
+
+    console.print(f"[bold cyan]{fs.name}[/bold cyan]")
+    console.print(f"  Content hash:         {fs.content_hash}")
+    console.print(f"  Schema version:       {fs.schema_version}")
+    console.print(f"  Contract version:     {fs.contract_version}")
+    console.print(f"  Source feature count: {fs.source_feature_count}")
+    console.print(
+        f"  Feature indices:      {len(fs.feature_indices)} selected "
+        f"({list(fs.feature_indices[:10])}{'...' if len(fs.feature_indices) > 10 else ''})"
+    )
+    console.print(f"  Applies-to assets:    {list(fs.applies_to.assets)}")
+    console.print(f"  Applies-to horizons:  {list(fs.applies_to.horizons)}")
+    console.print(f"  Produced by tool:     {fs.produced_by.tool} {fs.produced_by.tool_version}")
+    console.print(f"  Source profile hash:  {fs.produced_by.source_profile_hash[:16]}...")
+    console.print(f"  Criteria schema:      v{fs.criteria_schema_version}")
+    console.print(f"  Created at:           {fs.created_at}")
+    if fs.created_by:
+        console.print(f"  Created by:           {fs.created_by}")
+    if fs.description:
+        console.print(f"  Description:          {fs.description}")
+    if fs.notes:
+        console.print(f"  Notes:                {fs.notes}")
 
 
 if __name__ == "__main__":

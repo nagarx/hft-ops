@@ -1,0 +1,165 @@
+# =============================================================================
+# Sweep: Loss-function ablation — Huber vs MSE × δ calibration
+# =============================================================================
+#
+# Purpose: tune the regression loss function + delta parameter on E5-style
+# 60s-binned TLOB training. Probes whether MSE catches up to Huber when the
+# transition point is relaxed (delta larger), or whether tail-robustness of
+# Huber dominates regardless of delta.
+#
+# Grid:
+#   +------------+-------------+-------------+-------------+
+#   |            | delta=12.6  | delta=15.1  | delta=20.0  |
+#   +------------+-------------+-------------+-------------+
+#   | loss=huber |     x       |     x       |     x       |
+#   | loss=mse   |     x       |     x       |     x       |
+#   +------------+-------------+-------------+-------------+
+#
+# Cardinality: 2 × 3 = 6 grid points. Single-stage (training only) —
+# proves the same-stage axis routing pattern from Phase 5 Preview.
+#
+# Axes:
+#   loss_type owns:  model.regression_loss_type (via training.overrides)
+#   delta owns:      model.regression_loss_delta (via training.overrides)
+#
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/loss_ablation.yaml
+#   hft-ops sweep run     experiments/sweeps/loss_ablation.yaml
+#   hft-ops sweep results experiments/sweeps/loss_ablation.yaml
+# =============================================================================
+
+experiment:
+  name: "loss_ablation"
+  description: >
+    Huber (δ∈{12.6,15.1,20.0}) vs MSE (δ∈{12.6,15.1,20.0}) on E5 60s-binned
+    TLOB training. 6-point grid, single 60s export shared across all points
+    (training only varies).
+  hypothesis: >
+    Huber dominates MSE at all δ values because E5 return kurtosis (~26.5)
+    amplifies tail outliers under MSE; Huber IC improvement decreases as δ
+    grows (Huber → MSE asymptotically as δ → ∞).
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - e5
+    - regression
+    - h10
+    - 60s
+    - loss_ablation
+    - sweep
+    - phase5-full-a
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    trainer_config:
+      name: loss_ablation_base
+      description: "E5 60s training base; axes override loss_type + delta."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s"
+        feature_count: 98
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 0
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber       # <- overridden by axis `loss_type`
+        regression_loss_delta: 12.6       # <- overridden by axis `delta`
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42
+        mixed_precision: false
+
+      output_dir: outputs/experiments/loss_ablation_base
+      log_level: INFO
+      tags: [e5, nvda, regression, h10, 60s, loss_ablation, sweep]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    horizon_value: 10
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: false
+
+  backtesting:
+    enabled: false
+
+# =============================================================================
+# Sweep definition — 2 training-only axes, no cross-axis key conflicts.
+# Both axes touch trainer-config keys (bare model.* back-compat form).
+# =============================================================================
+
+sweep:
+  name: "loss_ablation"
+  strategy: "grid"
+  axes:
+    - name: "loss_type"
+      values:
+        - label: "huber"
+          overrides:
+            model.regression_loss_type: huber
+        - label: "mse"
+          overrides:
+            model.regression_loss_type: mse
+
+    - name: "delta"
+      values:
+        - label: "d12_6"
+          overrides:
+            model.regression_loss_delta: 12.6
+        - label: "d15_1"
+          overrides:
+            model.regression_loss_delta: 15.1
+        - label: "d20_0"
+          overrides:
+            model.regression_loss_delta: 20.0

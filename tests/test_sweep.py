@@ -74,8 +74,15 @@ class TestValidateSweep:
         assert any("name is required" in e for e in errors)
 
     def test_invalid_strategy(self):
+        # Phase 5 FULL-A: strategy registry shell distinguishes "reserved for
+        # future phase" (bayesian/zip/conditional) from "genuinely unknown".
         errors = validate_sweep(_make_sweep(strategy="bayesian"))
-        assert any("strategy must be 'grid'" in e for e in errors)
+        assert any("RESERVED for a future phase" in e for e in errors), errors
+
+    def test_genuinely_unknown_strategy(self):
+        """Non-reserved + non-implemented strategy names show the valid list."""
+        errors = validate_sweep(_make_sweep(strategy="random"))
+        assert any("strategy must be one of ['grid']" in e for e in errors), errors
 
     def test_no_axes(self):
         errors = validate_sweep(SweepConfig(name="x", axes=[]))

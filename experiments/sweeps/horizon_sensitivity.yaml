@@ -1,0 +1,179 @@
+# =============================================================================
+# Sweep: Horizon sensitivity — bin size × prediction horizon (CROSS-STAGE)
+# =============================================================================
+#
+# Purpose: the canonical template exercising Phase 5 FULL-A Block 1
+# (cross-stage routing) + Block 4 (post-expansion variable re-resolution).
+#
+# Grid:
+#   +-------------+-------+-------+-------+
+#   |             | H10   | H60   | H300  |
+#   +-------------+-------+-------+-------+
+#   | 30s bins    |   x   |   x   |   x   |
+#   | 60s bins    |   x   |   x   |   x   |
+#   | 120s bins   |   x   |   x   |   x   |
+#   +-------------+-------+-------+-------+
+#
+# Cardinality: 3 × 3 = 9 grid points. CROSS-STAGE — this is the primary
+# test that Block 1's stage-prefix dispatch works end-to-end.
+#
+# Axes:
+#   bin_size owns:         extraction.config + extraction.output_dir
+#                          (per-point distinct export — no skip_if_exists reuse)
+#   horizon_value owns:    training.horizon_value (bare TrainingStage field)
+#
+# CRITICAL interaction tested:
+#   stages.backtesting.data_dir references ${stages.extraction.output_dir}.
+#   Block 4's resolver rebinds this per grid point so the 3 bin_size choices
+#   don't all collapse to one backtest data path (that would have been the
+#   pre-Phase-5-FULL-A silent bug).
+#
+# NB: 30s / 60s / 120s TOML configs all exist today in
+# feature-extractor-MBO-LOB/configs/. 10s does NOT exist and was mis-referenced
+# in the prior plan draft.
+#
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/horizon_sensitivity.yaml
+#   hft-ops sweep run     experiments/sweeps/horizon_sensitivity.yaml
+#   hft-ops sweep results experiments/sweeps/horizon_sensitivity.yaml
+# =============================================================================
+
+experiment:
+  name: "horizon_sensitivity"
+  description: >
+    3 time-bin sizes (30s/60s/120s) × 3 horizons (H10/H60/H300) on E5-style
+    TLOB training. 9-point cross-stage grid: each cell extracts its own
+    dataset (distinct output_dir via ${sweep.point_name}) and trains with
+    the corresponding horizon.
+  hypothesis: >
+    Predictive IC decays at finer bins and longer horizons. Expect H10×30s
+    IC > H10×120s IC (coarser bins smooth out the predictable microstructure
+    signal). H300 across all bin sizes should be near-zero (extended persistence
+    doesn't survive 5+ minute ahead).
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - e5
+    - regression
+    - horizon_sensitivity
+    - cross_stage_sweep
+    - sweep
+    - phase5-full-a
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"   # overridden by axis
+    output_dir: "data/exports/${sweep.point_name}"                       # per-point via Block 4 rebinding
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    trainer_config:
+      name: horizon_sensitivity_base
+      description: "Cross-stage base; axes override extraction.config + training.horizon_value."
+
+      data:
+        data_dir: "../data/exports/${sweep.point_name}"   # per-point via Block 4 rebinding
+        feature_count: 98
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 0
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42
+        mixed_precision: false
+
+      output_dir: outputs/experiments/${sweep.point_name}
+      log_level: INFO
+      tags: [e5, nvda, regression, horizon_sensitivity, sweep]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    horizon_value: 10                                                    # overridden by axis
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: false
+
+  backtesting:
+    enabled: false
+
+# =============================================================================
+# Sweep definition — CROSS-STAGE (extraction × training axes).
+# No axis-key conflicts: bin_size and horizon_value own disjoint paths.
+# =============================================================================
+
+sweep:
+  name: "horizon_sensitivity"
+  strategy: "grid"
+  axes:
+    - name: "bin_size"
+      values:
+        - label: "30s"
+          overrides:
+            extraction.config: "feature-extractor-MBO-LOB/configs/e5_timebased_30s.toml"
+        - label: "60s"
+          overrides:
+            extraction.config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+        - label: "120s"
+          overrides:
+            extraction.config: "feature-extractor-MBO-LOB/configs/e5_timebased_120s.toml"
+
+    - name: "horizon_value"
+      values:
+        - label: "H10"
+          overrides:
+            horizon_value: 10
+        - label: "H60"
+          overrides:
+            horizon_value: 60
+        - label: "H300"
+          overrides:
+            horizon_value: 300
