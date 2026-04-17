@@ -23,7 +23,7 @@ experiment:
     Multi-horizon HMHP cascade produces a natural readability signal via
     agreement_ratio. When all horizons agree (76.5% of samples), directional
     accuracy reaches 89.52%. At high confidence (51.5%), 93.88%.
-  contract_version: "2.3"
+  contract_version: "2.2"
   tags:
     - nvda
     - xnas

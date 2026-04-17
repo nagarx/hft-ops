@@ -23,7 +23,7 @@ experiment:
     ARCX thinner book creates more decisive microstructure: when the model
     is confident on ARCX, it is extremely confident. Preferred venue for
     high-conviction 0DTE signals despite fewer events.
-  contract_version: "2.3"
+  contract_version: "2.2"
   tags:
     - nvda
     - arcx

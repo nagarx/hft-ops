@@ -107,11 +107,16 @@ def run_subprocess(
 ) -> subprocess.CompletedProcess:
     """Run a subprocess with optional streaming output.
 
+    Always injects ``HFT_OPS_ORCHESTRATED=1`` into the subprocess env so that
+    bypass-detection in trainer/backtester scripts (Phase 1.4 deprecation
+    warnings) suppresses the warning when the script runs under hft-ops.
+
     Args:
         cmd: Command and arguments.
         cwd: Working directory.
         verbose: If True, stream output to console.
-        env: Environment variable overrides.
+        env: Additional environment variable overrides (merged on top of the
+            current process env + the HFT_OPS_ORCHESTRATED marker).
         timeout_seconds: Maximum execution time.
 
     Returns:
@@ -120,16 +125,20 @@ def run_subprocess(
     Raises:
         subprocess.TimeoutExpired: If timeout is exceeded.
     """
+    import os
+
     kwargs: Dict[str, Any] = {
         "cwd": str(cwd),
         "text": True,
         "timeout": timeout_seconds,
     }
 
+    # Always inject the orchestrated marker so trainer scripts (and any other
+    # bypass-detecting scripts) know they are running under hft-ops.
+    full_env = {**os.environ, "HFT_OPS_ORCHESTRATED": "1"}
     if env is not None:
-        import os
-        full_env = {**os.environ, **env}
-        kwargs["env"] = full_env
+        full_env.update(env)
+    kwargs["env"] = full_env
 
     if verbose:
         kwargs["stdout"] = None

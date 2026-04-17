@@ -93,11 +93,28 @@ class TrainingStage:
     at load time -- NOT from its own config. The trainer YAML specifies only
     training-specific params (model, optimizer, epochs, etc.).
 
+    The trainer config can be specified via EITHER:
+      - ``config``: path to an existing trainer YAML file (legacy path)
+      - ``trainer_config``: inline dict embedded in the manifest (unified path,
+        introduced in Phase 1 of the training-pipeline-architecture migration)
+
+    When both are set, the loader raises; when neither is set (and enabled=True),
+    the validator raises. The unified/inline form is the preferred pattern for
+    new manifests — it keeps the experiment definition in a single file and
+    eliminates the 2-files-per-experiment duplication. Inline ``_base:`` is
+    supported (resolved relative to pipeline_root for Phase 3 OmegaConf composition).
+
     Args:
         enabled: Whether to run this stage.
         config: Path to the trainer YAML config, relative to pipeline_root.
+            Mutually exclusive with ``trainer_config``.
+        trainer_config: Inline trainer configuration dict. Mutually exclusive
+            with ``config``. The runner materializes this to a temp YAML file
+            at runtime, which train.py then consumes.
         overrides: Key-value pairs to override in the trainer config. Supports
-            dotted keys (e.g., "data.data_dir").
+            dotted keys (e.g., "data.data_dir"). Applied AFTER inheritance
+            resolution, regardless of whether ``config`` or ``trainer_config``
+            is the source.
         horizon_value: Explicit horizon value (e.g., 100). Resolved to
             horizon_idx at runtime from the export's horizons metadata.
         output_dir: Output directory for training artifacts.
@@ -106,6 +123,7 @@ class TrainingStage:
 
     enabled: bool = True
     config: str = ""
+    trainer_config: Optional[Dict[str, Any]] = None
     overrides: Dict[str, Any] = field(default_factory=dict)
     horizon_value: Optional[int] = None
     output_dir: str = ""
@@ -134,32 +152,135 @@ class BacktestingStage:
 
     Args:
         enabled: Whether to run this stage.
+        script: Backtest script to invoke, relative to backtester_dir.
+            Defaults to ``scripts/backtest_deeplob.py``. Other supported scripts:
+            ``scripts/run_readability_backtest.py``, ``scripts/run_regression_backtest.py``,
+            ``scripts/run_spread_signal_backtest.py``. Script-specific args are
+            passed via ``extra_args`` or ``params_file``.
         model_checkpoint: Path to the model checkpoint file.
         data_dir: Path to feature exports for backtesting.
+        signals_dir: Path to signals output from SignalExportStage (for
+            signal-based backtests like readability / regression).
         horizon_idx: Horizon index for backtesting. Use "${resolved.horizon_idx}"
             to auto-resolve from the training stage.
-        params: Backtest parameters.
+        params: Backtest parameters (for backtest_deeplob.py compatibility).
+        params_file: Optional path to a script-specific YAML config (passed
+            via ``--params-file`` to scripts that support it).
         extra_args: Additional CLI arguments to pass to backtest script.
     """
 
     enabled: bool = True
+    script: str = "scripts/backtest_deeplob.py"
     model_checkpoint: str = ""
     data_dir: str = ""
+    signals_dir: str = ""
     horizon_idx: Optional[int] = None
     params: BacktestParams = field(default_factory=BacktestParams)
+    params_file: str = ""
+    extra_args: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ValidationStage:
+    """Pre-training IC-gate validation stage (Phase 2).
+
+    Runs between ``dataset_analysis`` and ``training``. Computes per-feature
+    Spearman IC against the target label, checks Rule-13 decision gates
+    (IC > 0.05, IC_COUNT >= 2, return_std > 5 bps, walk-forward stability > 2.0),
+    and emits a ``gate_report.json`` artifact. On failure, behavior is
+    controlled by ``on_fail``:
+
+    - ``warn`` (DEFAULT): log the failure, record it in the ledger, but
+      proceed to training. Rationale: the evaluator CLAUDE.md explicitly
+      warns against using DISCARD as a hard gate — individual-feature IC
+      misses interaction / temporal / context-feature value. We want the
+      gate to SURFACE failures so researchers can investigate, not silently
+      block valid experiments.
+    - ``abort``: raise StageFailure → pipeline stops → ledger record saved
+      with status=failed. Use after confidence is established.
+    - ``record_only``: record the gate outcome but never fail. For archival /
+      post-hoc exploration where the gate's verdict is informational only.
+
+    Attributes:
+        enabled: Whether to run the gate.
+        on_fail: Action on gate failure. See above.
+        target_horizon: Horizon label (e.g., ``"H10"``, ``"10"``). Empty →
+            auto-infer from ``training.horizon_value``.
+        min_ic: G_IC threshold (best absolute feature IC).
+        min_ic_count: G_IC_COUNT threshold (#features with |IC| > min_ic).
+        min_return_std_bps: G_RETURN_STD threshold (label std in bps).
+        min_stability: G_STABILITY threshold (walk-forward mean/std ratio).
+        sample_size: Max sequences sampled from train for IC estimation.
+        n_folds: Walk-forward fold count; adaptively clipped at runtime
+            (``max(5, min(n_folds, train_days // 8))``).
+        allow_zero_ic_names: Feature names that bypass the IC check
+            (context features — dark_share, time_regime, etc.).
+        profile_ref: Optional path to a precomputed ``feature_profiles.json``
+            from a full evaluator run; gate post-processes that rather than
+            recomputing.
+        output_dir: Where to write ``gate_report.json`` / ``per_feature_ic.csv``.
+            Empty → defaults to the experiment's runs directory.
+    """
+
+    enabled: bool = True
+    on_fail: str = "warn"
+    target_horizon: str = ""
+    min_ic: float = 0.05
+    min_ic_count: int = 2
+    min_return_std_bps: float = 5.0
+    min_stability: float = 2.0
+    sample_size: int = 200_000
+    n_folds: int = 20
+    allow_zero_ic_names: List[str] = field(default_factory=list)
+    profile_ref: str = ""
+    output_dir: str = ""
+
+
+@dataclass
+class SignalExportStage:
+    """Signal export stage configuration.
+
+    Invokes a trainer-side signal export script (e.g., ``export_signals.py``,
+    ``export_hmhp_signals.py``) to materialize predictions from a checkpoint
+    into a ``signals/`` directory that the backtester consumes.
+
+    Runs BETWEEN training and backtesting. If disabled, backtesting stage
+    must either reuse pre-existing signals or run its own export.
+
+    Args:
+        enabled: Whether to run this stage.
+        script: Signal export script, relative to trainer_dir.
+        checkpoint: Path to the trained model checkpoint.
+        split: Dataset split to export signals for (train | val | test).
+        output_dir: Where to write signals/*.npy files.
+        extra_args: Additional CLI arguments to pass to the script.
+    """
+
+    enabled: bool = False
+    script: str = "scripts/export_signals.py"
+    checkpoint: str = ""
+    split: str = "test"
+    output_dir: str = ""
     extra_args: List[str] = field(default_factory=list)
 
 
 @dataclass
 class Stages:
-    """Container for all pipeline stages."""
+    """Container for all pipeline stages.
+
+    Stage order (as executed by the runner in cli.py):
+        extraction → raw_analysis → dataset_analysis → validation
+            → training → signal_export → backtesting
+    """
 
     extraction: ExtractionStage = field(default_factory=ExtractionStage)
     raw_analysis: RawAnalysisStage = field(default_factory=RawAnalysisStage)
     dataset_analysis: DatasetAnalysisStage = field(
         default_factory=DatasetAnalysisStage
     )
+    validation: ValidationStage = field(default_factory=ValidationStage)
     training: TrainingStage = field(default_factory=TrainingStage)
+    signal_export: SignalExportStage = field(default_factory=SignalExportStage)
     backtesting: BacktestingStage = field(default_factory=BacktestingStage)
 
 

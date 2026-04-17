@@ -14,12 +14,19 @@ Checks performed:
     5. If extraction output exists, validates export metadata
     6. horizon_value resolves to a valid horizon_idx
     7. Referenced file paths exist
+
+Runtime value resolution (horizon_idx, etc.) is provided via
+``resolve_manifest_context`` as a pure function — no mutation of manifest
+state. The orchestrator (cli.py) applies the resolved values explicitly
+when invoking stage runners. This keeps ``validate_manifest`` side-effect
+free and makes sweep expansions safe (no shared-state races).
 """
 
 from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,6 +34,30 @@ import yaml
 
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.paths import PipelinePaths
+
+
+@dataclass
+class ResolvedContext:
+    """Runtime-resolved values derived from a manifest.
+
+    Produced by ``resolve_manifest_context`` alongside ``validate_manifest``.
+    Stage runners (or the orchestrator CLI) apply these values when needed;
+    the manifest dataclass is left untouched so sweep expansion and repeat
+    validation are side-effect free.
+
+    Attributes:
+        horizon_idx: Zero-based index into the extractor's horizons list
+            corresponding to ``stages.training.horizon_value``, or None
+            if not resolvable (missing extractor config, mismatched value).
+        horizon_value: The original ``horizon_value`` from the training
+            stage, stored for convenience.
+        feature_count: The feature count computed from the extractor config,
+            if one is reachable. None otherwise.
+    """
+
+    horizon_idx: Optional[int] = None
+    horizon_value: Optional[int] = None
+    feature_count: Optional[int] = None
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -168,13 +199,27 @@ def _validate_file_references(
                 context="stages.extraction.config",
             )
 
-    if manifest.stages.training.enabled and manifest.stages.training.config:
-        config_path = paths.resolve(manifest.stages.training.config)
-        if not config_path.exists():
+    if manifest.stages.training.enabled:
+        has_path = bool(manifest.stages.training.config)
+        has_inline = manifest.stages.training.trainer_config is not None
+
+        # Exactly one of (config, trainer_config) must be set when training is enabled.
+        # The loader already rejects BOTH-set; here we catch NEITHER-set.
+        if not has_path and not has_inline:
             result.error(
-                f"Trainer config not found: {config_path}",
-                context="stages.training.config",
+                "When stages.training.enabled=True, either 'config' (path) or "
+                "'trainer_config' (inline dict) must be specified.",
+                context="stages.training",
             )
+        elif has_path:
+            config_path = paths.resolve(manifest.stages.training.config)
+            if not config_path.exists():
+                result.error(
+                    f"Trainer config not found: {config_path}",
+                    context="stages.training.config",
+                )
+        # If has_inline: no file to check; cross-module consistency uses
+        # trainer_config dict directly (see _validate_cross_module_consistency).
 
 
 def _validate_cross_module_consistency(
@@ -199,15 +244,24 @@ def _validate_cross_module_consistency(
                     context="stages.extraction.config",
                 )
 
-    if manifest.stages.training.enabled and manifest.stages.training.config:
-        train_path = paths.resolve(manifest.stages.training.config)
-        if train_path.exists():
-            train_cfg = _load_yaml(train_path)
-            if train_cfg is None:
-                result.error(
-                    f"Failed to parse trainer YAML: {train_path}",
-                    context="stages.training.config",
-                )
+    if manifest.stages.training.enabled:
+        if manifest.stages.training.config:
+            train_path = paths.resolve(manifest.stages.training.config)
+            if train_path.exists():
+                train_cfg = _load_yaml(train_path)
+                if train_cfg is None:
+                    result.error(
+                        f"Failed to parse trainer YAML: {train_path}",
+                        context="stages.training.config",
+                    )
+        elif manifest.stages.training.trainer_config is not None:
+            # Inline trainer config: use the dict directly (already parsed).
+            # Note: inline trainer_config may use '_base:' for composition;
+            # full multi-base resolution is Phase 3's responsibility. For
+            # cross-module consistency validation (Phase 1), we read top-level
+            # keys only. Resolution of _base happens in the TrainingRunner when
+            # it materializes the effective config to a temp file.
+            train_cfg = dict(manifest.stages.training.trainer_config)
 
     if ext_cfg is None or train_cfg is None:
         return ext_cfg, train_cfg
@@ -359,13 +413,21 @@ def _validate_existing_exports(
             )
             continue
 
+        # Import hft_contracts.validation separately so that an ImportError
+        # here cannot cause the downstream `except _CE` clause to raise
+        # UnboundLocalError (which happens when _CE never gets bound).
         try:
             from hft_contracts.validation import (
                 ContractError as _CE,
                 validate_export_contract as _validate,
                 validate_provenance_present as _prov,
             )
+        except ImportError:
+            # hft_contracts not installed / validation module missing — skip
+            # contract checks but don't fail the manifest.
+            break
 
+        try:
             warnings_list = _validate(metadata, strict_completeness=False)
             for w in warnings_list:
                 result.warning(w, context=f"export_metadata:{subdir.name}")
@@ -376,8 +438,6 @@ def _validate_existing_exports(
 
         except _CE as exc:
             result.error(str(exc), context=f"export_contract:{subdir.name}")
-        except ImportError:
-            pass
 
         break
 
@@ -414,13 +474,18 @@ def validate_manifest(
         manifest, paths, result
     )
 
-    resolved_idx = _validate_horizon_resolution(manifest, ext_cfg, result)
-    if resolved_idx is not None and manifest.stages.backtesting.enabled:
-        if manifest.stages.backtesting.horizon_idx is None:
-            manifest.stages.backtesting.horizon_idx = resolved_idx
+    # Resolve horizon strictly for validation side-effects (e.g., flagging
+    # horizon_value that doesn't exist in the extractor's horizons list).
+    # DO NOT mutate the manifest here — the CLI / sweep orchestrator applies
+    # the resolved value explicitly via ``resolve_manifest_context``.
+    _validate_horizon_resolution(manifest, ext_cfg, result)
 
     _validate_existing_exports(manifest, paths, result)
 
+    # Mirror exactly the stage fields present in ``Stages``. Missing entries
+    # here cause validation-only or signal-export-only manifests to be flagged
+    # as "no stages enabled" — an incorrect warning that confuses users and
+    # retroactive backfill flows.
     enabled_stages = []
     if manifest.stages.extraction.enabled:
         enabled_stages.append("extraction")
@@ -428,8 +493,12 @@ def validate_manifest(
         enabled_stages.append("raw_analysis")
     if manifest.stages.dataset_analysis.enabled:
         enabled_stages.append("dataset_analysis")
+    if manifest.stages.validation.enabled:
+        enabled_stages.append("validation")
     if manifest.stages.training.enabled:
         enabled_stages.append("training")
+    if manifest.stages.signal_export.enabled:
+        enabled_stages.append("signal_export")
     if manifest.stages.backtesting.enabled:
         enabled_stages.append("backtesting")
 
@@ -452,3 +521,79 @@ def validate_manifest(
             )
 
     return result
+
+
+def resolve_manifest_context(
+    manifest: ExperimentManifest,
+    paths: PipelinePaths,
+) -> ResolvedContext:
+    """Compute runtime-resolved values from a manifest WITHOUT mutation.
+
+    This is the companion to ``validate_manifest`` for the "runtime side" of
+    resolution: translating ``horizon_value`` to the concrete ``horizon_idx``
+    using the extractor's horizons list. The orchestrator CLI calls this once
+    per run (or per sweep grid point) and applies the result explicitly to
+    stage invocations — no shared-state races, no surprising mutations.
+
+    Args:
+        manifest: The parsed experiment manifest (not mutated).
+        paths: Resolved pipeline paths.
+
+    Returns:
+        ResolvedContext with horizon_idx, horizon_value, feature_count
+        populated where possible.
+    """
+    ctx = ResolvedContext(horizon_value=manifest.stages.training.horizon_value)
+
+    if manifest.stages.extraction.enabled and manifest.stages.extraction.config:
+        ext_path = paths.resolve(manifest.stages.extraction.config)
+        if ext_path.exists():
+            ext_cfg = _load_toml(ext_path)
+            if ext_cfg is not None:
+                features_cfg = ext_cfg.get("features", {})
+                ctx.feature_count = _compute_feature_count(features_cfg)
+
+                if manifest.stages.training.enabled:
+                    horizon_value = manifest.stages.training.horizon_value
+                    if horizon_value is not None:
+                        labels_cfg = ext_cfg.get("labels", {})
+                        horizons = (
+                            labels_cfg.get("max_horizons")
+                            or labels_cfg.get("horizons")
+                            or []
+                        )
+                        if not horizons:
+                            single = labels_cfg.get("horizon")
+                            if single is not None:
+                                horizons = [single]
+                        if horizon_value in horizons:
+                            ctx.horizon_idx = horizons.index(horizon_value)
+
+    return ctx
+
+
+def apply_resolved_context(
+    manifest: ExperimentManifest,
+    ctx: ResolvedContext,
+) -> None:
+    """Apply resolved context values to a manifest in-place.
+
+    This is the ONLY place that mutates manifest state, and it is callee-
+    explicit: the orchestrator decides when to apply, not the validator.
+    Stage runners that need ``horizon_idx`` can continue to read it from
+    ``manifest.stages.backtesting.horizon_idx`` without changing their
+    signatures.
+
+    Idempotent: if ``backtesting.horizon_idx`` is already set, we leave it.
+
+    Args:
+        manifest: The manifest to mutate. Safe to call with a per-grid-point
+            expanded copy (the sweep path already deep-copies).
+        ctx: The resolved context.
+    """
+    if (
+        ctx.horizon_idx is not None
+        and manifest.stages.backtesting.enabled
+        and manifest.stages.backtesting.horizon_idx is None
+    ):
+        manifest.stages.backtesting.horizon_idx = ctx.horizon_idx

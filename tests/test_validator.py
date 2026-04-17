@@ -194,6 +194,65 @@ class TestValidateManifest:
 
         assert not result.is_valid
 
+    def test_training_enabled_but_no_config_or_trainer_config(self, tmp_pipeline: Path):
+        """Phase 1.1: When training.enabled=True, must have EITHER config OR trainer_config."""
+        manifest_data = {
+            "experiment": {"name": "no_training_config"},
+            "stages": {
+                "extraction": {"enabled": False},
+                "training": {"enabled": True},  # neither config nor trainer_config
+                "backtesting": {"enabled": False},
+            },
+        }
+        manifest_path = tmp_pipeline / "hft-ops" / "experiments" / "no_tc.yaml"
+        with open(manifest_path, "w") as f:
+            yaml.dump(manifest_data, f)
+
+        paths = PipelinePaths(pipeline_root=tmp_pipeline)
+        manifest = load_manifest(manifest_path)
+        result = validate_manifest(manifest, paths)
+
+        assert not result.is_valid
+        # Should have an error mentioning the exactly-one-of requirement
+        error_texts = " ".join(str(e) for e in result.errors)
+        assert "trainer_config" in error_texts or "config" in error_texts
+
+    def test_training_with_inline_trainer_config_validates(self, tmp_pipeline: Path):
+        """Phase 1.1: trainer_config with valid dict passes file-existence check
+        (there is no file to check).
+        """
+        manifest_data = {
+            "experiment": {"name": "inline_ok"},
+            "stages": {
+                "extraction": {"enabled": False, "output_dir": ""},
+                "training": {
+                    "enabled": True,
+                    "trainer_config": {
+                        "name": "InlineExp",
+                        "data": {"data_dir": "/path", "feature_count": 98},
+                        "model": {"model_type": "tlob", "input_size": 98},
+                    },
+                },
+                "backtesting": {"enabled": False},
+            },
+        }
+        manifest_path = tmp_pipeline / "hft-ops" / "experiments" / "inline.yaml"
+        with open(manifest_path, "w") as f:
+            yaml.dump(manifest_data, f)
+
+        paths = PipelinePaths(pipeline_root=tmp_pipeline)
+        manifest = load_manifest(manifest_path)
+        result = validate_manifest(manifest, paths)
+
+        # Inline config should not trigger "Trainer config not found" file-existence errors
+        file_errors = [
+            e for e in result.errors if "Trainer config not found" in str(e)
+        ]
+        assert file_errors == [], (
+            f"Inline trainer_config should not trigger file-existence errors, "
+            f"got: {file_errors}"
+        )
+
 
 class TestValidationResult:
     def test_empty_is_valid(self):

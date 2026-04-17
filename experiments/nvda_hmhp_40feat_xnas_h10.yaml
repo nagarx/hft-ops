@@ -25,7 +25,7 @@ experiment:
     40 OFI-core features capture 99.2% of signal (59.13% vs 59.19% at H10).
     Fewer features = less noise = sharper confidence = better readability detection.
     Preferred model for 0DTE trading where precision > recall.
-  contract_version: "2.3"
+  contract_version: "2.2"
   tags:
     - nvda
     - xnas

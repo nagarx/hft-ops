@@ -71,6 +71,17 @@ class PipelinePaths:
         return self.contracts_dir / "pipeline_contract.toml"
 
     @property
+    def feature_sets_dir(self) -> Path:
+        """Directory holding content-addressed FeatureSet JSON artifacts.
+
+        Phase 4 registry location (see `contracts/feature_sets/SCHEMA.md`).
+        Committed to git as a contract surface; mutable-add-only (new
+        FeatureSets accumulate over time; each file is immutable once
+        written).
+        """
+        return self.contracts_dir / "feature_sets"
+
+    @property
     def hft_contracts_dir(self) -> Path:
         return self.pipeline_root / "hft-contracts"
 

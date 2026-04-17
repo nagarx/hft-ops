@@ -1,8 +1,15 @@
 """
 Backtesting stage runner.
 
-Invokes lob-backtester/scripts/backtest_deeplob.py with the model checkpoint
-and backtest parameters from the manifest.
+Invokes a backtester script (configurable via manifest) with the model
+checkpoint, signal directory, and backtest parameters. Supports multiple
+scripts: ``backtest_deeplob.py`` (default), ``run_readability_backtest.py``,
+``run_regression_backtest.py``, ``run_spread_signal_backtest.py``.
+
+The standard ``params`` block (``initial_capital``, ``position_size``,
+``spread_bps``, etc.) is passed as CLI args to scripts that accept them
+(all current scripts). Script-specific config is passed via ``extra_args``
+or ``params_file``.
 """
 
 from __future__ import annotations
@@ -23,7 +30,7 @@ from hft_ops.stages.base import (
 
 
 class BacktestRunner:
-    """Runs backtesting via backtest_deeplob.py."""
+    """Runs backtesting via the script specified in the manifest."""
 
     @property
     def stage_name(self) -> str:
@@ -41,14 +48,23 @@ class BacktestRunner:
         if not backtester_dir.exists():
             errors.append(f"Backtester directory not found: {backtester_dir}")
 
-        script = backtester_dir / "scripts" / "backtest_deeplob.py"
-        if not script.exists():
-            errors.append(f"backtest_deeplob.py not found: {script}")
+        # Validate the configured script exists
+        script_path = backtester_dir / stage.script
+        if not script_path.exists():
+            errors.append(
+                f"Backtest script not found: {script_path} "
+                f"(configured via stages.backtesting.script='{stage.script}')"
+            )
 
         if stage.model_checkpoint:
             checkpoint = config.paths.resolve(stage.model_checkpoint)
             if not checkpoint.exists() and not manifest.stages.training.enabled:
                 errors.append(f"Model checkpoint not found: {checkpoint}")
+
+        if stage.params_file:
+            params_file = config.paths.resolve(stage.params_file)
+            if not params_file.exists():
+                errors.append(f"Backtest params_file not found: {params_file}")
 
         return errors
 
@@ -62,10 +78,12 @@ class BacktestRunner:
 
         if config.dry_run:
             result.status = StageStatus.SKIPPED
-            result.error_message = "dry-run: would run backtesting"
+            result.error_message = (
+                f"dry-run: would run backtesting via {stage.script}"
+            )
             return result
 
-        script = config.paths.backtester_dir / "scripts" / "backtest_deeplob.py"
+        script = config.paths.backtester_dir / stage.script
 
         cmd = [sys.executable, str(script)]
 
@@ -75,8 +93,16 @@ class BacktestRunner:
             data_dir = str(config.paths.resolve(stage.data_dir))
             cmd.extend(["--data-dir", data_dir])
 
+        if stage.signals_dir:
+            signals_dir = str(config.paths.resolve(stage.signals_dir))
+            cmd.extend(["--signals-dir", signals_dir])
+
         if stage.horizon_idx is not None:
             cmd.extend(["--horizon-idx", str(stage.horizon_idx)])
+
+        if stage.params_file:
+            params_file = str(config.paths.resolve(stage.params_file))
+            cmd.extend(["--params-file", params_file])
 
         params = stage.params
         cmd.extend(["--initial-capital", str(params.initial_capital)])
@@ -95,6 +121,8 @@ class BacktestRunner:
 
         cmd.extend(stage.extra_args)
 
+        script_basename = Path(stage.script).name
+
         start = time.monotonic()
         try:
             proc = run_subprocess(
@@ -111,7 +139,7 @@ class BacktestRunner:
             else:
                 result.status = StageStatus.FAILED
                 result.error_message = (
-                    f"backtest_deeplob.py exited with code {proc.returncode}"
+                    f"{script_basename} exited with code {proc.returncode}"
                 )
         except Exception as e:
             result.duration_seconds = time.monotonic() - start

@@ -1,8 +1,12 @@
 # hft-ops — Codebase Reference
 
-> **Version**: 0.2.0 | **Schema**: 2.2 | **Tests**: 93 | **Last Updated**: April 2026
+> **Version**: 0.2.0 | **Schema**: 2.2 | **Tests**: 160 | **Last Updated**: 2026-04-15
 >
 > **New in 0.2.0**: Sweep/grid expansion (`SweepConfig`, `expand_sweep()`), sweep CLI commands (`hft-ops sweep expand/run/results`), `sweep_id`+`axis_values` on `ExperimentRecord`, shared `utils.py`, `training_config` population in `_record_experiment`.
+>
+> **Added since 0.2.0 (unreleased; Phase 2b + Phase 3 of training-pipeline-architecture refactor)**:
+> - **Phase 2b** — `TrainingStage.trainer_config: Optional[Dict]` (inline trainer config alternative to `config:` path); `ValidationStage` + `ValidationRunner` (IC gate / `fast_gate` library); 5 critical bug fixes.
+> - **Phase 3** — Companion fingerprint fix in `ledger/dedup.py`: `compute_fingerprint` now resolves `_base:` inheritance in trainer YAMLs (file-based and inline) before hashing. See §2.7b for details.
 
 Central experiment orchestrator for the HFT pipeline. Defines, validates, runs, tracks, and compares experiments across all 7 pipeline modules. Supports parameter sweeps (grid search) from a single YAML manifest.
 
@@ -67,7 +71,7 @@ Dataclasses defining the experiment manifest structure:
 | `ExtractionStage` | config path, output_dir, skip_if_exists |
 | `RawAnalysisStage` | profile, symbol, analyzers |
 | `DatasetAnalysisStage` | profile, split, analyzers |
-| `TrainingStage` | config path, overrides dict, horizon_value |
+| `TrainingStage` | config path **or** inline `trainer_config` dict (exactly-one-of), overrides dict, horizon_value. Inline dict supports `_base: str \| list[str]` multi-base composition; paths resolved relative to `<trainer_dir>/configs/` via `_absolutize_inline_base_paths` (not the manifest directory — bases live under trainer configs), materialised to a temp YAML by `_materialize_inline_config` before being consumed by `ExperimentConfig.from_yaml`. |
 | `BacktestingStage` | model_checkpoint, params (BacktestParams) |
 | `SweepConfig` | name, strategy ("grid"), axes list |
 | `SweepAxis` | axis name, list of SweepAxisValue |
@@ -120,7 +124,7 @@ All stages invoke module CLIs as subprocesses (no Python imports):
 | training | `python lob-model-trainer/scripts/train.py --config ... --output-dir ...` |
 | backtesting | `python lob-backtester/scripts/backtest_deeplob.py --experiment ...` |
 
-Training stage: applies manifest overrides to a copy of the YAML config, resolves `horizon_value` to `horizon_idx` from export metadata.
+Training stage: accepts either `config: <path>` (legacy) or inline `trainer_config: <dict>` (Phase 2b — exactly-one-of). Applies manifest overrides to the effective config, resolves `horizon_value` to `horizon_idx` from export metadata, materialises the effective config to disk when inline (`_materialize_inline_config`) after rewriting any relative `_base:` paths against the manifest directory (`_absolutize_inline_base_paths`).
 
 ### 2.6 provenance/lineage.py
 
@@ -148,9 +152,45 @@ Training stage: applies manifest overrides to a copy of the YAML config, resolve
 - `find_by_fingerprint(fp)` — dedup lookup
 - `update_notes(id, notes)` — only mutable operation
 
-**compute_fingerprint(manifest, paths)** — SHA-256 of outcome-affecting config (strips metadata like name, description, tags, output paths).
+**compute_fingerprint(manifest, paths)** — SHA-256 of outcome-affecting config (strips metadata like name, description, tags, output paths). **Resolves `_base:` inheritance in trainer YAMLs before hashing** (Phase 3, see §2.7b below) so base mutations correctly invalidate dependent-experiment fingerprints.
 
 **compare_experiments(entries, metric_keys, sort_by, ...)** — sorted comparison table. `diff_experiments(a, b)` — config + metric diff between two records.
+
+### 2.7b Fingerprint Resolution (Phase 3)
+
+`compute_fingerprint` routes trainer YAMLs (both file-based `stages.training.config:` and inline `stages.training.trainer_config:`) through `lobtrainer.config.merge.resolve_inheritance` before hashing, so the fingerprint is computed over the **resolved effective dict** rather than the pre-inheritance raw YAML.
+
+**Implementation**:
+
+| Helper | Purpose |
+|--------|---------|
+| `_load_trainer_merge_module()` | Loads `lobtrainer.config.merge` via `importlib.util.spec_from_file_location` without importing the torch-dependent `lobtrainer` package. Cached per-process. Keeps the hft-ops venv free of torch. Falls back to raw-YAML loading if the loader is unavailable (matches the pre-existing fail-safe pattern). |
+| `_load_trainer_config_resolved(path)` | File-based path. Loads the YAML, then calls `resolve_inheritance(data, path)`. |
+| `_resolve_inline_trainer_config(data, manifest_path, paths)` | Inline path. Deep-copies the inline dict, then calls `resolve_inheritance` using `<trainer_dir>/configs/` as the base directory for relative `_base:` references (matches the runtime `_absolutize_inline_base_paths` convention in `stages/training.py`; bases live under trainer configs, not next to the manifest). |
+
+**Error policy** (hard vs soft):
+
+| Error class | Behaviour | Rationale |
+|-------------|-----------|-----------|
+| `ValueError` (cycle, depth, malformed `_base`) | **Propagates** | These are configuration bugs the user must fix; silent-success would mask them. |
+| `FileNotFoundError` (referenced `_base:` file missing) | **Propagates** | Same reasoning. |
+| `OSError` (I/O glitch on base file) | **Warn + return empty dict** | Matches pre-existing `_load_config_as_dict` fail-safe; keeps fingerprinting robust to transient filesystem issues. |
+| `YAMLError` (malformed YAML in a base) | **Warn + return empty dict** | Same as `OSError`. |
+
+**Why this matters**:
+
+Pre-fix, `_load_config_as_dict` called `yaml.safe_load` directly without resolving inheritance. Since every Phase 3 experiment child is thin (`_base: [...]` + a handful of overrides), mutating a shared base (e.g., `bases/train/regression_default.yaml: epochs 30 → 40`) left every dependent experiment's fingerprint **unchanged** — pre/post-change ledger records were silently conflated under one fingerprint. This was a pre-existing bug (the five E5 configs already used `_base:` before Phase 3) that Phase 3 materially worsened by making every migrated config thin.
+
+Post-fix fingerprints are **content-addressed** over the resolved effective dict:
+- Changing a base file produces a different fingerprint for every dependent experiment.
+- `config: legacy.yaml` and `trainer_config: <inline equivalent>` produce **identical** fingerprints when their resolved dicts match.
+
+Regression guard: `tests/test_fingerprint_base_mutation.py` (5 tests):
+1. Mutating a base changes the dependent-experiment fingerprint.
+2. Path-based vs inline equivalents produce identical fingerprints.
+3. Cycles raise `ValueError` (not a silent empty dict).
+4. Depth overruns raise `ValueError`.
+5. Malformed `_base:` values (wrong type) raise `ValueError`.
 
 ---
 
@@ -204,16 +244,19 @@ hft-ops run manifest.yaml
 
 ## 6. Testing
 
-93 tests across 6 files:
+248 tests across 14 files (per-file counts verified via `pytest --collect-only -q` on 2026-04-15 post-Batch-4b):
 
 | File | Tests | Coverage |
 |------|-------|----------|
-| `test_manifest_schema.py` | 18 | Schema defaults, variable resolution, YAML loading |
-| `test_validator.py` | 14 | Feature count, window_size, horizon resolution, cross-module |
-| `test_dedup.py` | 8 | Fingerprint determinism, dedup lookup |
-| `test_ledger.py` | 18 | CRUD, filtering, persistence, notes update |
-| `test_provenance.py` | 16 | Hashing, git info, provenance building |
+| `test_manifest_schema.py` | 40 | Schema defaults, variable resolution, YAML loading, inline-base absolutization |
+| `test_ledger.py` | 25 | CRUD, filtering, persistence, notes update |
+| `test_provenance.py` | 20 | Hashing, git info, provenance building |
 | `test_sweep.py` | 19 | Sweep validation (8), grid expansion (11) |
+| `test_bugfixes_phase2b.py` | 16 | Phase 2b bug-fix regression guards (compat banner, inline-base absolutization) |
+| `test_validator.py` | 16 | Feature count, window_size, horizon resolution, cross-module |
+| `test_validation_stage.py` | 11 | IC gate / `fast_gate` library integration |
+| `test_dedup.py` | 8 | Fingerprint determinism, dedup lookup |
+| `test_fingerprint_base_mutation.py` | 5 | §2.7b regression guard — `compute_fingerprint` resolves `_base:` before hashing; cycle/depth/malformed hard errors propagate |
 
 ```bash
 .venv/bin/python -m pytest tests/ -v

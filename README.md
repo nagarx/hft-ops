@@ -83,7 +83,7 @@ hft-ops/
 │   └── provenance/         # Git hash, config hash, lineage
 ├── experiments/            # Experiment manifest YAMLs
 ├── ledger/                 # Experiment records (append-only)
-└── tests/                  # 93 tests
+└── tests/                  # 248 tests across 14 files (Phase 4 Batch 4b adds feature_sets/ coverage)
 ```
 
 ## Dependencies
