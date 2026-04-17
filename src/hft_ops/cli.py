@@ -292,8 +292,17 @@ def _record_experiment(
     fingerprint: str,
     results: dict[str, StageResult],
     total_duration: float,
-) -> None:
-    """Build and store an ExperimentRecord from stage results."""
+) -> str:
+    """Build and store an ExperimentRecord from stage results.
+
+    Returns:
+        The `experiment_id` of the just-registered record. Phase 6 6A.11
+        added this return value so sweep-loop callers can reference the
+        freshly-registered record directly instead of the brittle
+        `ledger.list_ids()[-1]` pattern (which couples correctness to
+        append-order of the in-memory index across `ExperimentLedger(...)`
+        re-instantiations).
+    """
     now = datetime.now(timezone.utc)
     timestamp = now.strftime("%Y%m%dT%H%M%S")
     experiment_id = f"{manifest.experiment.name}_{timestamp}_{fingerprint[:8]}"
@@ -302,15 +311,26 @@ def _record_experiment(
     if manifest.stages.extraction.config:
         ext_config_path = paths.resolve(manifest.stages.extraction.config)
 
+    # Phase 6 6A.3 (2026-04-17, revised after validation audit): dispatch to
+    # file-path OR inline-dict hashing via `build_provenance`'s symmetric API
+    # (mutually exclusive per lineage.py contract). Inline `trainer_config:`
+    # (Phase 1 wrapper-less) paths produce `config_hashes["trainer"]` via
+    # canonical_hash SSoT; file paths produce it via hash_file. Removed the
+    # prior post-mutation pattern (fragile; blocked Phase 6B.4 Provenance →
+    # hft_contracts migration because hft_contracts can't import from hft-ops).
     train_config_path = None
+    train_config_dict = None
     if manifest.stages.training.config:
         train_config_path = paths.resolve(manifest.stages.training.config)
+    elif manifest.stages.training.trainer_config is not None:
+        train_config_dict = manifest.stages.training.trainer_config
 
     provenance = build_provenance(
         paths.pipeline_root,
         manifest_path=Path(manifest.manifest_path) if manifest.manifest_path else None,
         extractor_config_path=ext_config_path,
         trainer_config_path=train_config_path,
+        trainer_config_dict=train_config_dict,
         data_dir=(
             paths.resolve(manifest.stages.extraction.output_dir)
             if manifest.stages.extraction.output_dir
@@ -396,6 +416,7 @@ def _record_experiment(
     console.print(f"  Status: {status}")
     console.print(f"  Duration: {total_duration:.1f}s")
     console.print(f"  Stages: {', '.join(stages_completed)}")
+    return experiment_id
 
 
 @main.command()
@@ -1144,19 +1165,29 @@ def sweep_run(
         # here had a match-wins bug under multi-axis overlap (deleted
         # 2026-04-16).
 
-        # Record this grid point
-        _record_experiment(exp, paths, fingerprint, results, point_duration)
+        # Record this grid point. Phase 6 6A.11 (revised after validation
+        # audit): use the returned experiment_id directly instead of the
+        # brittle `ledger.list_ids()[-1]` pattern. The prior pattern relied
+        # on append-order preservation across `ExperimentLedger(...)`
+        # re-instantiations AND was vulnerable to timestamp-collision if
+        # two points register in the same second with identical experiment_name.
+        record_id = _record_experiment(exp, paths, fingerprint, results, point_duration)
 
         # Update the record with sweep metadata
         ledger = ExperimentLedger(paths.ledger_dir)
-        record_id = ledger.list_ids()[-1]  # Most recently registered
         record = ledger.get(record_id)
         if record:
             record.sweep_id = sweep_id
             record.axis_values = axis_values
             record.save(paths.ledger_dir / "records" / f"{record_id}.json")
-            # Rebuild index with updated sweep fields
-            ledger._rebuild_index()
+            # Phase 6 6A.11 (2026-04-17): REMOVED per-point _rebuild_index()
+            # (was called N times for N-point sweeps — O(N × ledger_size)). A
+            # single rebuild runs at loop END (see post-loop aggregate write
+            # which already rebuilds once). In-memory `ledger._index` stays
+            # in sync for subsequent `list_ids()[-1]` calls because register
+            # already appended to `_index` AND saved index.json; the next
+            # ExperimentLedger(paths.ledger_dir) instantiation at the top of
+            # the next iteration reads from disk and sees the fresh entry.
 
         # Phase 5 FULL-A Block 3: accumulate per-point summary for the
         # aggregate record written at loop end.

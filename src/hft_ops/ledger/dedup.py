@@ -229,6 +229,12 @@ def _load_trainer_feature_presets_module(paths: "PipelinePaths") -> Any:
             sys.modules["lobtrainer"] = types.ModuleType("lobtrainer")
             _stubs_installed.append("lobtrainer")
 
+    # Phase 6 6A.4 (2026-04-17): ALWAYS roll back stubs via try/finally
+    # (previously rolled back only on exception — success path left stubs
+    # polluting sys.modules). Pre-existing real-package entries survive because
+    # `_stubs_installed` only contains names we SET here. After exec_module
+    # completes, the module object retains its own references to the imports it
+    # used; removing the sys.modules entries does NOT destroy them.
     try:
         import importlib.util  # stdlib
         spec = importlib.util.spec_from_file_location(
@@ -241,28 +247,31 @@ def _load_trainer_feature_presets_module(paths: "PipelinePaths") -> Any:
                 f"version mismatch."
             )
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    except Exception as exc:
-        # Roll back stubs on failure to avoid polluting sys.modules for
-        # downstream code paths that may legitimately want the real package.
+        try:
+            spec.loader.exec_module(module)
+        except Exception as exc:
+            raise FingerprintNormalizationError(
+                f"Failed to load trainer feature_presets.py from {presets_path}: "
+                f"{exc!r}. hft-ops fingerprint requires this module to normalize "
+                f"`feature_preset:` configs. Confirm `hft_contracts` provides "
+                f"FeatureIndex + ExperimentalFeatureIndex symbols."
+            ) from exc
+
+        # Verify the expected surface exists (defensive — catch silent API drift).
+        if not hasattr(module, "FEATURE_PRESETS") or not isinstance(
+            module.FEATURE_PRESETS, dict
+        ):
+            raise FingerprintNormalizationError(
+                f"Loaded feature_presets.py does not expose `FEATURE_PRESETS: "
+                f"Dict[str, Tuple[int, ...]]`. Module API has drifted — update "
+                f"hft-ops dedup.py normalization to match."
+            )
+    finally:
+        # Roll back stubs on BOTH success and failure paths (6A.4 fix).
+        # Pre-existing real-package entries (when a user has lobtrainer + torch
+        # installed) were NEVER added to _stubs_installed, so they survive.
         for name in _stubs_installed:
             sys.modules.pop(name, None)
-        raise FingerprintNormalizationError(
-            f"Failed to load trainer feature_presets.py from {presets_path}: "
-            f"{exc!r}. hft-ops fingerprint requires this module to normalize "
-            f"`feature_preset:` configs. Confirm `hft_contracts` provides "
-            f"FeatureIndex + ExperimentalFeatureIndex symbols."
-        ) from exc
-
-    # Verify the expected surface exists (defensive — catch silent API drift).
-    if not hasattr(module, "FEATURE_PRESETS") or not isinstance(
-        module.FEATURE_PRESETS, dict
-    ):
-        raise FingerprintNormalizationError(
-            f"Loaded feature_presets.py does not expose `FEATURE_PRESETS: "
-            f"Dict[str, Tuple[int, ...]]`. Module API has drifted — update "
-            f"hft-ops dedup.py normalization to match."
-        )
 
     _TRAINER_FEATURE_PRESETS_MODULE_CACHE = module
     return module
