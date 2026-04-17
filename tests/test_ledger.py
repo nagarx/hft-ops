@@ -217,3 +217,91 @@ class TestExperimentLedger:
         record = _make_record(experiment_id="")
         with pytest.raises(ValueError, match="experiment_id"):
             ledger.register(record)
+
+
+class TestRecordType:
+    """Phase 1.3: RecordType enum + record_type / sub_records / parent_experiment_id fields."""
+
+    def test_default_record_type_is_training(self):
+        r = _make_record()
+        assert r.record_type == "training"
+        assert r.sub_records == []
+        assert r.parent_experiment_id == ""
+
+    def test_record_type_enum_values(self):
+        from hft_ops.ledger.experiment_record import RecordType
+        assert RecordType.TRAINING.value == "training"
+        assert RecordType.ANALYSIS.value == "analysis"
+        assert RecordType.CALIBRATION.value == "calibration"
+        assert RecordType.BACKTEST.value == "backtest"
+        assert RecordType.EVALUATION.value == "evaluation"
+        assert RecordType.SWEEP_AGGREGATE.value == "sweep_aggregate"
+
+    def test_analysis_record_roundtrip(self, tmp_path: Path):
+        from hft_ops.ledger.experiment_record import RecordType
+        r = _make_record(experiment_id="e7_regime")
+        r.record_type = RecordType.ANALYSIS.value
+        r.training_metrics = {"diagnostic": "regime_filter_no_value"}
+        path = tmp_path / "e7.json"
+        r.save(path)
+        loaded = ExperimentRecord.load(path)
+        assert loaded.record_type == "analysis"
+
+    def test_calibration_with_parent(self, tmp_path: Path):
+        from hft_ops.ledger.experiment_record import RecordType
+        r = _make_record(experiment_id="e6_calibrated")
+        r.record_type = RecordType.CALIBRATION.value
+        r.parent_experiment_id = "e5_60s_huber_cvml"
+        path = tmp_path / "e6.json"
+        r.save(path)
+        loaded = ExperimentRecord.load(path)
+        assert loaded.record_type == "calibration"
+        assert loaded.parent_experiment_id == "e5_60s_huber_cvml"
+
+    def test_sweep_aggregate_with_sub_records(self, tmp_path: Path):
+        from hft_ops.ledger.experiment_record import RecordType
+        r = _make_record(experiment_id="e4_baselines_aggregate")
+        r.record_type = RecordType.SWEEP_AGGREGATE.value
+        r.sub_records = [
+            {"name": "ridge", "training_metrics": {"r_squared": 0.32}},
+            {"name": "gradboost", "training_metrics": {"r_squared": 0.40}},
+        ]
+        path = tmp_path / "e4.json"
+        r.save(path)
+        loaded = ExperimentRecord.load(path)
+        assert loaded.record_type == "sweep_aggregate"
+        assert len(loaded.sub_records) == 2
+        assert loaded.sub_records[1]["name"] == "gradboost"
+
+    def test_index_entry_includes_record_type_and_retroactive(self, tmp_path: Path):
+        r = _make_record(experiment_id="indexed")
+        r.record_type = "evaluation"
+        r.parent_experiment_id = "parent_exp"
+        r.provenance.retroactive = True
+        entry = r.index_entry()
+        assert entry["record_type"] == "evaluation"
+        assert entry["parent_experiment_id"] == "parent_exp"
+        assert entry["retroactive"] is True
+
+    def test_old_record_loads_with_default_record_type(self, tmp_path: Path):
+        """Backward compat: old JSON without record_type loads as 'training'."""
+        import json
+        # Manually construct old-format JSON (no record_type field)
+        old_data = {
+            "experiment_id": "legacy",
+            "name": "legacy_exp",
+            "fingerprint": "fp_legacy",
+            "provenance": {"git": {}, "config_hashes": {}, "contract_version": "2.2"},
+            "tags": [],
+            "training_metrics": {"accuracy": 0.6},
+            "training_config": {},
+            "status": "completed",
+            "created_at": "2026-03-01T00:00:00+00:00",
+        }
+        path = tmp_path / "legacy.json"
+        with open(path, "w") as f:
+            json.dump(old_data, f)
+        loaded = ExperimentRecord.load(path)
+        assert loaded.record_type == "training"  # default
+        assert loaded.sub_records == []
+        assert loaded.parent_experiment_id == ""

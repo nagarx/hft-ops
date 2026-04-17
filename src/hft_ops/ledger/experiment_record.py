@@ -14,10 +14,43 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from hft_ops.provenance.lineage import Provenance
+
+
+class RecordType(str, Enum):
+    """Type of experiment a ledger record represents.
+
+    Introduced in Phase 1.3 to accommodate the full scope of past/future
+    experiments. Not every "experiment" produces a trainer ``history.json`` —
+    many analytical studies (E7-E16) produce only analyzer/evaluator output,
+    and some post-hoc calibrations (E6) produce only signals.
+
+    Each type has a reduced-fidelity schema:
+
+    - ``training``: Full trainer run. ``training_metrics`` populated, optionally
+      ``backtest_metrics`` too. The default.
+    - ``analysis``: Diagnostic study (no training, no backtest). Results live
+      in ``training_metrics`` as a free-form dict OR in ``notes``.
+    - ``calibration``: Post-hoc calibration of an existing trained model.
+      References a parent training record via ``parent_experiment_id``.
+    - ``backtest``: Backtest-only experiment (pre-existing model, pre-existing
+      signals). ``backtest_metrics`` populated.
+    - ``evaluation``: 5-path feature-evaluator run producing a classification
+      table / feature profiles. ``training_metrics`` holds the summary.
+    - ``sweep_aggregate``: Aggregate record for a multi-run script (e.g.,
+      e4_baselines.py that runs 5 models). Sub-results live in ``sub_records``.
+    """
+
+    TRAINING = "training"
+    ANALYSIS = "analysis"
+    CALIBRATION = "calibration"
+    BACKTEST = "backtest"
+    EVALUATION = "evaluation"
+    SWEEP_AGGREGATE = "sweep_aggregate"
 
 
 @dataclass
@@ -57,6 +90,18 @@ class ExperimentRecord:
     manifest_path: str = ""
     fingerprint: str = ""
 
+    # Phase 4 Batch 4c.4 (2026-04-16): optional reference to the FeatureSet
+    # registry entry used at trainer time. Top-level (not nested under
+    # `Provenance.config_hashes`) because it's a structured reference with
+    # identity (name + content_hash), not an opaque config-hash. Query
+    # pattern: `record.feature_set_ref["name"] == "momentum_v1"`.
+    # None iff the trainer did not use `DataConfig.feature_set`
+    # (legacy path, explicit feature_indices, or feature_preset).
+    # See PA §13.4.2 for why this is NOT in Provenance.config_hashes
+    # (that dict's implicit contract is values are SHA-256 hex; forcing a
+    # structured reference into it would violate that).
+    feature_set_ref: Optional[Dict[str, str]] = None
+
     provenance: Provenance = field(default_factory=Provenance)
     contract_version: str = ""
 
@@ -84,6 +129,21 @@ class ExperimentRecord:
 
     axis_values: Dict[str, str] = field(default_factory=dict)
     """Axis name -> selected label for this grid point (e.g., {"model": "tlob", "horizon": "H10"})."""
+
+    # Phase 1.3 record-typing fields
+    record_type: str = "training"
+    """Type of record. One of: training, analysis, calibration, backtest, evaluation,
+    sweep_aggregate. Use the ``RecordType`` enum's ``.value`` for type-safety.
+    Default ``training`` preserves backward compat with pre-Phase-1.3 records."""
+
+    sub_records: List[Dict[str, Any]] = field(default_factory=list)
+    """For ``sweep_aggregate`` records: per-sub-experiment summaries (typically
+    {"name": ..., "training_metrics": {...}, "config_diff": {...}}).
+    Empty for non-aggregate types."""
+
+    parent_experiment_id: str = ""
+    """For ``calibration`` and ``backtest`` records: the experiment_id of the
+    upstream record this one depends on (e.g., calibration → its trained model)."""
 
     def __post_init__(self) -> None:
         if not self.created_at:
@@ -156,4 +216,11 @@ class ExperimentRecord:
             ),
             "sweep_id": self.sweep_id,
             "axis_values": self.axis_values,
+            "record_type": self.record_type,
+            "parent_experiment_id": self.parent_experiment_id,
+            "retroactive": self.provenance.retroactive,
+            # Phase 4 Batch 4c.4: surface feature_set_ref in index for
+            # `hft-ops ledger list --feature-set <name>` filtering. Empty dict
+            # (not None) when unset, matches other Dict default conventions.
+            "feature_set_ref": self.feature_set_ref or {},
         }

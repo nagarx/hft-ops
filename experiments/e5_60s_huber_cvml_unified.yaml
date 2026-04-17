@@ -1,0 +1,145 @@
+# =============================================================================
+# Experiment: E5 60s Huber CVML — UNIFIED MANIFEST (Phase 1 proof-of-concept)
+# =============================================================================
+#
+# This manifest demonstrates the WRAPPER-LESS pattern introduced in Phase 1 of
+# the training-pipeline-architecture migration. The trainer config is embedded
+# inline (stages.training.trainer_config) rather than referenced via a separate
+# YAML file. This eliminates the 2-files-per-experiment duplication that the
+# prior plan would have institutionalized.
+#
+# Compare with the legacy pattern (still supported):
+#   stages:
+#     training:
+#       config: "lob-model-trainer/configs/experiments/e5_60s_huber_cvml.yaml"
+#
+# Result: one file = one experiment. Single source of truth.
+#
+# Usage:
+#   hft-ops run experiments/e5_60s_huber_cvml_unified.yaml
+#
+# Reference:
+#   - Phase 1 of gentle-brewing-quail.md
+#   - TrainingStage docstring in hft-ops/src/hft_ops/manifest/schema.py
+# =============================================================================
+
+experiment:
+  name: "e5_60s_huber_cvml_unified"
+  description: >
+    E5 Phase 2 CVML test: TLOB + CVML on 60s-binned data at H10 (10 min).
+    This is the unified-manifest variant of the e5_60s_huber_cvml experiment,
+    serving as the Phase 1 proof-of-concept for the wrapper-less pattern.
+    Expected behavior identical to the legacy e5_60s_huber_cvml.yaml trainer
+    config (fingerprint should match within a tolerance of doc-only differences).
+  hypothesis: >
+    CVML cross-feature mixing (98 → 49 features via dilated causal Conv1D)
+    improves IC/DA over the no-CVML baseline at H10 on 60s bins. Target
+    IC > 0.38 based on prior no-CVML E5 runs (IC=0.380).
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - e5
+    - regression
+    - h10
+    - 60s
+    - huber
+    - cvml
+    - unified-manifest-poc
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    # === WRAPPER-LESS: full trainer config embedded inline ===
+    # The base-inheritance content (bases/e5_tlob_regression.yaml) is expanded
+    # inline here. Phase 3 will introduce OmegaConf-based multi-base composition
+    # that will allow bases to be referenced rather than inlined.
+    trainer_config:
+      name: E5_60s_Huber_CVML
+      description: "E5 Phase 2 CVML test: TLOB + CVML on 60s data at H10 (10 min)."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s"  # overridden below to absolute
+        feature_count: 98
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 0
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: true
+        tlob_cvml_out_channels: 49
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42
+        mixed_precision: false
+
+      output_dir: outputs/experiments/e5_60s_huber_cvml_unified
+      log_level: INFO
+      tags: [e5, nvda, regression, h10, 60s, huber, cvml, unified]
+
+    # Overrides applied AFTER the inline config, BEFORE materialization to temp YAML.
+    # Ensures data_dir becomes an absolute path (not a relative path that would fail
+    # when train.py resolves it from the temp-file location).
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    horizon_value: 10
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    # Regression experiments don't currently use a dedicated signal_export step
+    # in the E5 baseline. Phase 2/4 will add validation + feature_set flow;
+    # signal export remains optional per manifest.
+    enabled: false
+
+  backtesting:
+    # Phase 1 POC: skip backtesting. Validate end-to-end with a separate manifest
+    # once Phase 0 backtest script routing is exercised on this export.
+    enabled: false

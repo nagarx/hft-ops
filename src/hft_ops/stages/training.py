@@ -54,6 +54,30 @@ def _resolve_horizon_idx(
     return None
 
 
+def _apply_overrides_to_dict(
+    cfg: Dict[str, Any],
+    overrides: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Apply dotted-key overrides to a config dict in-place.
+
+    Args:
+        cfg: Config dict to modify.
+        overrides: Dict of dotted keys to values (e.g., {"data.data_dir": "/path"}).
+
+    Returns:
+        The same dict (for chaining). Mutated in-place.
+    """
+    for dotted_key, value in overrides.items():
+        parts = dotted_key.split(".")
+        target = cfg
+        for part in parts[:-1]:
+            if part not in target or not isinstance(target[part], dict):
+                target[part] = {}
+            target = target[part]
+        target[parts[-1]] = value
+    return cfg
+
+
 def _apply_overrides(
     config_path: Path,
     overrides: Dict[str, Any],
@@ -72,14 +96,94 @@ def _apply_overrides(
     with open(config_path, "r") as f:
         cfg = yaml.safe_load(f) or {}
 
-    for dotted_key, value in overrides.items():
-        parts = dotted_key.split(".")
-        target = cfg
-        for part in parts[:-1]:
-            if part not in target or not isinstance(target[part], dict):
-                target[part] = {}
-            target = target[part]
-        target[parts[-1]] = value
+    _apply_overrides_to_dict(cfg, overrides)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+
+    return output_path
+
+
+def _absolutize_inline_base_paths(
+    cfg: Dict[str, Any],
+    trainer_configs_root: Path,
+) -> None:
+    """Convert relative ``_base:`` values in an inline trainer_config to absolute paths.
+
+    Phase 1 wrapper-less manifests embed the trainer_config dict directly in
+    the manifest. When that dict uses ``_base:`` for composition, the path is
+    intuitively relative to ``<trainer_dir>/configs/`` (where bases live) —
+    but we materialize the config to a temp file under ``hft-ops/runs/...``,
+    and ``lobtrainer.config.merge.resolve_inheritance`` resolves ``_base``
+    relative to the FILE's directory. Without this rewrite, bases would be
+    searched under the temp directory and fail to load.
+
+    This function walks the config dict and rewrites each relative ``_base``
+    to an absolute path rooted at ``trainer_configs_root``. Absolute paths
+    are left untouched. The walk is recursive so nested ``_base`` (added in
+    Phase 3 for multi-base composition) is covered too.
+
+    Args:
+        cfg: The inline trainer_config dict. Mutated in-place.
+        trainer_configs_root: Absolute path to ``<trainer_dir>/configs/``.
+    """
+
+    def _absolutize(value: Any) -> Any:
+        if isinstance(value, str):
+            p = Path(value)
+            if p.is_absolute():
+                return str(p)
+            return str((trainer_configs_root / p).resolve())
+        if isinstance(value, list):
+            return [_absolutize(v) for v in value]
+        return value
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if "_base" in node:
+                node["_base"] = _absolutize(node["_base"])
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+
+    _walk(cfg)
+
+
+def _materialize_inline_config(
+    inline_cfg: Dict[str, Any],
+    overrides: Dict[str, Any],
+    output_path: Path,
+    trainer_configs_root: Optional[Path] = None,
+) -> Path:
+    """Write an inline trainer_config dict (with overrides applied) to a YAML file.
+
+    This is the wrapper-less path: the manifest contains the trainer config
+    inline, and we serialize it to a file that train.py can consume. If the
+    inline config uses ``_base:`` inheritance, relative base paths are
+    absolutized (rooted at ``trainer_configs_root``) so they resolve correctly
+    from the temp file's location.
+
+    Args:
+        inline_cfg: The trainer_config dict from the manifest (deep-copied here).
+        overrides: Dict of dotted keys to values.
+        output_path: Where to write the resolved YAML.
+        trainer_configs_root: Absolute path to ``<trainer_dir>/configs/``.
+            When supplied, relative ``_base:`` entries are absolutized against
+            this root. When None (test harness, manifests without inheritance),
+            ``_base`` entries are written verbatim.
+
+    Returns:
+        The output_path.
+    """
+    # Deep copy so manifest state is not mutated
+    import copy
+    cfg = copy.deepcopy(inline_cfg)
+    if trainer_configs_root is not None:
+        _absolutize_inline_base_paths(cfg, trainer_configs_root)
+    _apply_overrides_to_dict(cfg, overrides)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
@@ -103,12 +207,23 @@ class TrainingRunner:
         errors: List[str] = []
         stage = manifest.stages.training
 
-        if not stage.config:
-            errors.append("training.config is required")
-        else:
+        has_path = bool(stage.config)
+        has_inline = stage.trainer_config is not None
+
+        if not has_path and not has_inline:
+            errors.append(
+                "training: either 'config' (path) or 'trainer_config' (inline) is required"
+            )
+        elif has_path and has_inline:
+            # Loader already catches this; defensive double-check.
+            errors.append(
+                "training: 'config' and 'trainer_config' are mutually exclusive"
+            )
+        elif has_path:
             config_path = config.paths.resolve(stage.config)
             if not config_path.exists():
                 errors.append(f"Trainer config not found: {config_path}")
+        # has_inline case: no file to check; dict already validated by loader.
 
         trainer_dir = config.paths.trainer_dir
         if not trainer_dir.exists():
@@ -133,7 +248,6 @@ class TrainingRunner:
             result.error_message = "dry-run: would run training"
             return result
 
-        original_config = config.paths.resolve(stage.config)
         overrides = dict(stage.overrides)
 
         if stage.horizon_value is not None and manifest.stages.extraction.output_dir:
@@ -148,15 +262,34 @@ class TrainingRunner:
             output_dir = str(config.paths.resolve(output_dir))
             overrides["output_dir"] = output_dir
 
-        if overrides:
+        # Materialize effective config: inline path vs file path
+        if stage.trainer_config is not None:
+            # Inline path: write trainer_config dict (with overrides) to temp YAML.
+            # Absolutize ``_base:`` references so train.py's resolve_inheritance()
+            # can find bases under <trainer_dir>/configs/ from the temp location.
+            resolved_dir = config.paths.runs_dir / manifest.experiment.name
+            resolved_dir.mkdir(parents=True, exist_ok=True)
+            resolved_config = resolved_dir / "resolved_trainer_config.yaml"
+            trainer_configs_root = (config.paths.trainer_dir / "configs").resolve()
+            effective_config = _materialize_inline_config(
+                stage.trainer_config,
+                overrides,
+                resolved_config,
+                trainer_configs_root=trainer_configs_root,
+            )
+            result.captured_metrics["_trainer_config_source"] = "inline"
+        elif overrides:
+            original_config = config.paths.resolve(stage.config)
             resolved_dir = config.paths.runs_dir / manifest.experiment.name
             resolved_dir.mkdir(parents=True, exist_ok=True)
             resolved_config = resolved_dir / "resolved_trainer_config.yaml"
             effective_config = _apply_overrides(
                 original_config, overrides, resolved_config
             )
+            result.captured_metrics["_trainer_config_source"] = "path_with_overrides"
         else:
-            effective_config = original_config
+            effective_config = config.paths.resolve(stage.config)
+            result.captured_metrics["_trainer_config_source"] = "path_raw"
 
         # Store effective config path for _record_experiment to load
         result.captured_metrics["_effective_config_path"] = str(effective_config)
