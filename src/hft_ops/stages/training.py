@@ -334,11 +334,33 @@ class TrainingRunner:
         return result
 
     def _capture_training_metrics(self, result: StageResult) -> None:
-        """Try to capture training metrics from the output directory."""
+        """Capture training metrics from the output directory.
+
+        Phase 7 Stage 7.4 (2026-04-19): extended to read both
+        ``training_history.json`` (per-epoch classification metrics) AND
+        ``test_metrics.json`` (regression test-split metrics). Prior
+        implementation only handled classification — regression metrics
+        (``test_ic``, ``test_directional_accuracy``, ``test_r2``, etc.)
+        were silently dropped. PostTrainingGateRunner depends on these
+        metrics being in ``captured_metrics`` to compare against prior
+        best experiments.
+
+        Conventions:
+        - Classification runs: ``training_history.json`` is a list-of-
+          dicts (per-epoch); we extract max val_accuracy + max val_macro_f1.
+        - Regression runs: ``test_metrics.json`` is a flat dict of named
+          scalars; we merge ALL float-valued keys into captured_metrics.
+
+        Both files may exist (regression runs with per-epoch val IC);
+        merge order is history-first, test-second (test-split wins on
+        key conflict — it's the canonical final metric).
+        """
         if not result.output_dir:
             return
 
         output_dir = Path(result.output_dir)
+
+        # Classification-style per-epoch history.
         history_file = output_dir / "training_history.json"
         if history_file.exists():
             try:
@@ -351,6 +373,40 @@ class TrainingRunner:
                     val_f1s = history.get("val_macro_f1", [])
                     if val_f1s:
                         result.captured_metrics["best_val_macro_f1"] = max(val_f1s)
+                elif isinstance(history, list):
+                    # List-of-dicts per-epoch format — extract max val_*
+                    # scalar keys opportunistically.
+                    for key in ("val_accuracy", "val_macro_f1", "val_loss"):
+                        series = [
+                            epoch.get(key)
+                            for epoch in history
+                            if isinstance(epoch, dict) and isinstance(epoch.get(key), (int, float))
+                        ]
+                        if series:
+                            result.captured_metrics[f"best_{key}"] = (
+                                max(series) if key != "val_loss" else min(series)
+                            )
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Regression-style test-split scalar metrics (Phase 7 Stage 7.4).
+        # Convention established by lobtrainer regression export: a flat
+        # dict of {metric_name: float}. Merge all finite-float values into
+        # captured_metrics with the exact key preserved (no prefix), so
+        # PostTrainingGateRunner can read ``test_ic`` directly.
+        test_metrics_file = output_dir / "test_metrics.json"
+        if test_metrics_file.exists():
+            try:
+                with open(test_metrics_file, "r") as f:
+                    test_metrics = json.load(f)
+                if isinstance(test_metrics, dict):
+                    for key, value in test_metrics.items():
+                        if isinstance(value, (int, float)):
+                            # Guard against NaN/Inf sneaking into the
+                            # ledger — rule §2 + §8.
+                            import math
+                            if math.isfinite(value):
+                                result.captured_metrics[key] = float(value)
             except (json.JSONDecodeError, OSError):
                 pass
 

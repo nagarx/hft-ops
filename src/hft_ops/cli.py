@@ -38,6 +38,7 @@ from hft_ops.manifest.validator import (
 from hft_ops.paths import PipelinePaths
 from hft_ops.provenance.lineage import build_provenance
 from hft_ops.stages.backtesting import BacktestRunner
+from hft_ops.stages.post_training_gate import PostTrainingGateRunner
 from hft_ops.stages.signal_export import SignalExportRunner
 from hft_ops.stages.base import StageResult, StageStatus
 from hft_ops.stages.dataset_analysis import DatasetAnalysisRunner
@@ -228,6 +229,15 @@ def run(
         ("dataset_analysis", manifest.stages.dataset_analysis.enabled, DatasetAnalysisRunner()),
         ("validation", manifest.stages.validation.enabled, ValidationRunner()),
         ("training", manifest.stages.training.enabled, TrainingRunner()),
+        # Phase 7 Stage 7.4 (2026-04-19): post-training regression-detection
+        # gate. Runs between training and signal_export so a researcher gets
+        # quality signal BEFORE compute-intensive signal export + backtest.
+        # Default enabled=False; opt-in via manifest.
+        (
+            "post_training_gate",
+            manifest.stages.post_training_gate.enabled,
+            PostTrainingGateRunner(),
+        ),
         ("signal_export", manifest.stages.signal_export.enabled, SignalExportRunner()),
         ("backtesting", manifest.stages.backtesting.enabled, BacktestRunner()),
     ]
@@ -1123,6 +1133,12 @@ def sweep_run(
             ("dataset_analysis", exp.stages.dataset_analysis.enabled, DatasetAnalysisRunner()),
             ("validation", exp.stages.validation.enabled, ValidationRunner()),
             ("training", exp.stages.training.enabled, TrainingRunner()),
+            # Phase 7 Stage 7.4 (2026-04-19): post-training regression gate
+            (
+                "post_training_gate",
+                exp.stages.post_training_gate.enabled,
+                PostTrainingGateRunner(),
+            ),
             ("signal_export", exp.stages.signal_export.enabled, SignalExportRunner()),
             ("backtesting", exp.stages.backtesting.enabled, BacktestRunner()),
         ]

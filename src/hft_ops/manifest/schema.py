@@ -237,6 +237,76 @@ class ValidationStage:
 
 
 @dataclass
+class PostTrainingGateStage:
+    """Post-training regression-detection gate (Phase 7 Stage 7.4).
+
+    Runs AFTER ``training`` and BEFORE ``signal_export``. Compares the
+    just-completed experiment's metrics against:
+
+    1. **Floor check**: is the primary metric (IC for regression, macro_f1
+       for classification) above an absolute floor? Catches degenerate
+       runs (e.g., mean-collapse, loss inversion).
+    2. **Prior-best ratio check**: is the primary metric within
+       ``min_ratio_vs_prior_best`` of the best prior experiment for the
+       SAME (model_type, label_type, horizon) signature? Catches silent
+       regressions as the pipeline evolves.
+    3. **Cost-breakeven check** (optional, regression only): is the
+       model's prediction magnitude plausibly tradable against IBKR-
+       calibrated cost floors? Reports only (no abort default).
+
+    On regression (any check fails), behavior is controlled by
+    ``on_regression``:
+
+    - ``warn`` (DEFAULT): log + record gate_report.json in the output
+      dir + attach summary to ExperimentRecord.notes + PROCEED to
+      signal_export. Rationale: a researcher often still wants to see
+      the full backtest + signal outputs when a regression is flagged,
+      to understand WHY. Aborting loses diagnostic information.
+    - ``abort``: raise StageFailure → pipeline stops → ledger record
+      saved with ``status: failed`` and the full gate_report attached.
+      Use in CI / auto-sweep contexts where regressions should halt
+      computation.
+    - ``record_only``: record the gate outcome but never fail, never
+      warn. For archival / post-hoc analysis where the gate is
+      informational only.
+
+    Attributes:
+        enabled: Whether to run the gate. Default False (opt-in during
+            Phase 7.4 rollout; may default True in Phase 8 after
+            validation).
+        on_regression: Disposition on regression detection.
+        primary_metric: Which captured_metric to use for comparisons.
+            Common values: ``"test_ic"`` (regression), ``"best_val_macro_f1"``
+            (classification), ``"test_directional_accuracy"``. Empty →
+            auto-infer (test_ic > test_directional_accuracy > best_val_macro_f1).
+        min_metric_floor: Floor value for the primary metric. Default
+            0.05 matches the pre-training IC floor (Rule 13).
+        min_ratio_vs_prior_best: New metric must be >= this ratio of the
+            best prior experiment's same metric. 0.9 means "within 10%
+            of prior best". Set to 0 to disable the ratio check.
+        match_on_signature: Tuple of fields used to match prior experiments
+            for the ratio check. Default ``("model_type", "labeling_strategy",
+            "horizon_value")``. Experiments whose signature differs are
+            excluded from the ratio check.
+        cost_breakeven_bps: Cost floor in basis points (IBKR-calibrated
+            Deep ITM = 1.4 bps). 0 disables the check.
+        output_dir: Where to write ``gate_report.json``. Empty → defaults
+            to the experiment's runs directory.
+    """
+
+    enabled: bool = False
+    on_regression: str = "warn"
+    primary_metric: str = ""
+    min_metric_floor: float = 0.05
+    min_ratio_vs_prior_best: float = 0.9
+    match_on_signature: List[str] = field(
+        default_factory=lambda: ["model_type", "labeling_strategy", "horizon_value"]
+    )
+    cost_breakeven_bps: float = 1.4
+    output_dir: str = ""
+
+
+@dataclass
 class SignalExportStage:
     """Signal export stage configuration.
 
@@ -280,6 +350,12 @@ class Stages:
     )
     validation: ValidationStage = field(default_factory=ValidationStage)
     training: TrainingStage = field(default_factory=TrainingStage)
+    # Phase 7 Stage 7.4 (2026-04-19): post-training regression-detection gate.
+    # Runs between training and signal_export. Default enabled=False — opt-in
+    # during Phase 7.4 rollout. See PostTrainingGateStage docstring.
+    post_training_gate: PostTrainingGateStage = field(
+        default_factory=PostTrainingGateStage
+    )
     signal_export: SignalExportStage = field(default_factory=SignalExportStage)
     backtesting: BacktestingStage = field(default_factory=BacktestingStage)
 
