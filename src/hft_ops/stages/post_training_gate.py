@@ -60,10 +60,47 @@ logger = logging.getLogger(__name__)
 # accuracy (classification/regression crossover) > val_macro_f1
 # (classification) > val_accuracy (classification fallback).
 _PRIMARY_METRIC_FALLBACK_ORDER = (
+    # Test-split metrics (regression path via TrainingRunner when
+    # test_metrics.json is present — currently simple_trainer.py only;
+    # PyTorch Trainer writes these via training_history.json per-epoch val_*
+    # which we expose as best_val_* below).
     "test_ic",
     "test_directional_accuracy",
+    # Phase 7 Stage 7.4 post-validation (2026-04-19): extend fallback with
+    # per-epoch val_* best values extracted from training_history.json
+    # list-of-dicts format. The PyTorch Trainer (training/trainer.py)
+    # writes these for every regression run. Addresses validator finding
+    # C1 ("gate effectively blind for TLOB/HMHP regression"): pre-fix the
+    # fallback order only reached val_macro_f1/val_accuracy (classification
+    # only), silently returning primary_metric_value=None for regression
+    # runs and skipping every check.
+    "best_val_ic",
+    "best_val_directional_accuracy",
+    "best_val_r2",
+    "best_val_pearson",
+    "best_val_profitable_accuracy",
     "best_val_macro_f1",
     "best_val_accuracy",
+)
+
+# Regression val_* keys emitted per-epoch by PyTorch Trainer where HIGHER
+# values are better — take max across finite epochs.
+_REGRESSION_VAL_MAX_KEYS = (
+    "val_ic",
+    "val_directional_accuracy",
+    "val_r2",
+    "val_pearson",
+    "val_profitable_accuracy",
+)
+
+# Regression val_* keys where LOWER values are better — take min across
+# finite epochs. (Loss magnitudes; not currently in the fallback order
+# since "low loss" is trivially satisfied by mean-collapse and not a
+# meaningful regression signal for this gate.)
+_REGRESSION_VAL_MIN_KEYS = (
+    "val_loss",
+    "val_mae",
+    "val_rmse",
 )
 
 
@@ -233,10 +270,14 @@ class PostTrainingGateRunner:
         )
         output_dir_path.mkdir(parents=True, exist_ok=True)
 
-        # Build match signature for prior-best query
+        # Build match signature for prior-best query. Pass training_output_dir
+        # so the signature builder reads from the fully-resolved config.yaml
+        # (post _base: inheritance) rather than the unresolved inline dict.
+        # Post-validation H1 fix.
         match_signature = _build_match_signature(
             manifest=manifest,
             match_fields=tuple(stage.match_on_signature),
+            training_output_dir=training_output_dir,
         )
 
         # Query ledger for prior best (if ratio check is enabled)
@@ -388,10 +429,19 @@ def _read_training_metrics(training_output_dir: Path) -> Dict[str, float]:
                     if finite:
                         metrics.setdefault("best_val_macro_f1", max(finite))
             elif isinstance(history, list):
-                # Per-epoch list-of-dicts format
-                for key in ("val_accuracy", "val_macro_f1"):
+                # Per-epoch list-of-dicts format. Extract BEST finite value
+                # across epochs for each known val_* key. Classification
+                # metrics take max; regression metrics split between
+                # max-better (IC, DA, R², etc.) and min-better (loss, MAE,
+                # RMSE). Phase 7 Stage 7.4 post-validation (2026-04-19)
+                # extended with regression keys to address validator C1
+                # (PyTorch Trainer writes val_* per-epoch for every
+                # regression run; pre-fix gate silently returned None for
+                # these and skipped every check).
+                _classification_keys = ("val_accuracy", "val_macro_f1")
+                for key in _classification_keys + _REGRESSION_VAL_MAX_KEYS:
                     series = [
-                        epoch.get(key)
+                        epoch[key]
                         for epoch in history
                         if isinstance(epoch, dict)
                         and isinstance(epoch.get(key), (int, float))
@@ -399,6 +449,16 @@ def _read_training_metrics(training_output_dir: Path) -> Dict[str, float]:
                     ]
                     if series:
                         metrics.setdefault(f"best_{key}", max(series))
+                for key in _REGRESSION_VAL_MIN_KEYS:
+                    series = [
+                        epoch[key]
+                        for epoch in history
+                        if isinstance(epoch, dict)
+                        and isinstance(epoch.get(key), (int, float))
+                        and math.isfinite(epoch.get(key))
+                    ]
+                    if series:
+                        metrics.setdefault(f"best_{key}", min(series))
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Failed to read %s: %s", history_file, exc)
 
@@ -422,45 +482,93 @@ def _select_primary_metric(
 def _build_match_signature(
     manifest: ExperimentManifest,
     match_fields: tuple,
+    *,
+    training_output_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Derive the match signature from the current manifest.
 
-    Reads fields from the trainer config (inline or file) via the same
-    extraction logic used by cli.py::_record_experiment so the signature
-    is consistent with how ExperimentRecord.training_config was populated.
+    Phase 7 Stage 7.4 post-validation (2026-04-19): extended to prefer
+    the FULLY RESOLVED trainer config from ``<training.output_dir>/config.yaml``
+    over the inline (unresolved) ``manifest.stages.training.trainer_config``.
+    Addresses validator finding H1 ("match signature returns empty for
+    _base:-composed manifests"): HMHP/TLOB manifests use multi-base
+    composition where ``model.model_type`` + ``data.labeling_strategy``
+    live in base files, NOT the inline overlay. Pre-fix, the signature
+    was always ``{"model_type": "", "labeling_strategy": "", "horizon_value":
+    N}`` — the ledger-match loop would skip the empty fields and match ANY
+    training record with the same horizon (cross-architecture false
+    positives). The trainer writes the fully-resolved config to
+    ``training.output_dir/config.yaml`` at load time; reading from there
+    gives us the true ``model_type`` / ``labeling_strategy`` post-
+    inheritance-resolution.
+
+    Resolution order (first present wins per field):
+      1. ``training_output_dir/config.yaml`` — fully resolved post-base (preferred)
+      2. ``manifest.stages.training.trainer_config`` inline dict (fallback;
+         correct only when no _base: composition is used)
+      3. empty string (final fallback)
 
     Returns a dict {field_name: value_or_empty_string}. Empty string for
     missing fields so the dict shape is consistent across all experiments.
     """
     signature: Dict[str, Any] = {}
 
-    # Pull the inline trainer_config if present (Phase 1 wrapper-less);
-    # otherwise derive from manifest.stages.* where feasible. Fallback to
-    # empty string.
-    trainer_config: Dict[str, Any] = (
+    # Load resolved config from training output_dir if present (preferred).
+    resolved_config: Dict[str, Any] = {}
+    if training_output_dir is not None:
+        resolved_path = Path(training_output_dir) / "config.yaml"
+        if resolved_path.exists():
+            try:
+                import yaml  # noqa: WPS433 — lazy import avoids hard dep
+                with open(resolved_path) as f:
+                    loaded = yaml.safe_load(f)
+                if isinstance(loaded, dict):
+                    resolved_config = loaded
+            except (OSError, ImportError) as exc:
+                logger.warning(
+                    "post_training_gate: could not read resolved config at "
+                    "%s (%s); falling back to inline trainer_config",
+                    resolved_path, exc,
+                )
+
+    # Fallback: inline trainer_config if present (Phase 1 wrapper-less).
+    # Use ``is not None`` explicitly — empty dict {} is valid configured
+    # state, not missing (distinct from None).
+    inline_config: Dict[str, Any] = (
         manifest.stages.training.trainer_config
-        if manifest.stages.training.trainer_config
+        if manifest.stages.training.trainer_config is not None
         else {}
     )
 
+    # Preferred source: resolved config. Inline is fallback.
+    def _read_nested(config: Dict[str, Any], *path: str) -> str:
+        """Read nested dict path; return empty string on any miss."""
+        current: Any = config
+        for key in path:
+            if not isinstance(current, dict):
+                return ""
+            current = current.get(key, "")
+        return current if isinstance(current, str) else ""
+
     for field_name in match_fields:
         if field_name == "model_type":
-            signature["model_type"] = (
-                trainer_config.get("model", {}).get("model_type", "")
-                if isinstance(trainer_config.get("model"), dict)
-                else ""
+            value = (
+                _read_nested(resolved_config, "model", "model_type")
+                or _read_nested(inline_config, "model", "model_type")
             )
+            signature["model_type"] = value
         elif field_name == "labeling_strategy":
-            signature["labeling_strategy"] = (
-                trainer_config.get("data", {}).get("labeling_strategy", "")
-                if isinstance(trainer_config.get("data"), dict)
-                else ""
+            value = (
+                _read_nested(resolved_config, "data", "labeling_strategy")
+                or _read_nested(inline_config, "data", "labeling_strategy")
             )
+            signature["labeling_strategy"] = value
         elif field_name == "horizon_value":
             signature["horizon_value"] = manifest.stages.training.horizon_value
         else:
-            # Unknown field — try inline trainer_config then manifest stages
-            signature[field_name] = trainer_config.get(field_name, "")
+            # Unknown field — try resolved then inline
+            value = resolved_config.get(field_name) or inline_config.get(field_name) or ""
+            signature[field_name] = value
 
     return signature
 
@@ -641,13 +749,33 @@ def _check_prior_best_ratio(
             ),
         )
     if prior_best_value <= 0:
-        # Ratio-against-zero-or-negative is ill-defined. Pass.
+        # Ratio-against-zero-or-negative is ill-defined, but a simple signed
+        # inequality IS well-defined and catches regressions. Phase 7 Stage
+        # 7.4 post-validation (2026-04-19) fix for A-H2: pre-fix, a new
+        # experiment with worse-than-prior negative metric (e.g., test_r2
+        # = -0.8 vs prior best = -0.1) was "vacuously passing" — now fails
+        # loudly. Zero prior-best is treated as "no signal baseline" and
+        # passes (neutral).
+        if prior_best_value == 0 or current_value >= prior_best_value:
+            return CheckResult(
+                name="prior_best_ratio",
+                status="pass",
+                message=(
+                    f"{metric_name}={current_value:.4f} >= prior_best="
+                    f"{prior_best_value:.4f} (non-positive prior; signed "
+                    f"inequality used instead of ratio)"
+                ),
+                metric_value=current_value,
+                threshold=prior_best_value,
+            )
         return CheckResult(
             name="prior_best_ratio",
-            status="pass",
+            status="fail",
             message=(
-                f"prior_best={prior_best_value:.4f} <= 0; ratio check "
-                f"vacuously passes"
+                f"REGRESSION: {metric_name}={current_value:.4f} < "
+                f"prior_best={prior_best_value:.4f} (non-positive prior; "
+                f"signed inequality used). See ExperimentLedger for "
+                f"prior-best experiment_id."
             ),
             metric_value=current_value,
             threshold=prior_best_value,

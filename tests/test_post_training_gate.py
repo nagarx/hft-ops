@@ -133,14 +133,45 @@ class TestCheckPriorBestRatio:
         assert r.status == "skipped"
         assert "disabled" in r.message
 
-    def test_pass_when_prior_zero_or_negative(self):
-        """Ratio-vs-zero is ill-defined; must not crash/fail."""
+    def test_pass_when_prior_exactly_zero(self):
+        """Zero prior-best is "no signal baseline" — passes neutrally."""
         r = _check_prior_best_ratio(
             "test_ic", current_value=0.36, prior_best_value=0.0,
             min_ratio=0.9, n_matching=3,
         )
         assert r.status == "pass"
-        assert "vacuously passes" in r.message
+        # Message now uses signed inequality wording, not "vacuously"
+        assert "non-positive prior" in r.message
+
+    def test_pass_when_current_beats_negative_prior(self):
+        """Phase 7 Stage 7.4 post-validation fix (A-H2): negative prior-best
+        with better current → PASS via signed inequality. Pre-fix: "vacuously
+        passes" for ANY comparison against negative prior, allowing silent
+        regressions.
+        """
+        r = _check_prior_best_ratio(
+            "test_r2",
+            current_value=-0.05,  # better (less negative) than prior
+            prior_best_value=-0.10,
+            min_ratio=0.9,
+            n_matching=3,
+        )
+        assert r.status == "pass"
+        assert "non-positive prior" in r.message
+
+    def test_fail_when_current_worse_than_negative_prior(self):
+        """Phase 7 Stage 7.4 post-validation fix (A-H2): negative prior-best
+        with WORSE current → FAIL. Pre-fix silently passed.
+        """
+        r = _check_prior_best_ratio(
+            "test_r2",
+            current_value=-0.80,  # much worse than prior
+            prior_best_value=-0.10,
+            min_ratio=0.9,
+            n_matching=3,
+        )
+        assert r.status == "fail"
+        assert "REGRESSION" in r.message
 
 
 class TestCheckCostBreakeven:
@@ -212,6 +243,62 @@ class TestReadTrainingMetrics:
         metrics = _read_training_metrics(tmp_path)
         assert metrics["best_val_accuracy"] == 0.55
         assert metrics["best_val_macro_f1"] == 0.52
+
+    def test_reads_regression_val_metrics_from_history(self, tmp_path: Path):
+        """Phase 7 Stage 7.4 post-validation fix (C1): regression runs emit
+        per-epoch val_ic / val_directional_accuracy / val_r2 / val_loss etc.
+        in training_history.json (list-of-dicts format). Gate must extract
+        BEST (max for IC/DA/R²/Pearson; min for loss/MAE/RMSE) across finite
+        epochs. Pre-fix: silently missed — gate primary_metric returned None
+        for every TLOB/HMHP regression experiment.
+        """
+        (tmp_path / "training_history.json").write_text(json.dumps([
+            {
+                "epoch": 0, "train_loss": 1.2, "val_loss": 1.1,
+                "val_ic": 0.20, "val_directional_accuracy": 0.55,
+                "val_r2": 0.05, "val_pearson": 0.22,
+                "val_mae": 2.5, "val_rmse": 3.5,
+            },
+            {
+                "epoch": 1, "train_loss": 0.9, "val_loss": 0.85,
+                "val_ic": 0.38, "val_directional_accuracy": 0.64,
+                "val_r2": 0.12, "val_pearson": 0.40,
+                "val_mae": 2.3, "val_rmse": 3.2,
+            },
+            {
+                "epoch": 2, "train_loss": 0.7, "val_loss": 0.90,  # regressed
+                "val_ic": 0.35, "val_directional_accuracy": 0.60,
+                "val_r2": 0.10, "val_pearson": 0.38,
+                "val_mae": 2.4, "val_rmse": 3.3,
+            },
+        ]))
+        metrics = _read_training_metrics(tmp_path)
+        # Max-better regression keys
+        assert metrics["best_val_ic"] == 0.38  # epoch 1
+        assert metrics["best_val_directional_accuracy"] == 0.64
+        assert metrics["best_val_r2"] == 0.12
+        assert metrics["best_val_pearson"] == 0.40
+        # Min-better regression keys (best = lowest)
+        assert metrics["best_val_loss"] == 0.85
+        assert metrics["best_val_mae"] == 2.3
+        assert metrics["best_val_rmse"] == 3.2
+
+    def test_regression_val_metrics_drive_primary_metric_selection(self, tmp_path: Path):
+        """C1 end-to-end: when only regression training_history.json is
+        present (no test_metrics.json), the primary metric fallback order
+        correctly picks up best_val_ic as the primary.
+        """
+        from hft_ops.stages.post_training_gate import _select_primary_metric
+        (tmp_path / "training_history.json").write_text(json.dumps([
+            {"epoch": 0, "val_ic": 0.20, "val_directional_accuracy": 0.55},
+            {"epoch": 1, "val_ic": 0.38, "val_directional_accuracy": 0.64},
+        ]))
+        metrics = _read_training_metrics(tmp_path)
+        name, value = _select_primary_metric(metrics, configured_name="")
+        # test_ic / test_directional_accuracy not present → falls through
+        # to best_val_ic (first available in the extended fallback order).
+        assert name == "best_val_ic"
+        assert value == 0.38
 
     def test_merges_history_and_test_metrics(self, tmp_path: Path):
         (tmp_path / "test_metrics.json").write_text(
@@ -299,6 +386,54 @@ class TestBuildMatchSignature:
         assert sig["model_type"] == ""
         assert sig["labeling_strategy"] == ""
         assert sig["horizon_value"] == 0
+
+    def test_resolved_config_overrides_inline(self, tmp_path: Path):
+        """Phase 7 Stage 7.4 post-validation fix (H1): signature must prefer
+        the FULLY RESOLVED config (post-base-inheritance) over the inline
+        trainer_config dict. Pre-fix: inline dict lacked model.model_type
+        when config used `_base:` composition, producing empty signatures
+        and cross-architecture false-positive matches.
+        """
+        # Resolved config (as trainer writes to output_dir/config.yaml):
+        (tmp_path / "config.yaml").write_text(
+            "model:\n  model_type: tlob\n"
+            "data:\n  labeling_strategy: regression\n"
+        )
+        manifest = MagicMock()
+        # Inline trainer_config LACKS these fields (simulates _base: composition):
+        manifest.stages.training.trainer_config = {
+            "_base": ["models/tlob.yaml", "data/regression.yaml"],
+            "name": "test_exp",
+        }
+        manifest.stages.training.horizon_value = 10
+        sig = _build_match_signature(
+            manifest,
+            match_fields=("model_type", "labeling_strategy", "horizon_value"),
+            training_output_dir=tmp_path,
+        )
+        assert sig["model_type"] == "tlob"
+        assert sig["labeling_strategy"] == "regression"
+        assert sig["horizon_value"] == 10
+
+    def test_resolved_config_missing_falls_back_to_inline(self, tmp_path: Path):
+        """H1 fix: if resolved config doesn't exist on disk, fall back to
+        inline dict. Preserves pre-fix behavior for configs without
+        _base: composition."""
+        manifest = MagicMock()
+        manifest.stages.training.trainer_config = {
+            "model": {"model_type": "hmhp"},
+            "data": {"labeling_strategy": "triple_barrier"},
+        }
+        manifest.stages.training.horizon_value = 60
+        # Pass a tmp_path with no config.yaml → falls back to inline
+        sig = _build_match_signature(
+            manifest,
+            match_fields=("model_type", "labeling_strategy", "horizon_value"),
+            training_output_dir=tmp_path,
+        )
+        assert sig["model_type"] == "hmhp"
+        assert sig["labeling_strategy"] == "triple_barrier"
+        assert sig["horizon_value"] == 60
 
 
 class TestFindPriorBestExperiment:
