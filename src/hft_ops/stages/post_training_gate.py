@@ -475,9 +475,32 @@ def _find_prior_best_experiment(
 
     Returns ``(experiment_id, metric_value, n_matching)``. If no match,
     returns ``("", None, 0)``.
+
+    Phase 7 post-validation (2026-04-19): guard against degenerate
+    match-signatures where every field is empty/zero. Without this guard,
+    the signature-matching loop would SKIP every field (via the
+    ``expected_value == ""`` continue), resulting in EVERY historical
+    experiment being considered a match regardless of type. That would
+    produce false regressions (e.g., comparing a classification experiment
+    against the best-ever regression IC). The guard returns an empty
+    result, which downstream the ``_check_prior_best_ratio`` treats as
+    "no baseline → skipped / pass by default".
     """
     # Lazy-import to avoid circular module load
     from hft_ops.ledger import ExperimentLedger  # noqa: WPS433
+
+    # Degenerate signature guard: if every field is empty/zero, there's
+    # no basis for comparison — skip the query entirely.
+    if not any(
+        (v != "" and v != 0 and v is not None)
+        for v in match_signature.values()
+    ):
+        logger.info(
+            "post_training_gate: match_signature has no meaningful fields "
+            "(%r); skipping prior-best lookup to avoid false positives",
+            match_signature,
+        )
+        return "", None, 0
 
     try:
         ledger = ExperimentLedger(ledger_dir)

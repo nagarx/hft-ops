@@ -383,6 +383,54 @@ class TestFindPriorBestExperiment:
         assert n == 0
         assert result_val is None
 
+    def test_degenerate_signature_returns_empty(self, tmp_path: Path):
+        """Phase 7 post-validation regression guard: when match_signature has
+        no meaningful fields (all empty/zero), the query must SKIP the ledger
+        scan and return empty — not silently match every historical experiment.
+
+        Pre-fix (Phase 7 Stage 7.4 initial): degenerate signature would pass
+        every entry through the field-matching loop (via the
+        ``expected_value == ""`` continue), producing a false-positive prior-
+        best that could flag regressions against wildly different experiment
+        types (e.g., a classification run vs. the best-ever regression IC).
+        """
+        # Populate the ledger with a non-matching-type record to prove the
+        # guard isn't accidentally letting it through.
+        records_dir = tmp_path / "records"
+        records_dir.mkdir()
+        from hft_contracts.experiment_record import ExperimentRecord
+
+        rec = ExperimentRecord(
+            experiment_id="legitimate_20260101_abc12345",
+            name="legitimate_run",
+            fingerprint="a" * 64,
+            training_metrics={"test_ic": 0.99},  # unrealistically high
+            training_config={"model": {"model_type": "tlob"}},
+            record_type="training",
+            contract_version="2.2",
+        )
+        rec.save(records_dir / f"{rec.experiment_id}.json")
+
+        from hft_ops.ledger import ExperimentLedger
+        ExperimentLedger(tmp_path)._rebuild_index()
+
+        # Degenerate signature — every field empty/zero
+        result_id, result_val, n = _find_prior_best_experiment(
+            ledger_dir=tmp_path,
+            match_signature={
+                "model_type": "",
+                "labeling_strategy": "",
+                "horizon_value": 0,
+            },
+            metric_name="test_ic",
+            exclude_experiment_name="current_exp",
+        )
+        # Must return empty — NOT the 0.99 IC record that would pass
+        # the vacuous-match.
+        assert result_id == ""
+        assert result_val is None
+        assert n == 0
+
     def test_signature_mismatch_excludes(self, tmp_path: Path):
         records_dir = tmp_path / "records"
         records_dir.mkdir()
