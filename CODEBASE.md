@@ -1,12 +1,14 @@
 # hft-ops — Codebase Reference
 
-> **Version**: 0.2.0 | **Schema**: 2.2 | **Tests**: 160 | **Last Updated**: 2026-04-15
+> **Version**: 0.3.0-dev | **Schema**: 2.2 | **Tests**: 356 | **Last Updated**: 2026-04-18 (Phase 6 post-validation closeout)
+>
+> **Phase 6 Post-Audit Hardening (2026-04-17)**: Stage 1 (11 correctness fixes 6A.1-11) + Stage 2 (4 per-phase backlog commits O1-O4 capturing Phase 0/1/2/4 work) + Stage 3 (5 contract-plane primitives moved to `hft_contracts.*` with re-export shims preserving legacy imports — `feature_sets/{schema,hashing}.py`, `provenance/lineage.py`, `ledger/experiment_record.py` are now shims; `feature_sets/{writer,registry,producer}` stay hft-ops-side). Post-validation (2026-04-18): H1 sweep `_rebuild_index` regression fixed via O(N)-scan in-place index update; M1 DRY `_CONTENT_HASH_RE` — harvester now imports from `hft_contracts.signal_manifest` SSoT.
+>
+> **Phase 5 FULL-A SHIPPED (2026-04-17)**: Cross-stage override routing in sweeps, strategy registry shell, fingerprint coverage extension, `SweepAggregateWriter` module, variable resolution post-expansion, 3 MVP templates.
+>
+> **Phase 5 Preview + Phase 2b + Phase 3**: `TrainingStage.trainer_config` inline alternative; `ValidationStage` + `ValidationRunner` (IC gate / `fast_gate` library); 5 critical bug fixes from Phase 2b; compute_fingerprint resolves `_base:` inheritance before hashing (Phase 3 §3.3b).
 >
 > **New in 0.2.0**: Sweep/grid expansion (`SweepConfig`, `expand_sweep()`), sweep CLI commands (`hft-ops sweep expand/run/results`), `sweep_id`+`axis_values` on `ExperimentRecord`, shared `utils.py`, `training_config` population in `_record_experiment`.
->
-> **Added since 0.2.0 (unreleased; Phase 2b + Phase 3 of training-pipeline-architecture refactor)**:
-> - **Phase 2b** — `TrainingStage.trainer_config: Optional[Dict]` (inline trainer config alternative to `config:` path); `ValidationStage` + `ValidationRunner` (IC gate / `fast_gate` library); 5 critical bug fixes.
-> - **Phase 3** — Companion fingerprint fix in `ledger/dedup.py`: `compute_fingerprint` now resolves `_base:` inheritance in trainer YAMLs (file-based and inline) before hashing. See §2.7b for details.
 
 Central experiment orchestrator for the HFT pipeline. Defines, validates, runs, tracks, and compares experiments across all 7 pipeline modules. Supports parameter sweeps (grid search) from a single YAML manifest.
 
