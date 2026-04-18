@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import sys
 import time
 from pathlib import Path
@@ -28,18 +27,17 @@ from hft_ops.stages.base import (
     _tail,
 )
 
-logger = logging.getLogger(__name__)
-
-
-# Phase 6 6A.9 (2026-04-17): producer-consumer consistency — harvester applies
-# the same content_hash format gate as the backtester's SignalManifest
-# (lob-backtester/.../signal_manifest.py::_CONTENT_HASH_RE). Prior asymmetry:
-# harvester accepted any string, backtester rejected non-lowercase-hex →
-# hand-edited signal_metadata.json with uppercase hash would populate the
-# hft-ops ledger record with a ref the backtester later rejects. Contract
-# source: pipeline_contract.toml:1211 (64-lowercase-hex pattern) +
+# Phase 6 6A.9 (2026-04-17) + post-validation DRY (2026-04-18):
+# producer-consumer consistency — harvester applies the SAME content_hash
+# format gate as the backtester-facing `hft_contracts.signal_manifest`
+# (which defines the canonical regex). Importing from the SSoT module
+# eliminates the parallel inline definition that existed in Phase 6 6A.9
+# and prevents producer/consumer regex drift. Contract source:
+# pipeline_contract.toml:1211 (64-lowercase-hex pattern) +
 # hft_contracts.canonical_hash.sha256_hex output format.
-_CONTENT_HASH_RE = re.compile(r"^[a-f0-9]{64}$")
+from hft_contracts.signal_manifest import _CONTENT_HASH_RE
+
+logger = logging.getLogger(__name__)
 
 
 def _harvest_feature_set_ref(

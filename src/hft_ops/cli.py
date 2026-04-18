@@ -1180,14 +1180,23 @@ def sweep_run(
             record.sweep_id = sweep_id
             record.axis_values = axis_values
             record.save(paths.ledger_dir / "records" / f"{record_id}.json")
-            # Phase 6 6A.11 (2026-04-17): REMOVED per-point _rebuild_index()
-            # (was called N times for N-point sweeps — O(N × ledger_size)). A
-            # single rebuild runs at loop END (see post-loop aggregate write
-            # which already rebuilds once). In-memory `ledger._index` stays
-            # in sync for subsequent `list_ids()[-1]` calls because register
-            # already appended to `_index` AND saved index.json; the next
-            # ExperimentLedger(paths.ledger_dir) instantiation at the top of
-            # the next iteration reads from disk and sees the fresh entry.
+            # Phase 6 6A.11 REVISED (post-validation-audit 2026-04-18):
+            # O(1) in-place index update. Prior Phase 6 6A.11 removed the
+            # per-point _rebuild_index() (was O(N² ledger_size), correctly
+            # flagged as too expensive). But merely calling record.save()
+            # writes records/<id>.json — index.json entry still carries
+            # sweep_id="" / axis_values={} from `register()`'s initial
+            # snapshot. On SIGKILL/crash mid-sweep, index.json stays stale
+            # until manual rebuild. Fix: targeted in-place update of the
+            # matching index entry — O(N) scan, O(1) per-point vs O(N²)
+            # rebuild, AND crash-safe because index.json reflects the
+            # mutated state immediately.
+            for entry in ledger._index:
+                if entry.get("experiment_id") == record_id:
+                    entry["sweep_id"] = sweep_id
+                    entry["axis_values"] = axis_values
+                    break
+            ledger._save_index()
 
         # Phase 5 FULL-A Block 3: accumulate per-point summary for the
         # aggregate record written at loop end.
