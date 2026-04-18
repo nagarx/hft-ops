@@ -53,7 +53,9 @@ stages:
     overrides:
       data.data_dir: "${stages.extraction.output_dir}"
     model_type: hmhp
-    feature_preset: short_term_40
+    # Phase 7 Stage 7.1 (2026-04-18): migrated from `feature_preset: short_term_40`
+    # (deprecated 2026-04-15, ImportError 2026-08-15)
+    feature_set: nvda_short_term_40_src128_v1
     input_size: 40
     hmhp_horizons: [10, 60, 300]
     loss_weights: {H10: 0.50, H60: 0.25, H300: 0.10, consistency: 0.05, final: 0.10}
