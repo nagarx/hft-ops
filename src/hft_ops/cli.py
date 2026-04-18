@@ -386,6 +386,31 @@ def _record_experiment(
             except (OSError, Exception):
                 pass  # Best effort — config may not exist in dry-run or failure
 
+    # Phase 7 Stage 7.4 post-validation (2026-04-19): B-H1 fix — harvest the
+    # post_training_gate report from the gate's captured_metrics and
+    # persist it IN the ExperimentRecord so researchers can:
+    #   (a) see which prior experiments hit regression warnings
+    #       (`hft-ops ledger show <id>` shows full record including gate)
+    #   (b) write ad-hoc queries like "experiments with gate status=warn"
+    #       via `hft-ops ledger list` or programmatic filter on
+    #       `training_metrics.post_training_gate.status`
+    # Pre-fix: gate wrote gate_report.json to disk but NEVER reached the
+    # record — ephemeral only, invisible to all ledger tooling.
+    # Implementation: nest the report under training_metrics (a
+    # Dict[str, Any] already typed for free-form sub-dicts; no schema
+    # change required on ExperimentRecord). Includes both the full
+    # report dict AND the one-line summary for grep-friendly display.
+    if "post_training_gate" in results:
+        gate_captured = results["post_training_gate"].captured_metrics
+        if "post_training_gate" in gate_captured:
+            training_metrics["post_training_gate"] = gate_captured[
+                "post_training_gate"
+            ]
+        if "post_training_gate_summary" in gate_captured:
+            training_metrics["post_training_gate_summary"] = gate_captured[
+                "post_training_gate_summary"
+            ]
+
     # Phase 4 Batch 4c.4 (2026-04-16): harvest `feature_set_ref` from
     # signal_export's captured_metrics (populated by
     # `SignalExportRunner._harvest_feature_set_ref` from signal_metadata.json).
@@ -584,6 +609,85 @@ def diff(ctx: click.Context, id_a: str, id_b: str) -> None:
 def ledger() -> None:
     """Browse and manage the experiment ledger."""
     pass
+
+
+@ledger.command(name="rebuild-index")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be rebuilt without writing index.json.",
+)
+@click.pass_context
+def ledger_rebuild_index(ctx: click.Context, dry_run: bool) -> None:
+    """Rebuild index.json from individual record files.
+
+    Phase 7 Stage 7.4 post-validation (2026-04-19) C2 fix. When the
+    ``ExperimentRecord.index_entry()`` whitelist is expanded (e.g., the
+    Phase 7.4 addition of 7 regression metric keys), the cached
+    ``index.json`` retains the OLD projection for every historical
+    record. The post-training gate's ``_find_prior_best_experiment``
+    iterates this index — so until index.json is rebuilt, historical
+    experiments appear to lack the new metrics entirely, defeating the
+    gate's primary purpose.
+
+    This subcommand re-projects every record under
+    ``ledger_dir/records/*.json`` via the current ``index_entry()``
+    whitelist and overwrites ``index.json``. Idempotent (running twice
+    produces identical output modulo record-ordering).
+
+    Usage:
+
+        hft-ops ledger rebuild-index           # rebuild + report
+        hft-ops ledger rebuild-index --dry-run # count-only, no write
+    """
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    paths = PipelinePaths(pipeline_root=pipeline_root)
+    ledger_dir = paths.ledger_dir
+    records_dir = ledger_dir / "records"
+
+    if not records_dir.exists():
+        console.print(f"[yellow]No records dir at {records_dir}; nothing to rebuild.[/yellow]")
+        return
+
+    n_records_on_disk = len(list(records_dir.glob("*.json")))
+
+    # Open existing ledger to capture the pre-rebuild index size.
+    ledger = ExperimentLedger(ledger_dir)
+    old_index_len = len(ledger._index)
+
+    if dry_run:
+        console.print(
+            f"[yellow]DRY RUN[/yellow]: would rebuild from "
+            f"[cyan]{n_records_on_disk}[/cyan] record files."
+        )
+        console.print(f"  Current index.json: [dim]{old_index_len} entries[/dim]")
+        console.print(
+            f"  After rebuild:      [dim]~{n_records_on_disk} entries "
+            f"(minus any malformed)[/dim]"
+        )
+        return
+
+    console.print(
+        f"[cyan]Rebuilding index from {n_records_on_disk} record files…[/cyan]"
+    )
+    ledger._rebuild_index()
+    new_index_len = len(ledger._index)
+
+    console.print(
+        f"[green]Index rebuilt: {old_index_len} → {new_index_len} entries[/green]"
+    )
+    if new_index_len != old_index_len:
+        delta = new_index_len - old_index_len
+        console.print(
+            f"[yellow]  Delta: {delta:+d} "
+            f"({'new entries detected' if delta > 0 else 'malformed records skipped'})[/yellow]"
+        )
+    skipped = n_records_on_disk - new_index_len
+    if skipped > 0:
+        console.print(
+            f"[yellow]  Note: {skipped} record file(s) could not be "
+            f"re-projected (malformed JSON or schema mismatch).[/yellow]"
+        )
 
 
 @ledger.command(name="fingerprint-explain")
