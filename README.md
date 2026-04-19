@@ -165,7 +165,9 @@ hft-ops/
   between training and signal_export. Three checks (floor / prior-best-ratio
   / cost-breakeven). Generic `gate_reports: Dict[str, Dict]` on
   `ExperimentRecord` (Option C) plugs in future gates with zero schema
-  change. Atomic writes unified at `hft_contracts._atomic_io` SSoT.
+  change. Atomic writes unified at `hft_contracts.atomic_io` SSoT (REV 2
+  public rename, 2026-04-20 — `hft_contracts._atomic_io` is a
+  `DeprecationWarning` shim retained through 2026-10-31).
 
 ## Dependencies
 
