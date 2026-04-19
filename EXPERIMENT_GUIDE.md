@@ -147,14 +147,32 @@ stages:
     labeling_strategy: tlob
     horizons: [10, 20, 50, 60, 100, 200, 300]
 
+  validation:                                  # Phase 2b IC gate (pre-training)
+    enabled: true                              # mandatory per hft-rules §13
+    on_fail: abort                             # warn | abort | record_only
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
+
   training:
     enabled: true
     config: "path/to/training.yaml"
     model_type: hmhp
-    feature_preset: short_term_40
+    feature_set: nvda_short_term_40_src128_v1  # Phase 7.1 FeatureSet registry entry
+                                               # (was `feature_preset: short_term_40`
+                                               # pre-2026-04-18; deprecated 2026-04-15,
+                                               # ImportError deadline 2026-08-15)
     input_size: 40
     hmhp_horizons: [10, 60, 300]
     output_dir: "path/to/training/output"
+
+  post_training_gate:                          # Phase 7 Stage 7.4 regression detector
+    enabled: true                              # opt-in; default False
+    on_regression: warn                        # warn | abort | record_only
+    min_metric_floor: 0.05                     # rule §13 minimum signal
+    min_ratio_vs_prior_best: 0.9               # within 10% of best matching prior
+    cost_breakeven_bps: 1.4                    # IBKR Deep ITM 0DTE (informational)
 
   signal_export:
     enabled: true
@@ -185,11 +203,25 @@ profiler_references:
 
 ## Current Experiments
 
-| Manifest | Model | Features | Exchange | Status |
-|---|---|---|---|---|
-| nvda_hmhp_128feat_xnas_h10 | HMHP | 119 | XNAS | Trained + Analyzed |
-| nvda_hmhp_40feat_xnas_h10 | HMHP | 40 | XNAS | Trained + Backtested |
-| nvda_hmhp_128feat_arcx_h10 | HMHP | 119 | ARCX | Trained + Analyzed |
+Single-run manifests under `hft-ops/experiments/`:
+
+| Manifest | Model | Features | Exchange | FeatureSet (Phase 7.1) | Status |
+|---|---|---|---|---|---|
+| nvda_hmhp_128feat_xnas_h10 | HMHP | 119 | XNAS | nvda_analysis_ready_119_src128_v1 | Trained + Analyzed |
+| nvda_hmhp_40feat_xnas_h10 | HMHP | 40 | XNAS | nvda_short_term_40_src128_v1 | Trained + Backtested |
+| nvda_hmhp_128feat_arcx_h10 | HMHP | 119 | ARCX | nvda_analysis_ready_119_src128_v1 | Trained + Analyzed |
+| e5_60s_huber_cvml_unified | TLOB | 98 | XNAS | — (inline feature_indices) | Regression E5 reference |
+| nvda_tlob_h100_tb_volscaled | TLOB | 128 | XNAS | — (inline) | Classification baseline |
+| nvda_tlob_h10_v1 | TLOB | 128 | XNAS | — (inline) | Classification baseline |
+
+Sweep templates under `hft-ops/experiments/sweeps/`:
+
+| Sweep | Grid Points | Axes | Scope |
+|---|---|---|---|
+| loss_ablation | 6 | training.loss_type × training.delta | Same-stage |
+| horizon_sensitivity | 9 | training.horizon × backtesting.hold_events | Cross-stage |
+| backtest_cost_sensitivity | 9 | backtesting.costs.* (nested) | Backtest-only |
+| e5_phase2_sweep | 4 | CVML on/off × Huber δ | Same-stage |
 
 ---
 

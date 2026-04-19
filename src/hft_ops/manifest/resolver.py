@@ -111,7 +111,8 @@ def resolve_variables_in_manifest(manifest, ctx: VarResolutionContext):
     # Lazy import to avoid circular dep (loader imports schema; this module
     # is called from sweep which is called from cli; loader is also imported
     # by cli). Same-module lazy-import pattern used elsewhere (dedup.py).
-    from hft_ops.manifest.loader import (
+    from hft_ops.manifest.loader import (  # noqa: F401 — helpers imported lazy
+        _build_post_training_gate,
         _resolve_variables,
         _build_extraction,
         _build_raw_analysis,
@@ -155,6 +156,9 @@ def resolve_variables_in_manifest(manifest, ctx: VarResolutionContext):
         dataset_analysis=_build_dataset_analysis(stages_raw.get("dataset_analysis", {})),
         validation=_build_validation(stages_raw.get("validation", {})),
         training=_build_training(stages_raw.get("training", {})),
+        post_training_gate=_build_post_training_gate(
+            stages_raw.get("post_training_gate", {})
+        ),
         signal_export=_build_signal_export(stages_raw.get("signal_export", {})),
         backtesting=_build_backtesting(stages_raw.get("backtesting", {})),
     )

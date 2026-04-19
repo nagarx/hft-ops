@@ -255,6 +255,59 @@ def _build_validation(raw: Dict[str, Any]) -> ValidationStage:
     )
 
 
+def _build_post_training_gate(raw: Dict[str, Any]) -> "PostTrainingGateStage":
+    """Parse stages.post_training_gate from raw YAML.
+
+    Phase 7 Stage 7.4 Round 6 (2026-04-20, post-push-audit fix): this
+    helper was missing despite the stage being declared on ``Stages``
+    at ``schema.py:356`` with ``default_factory=PostTrainingGateStage``.
+    Missing kwarg in ``load_manifest`` silently filled the stage with
+    ``enabled=False`` defaults regardless of user YAML — every
+    ``stages.post_training_gate.enabled: true`` was ignored, defeating
+    the opt-in mechanism of the just-shipped Stage 7.4. This violated
+    hft-rules §5: "If a config option exists but is not fully
+    supported, it must fail fast with a precise error — never silently
+    degrade."
+
+    Validates ``on_regression`` is one of ``{"warn", "abort",
+    "record_only"}`` (matches the schema's PostTrainingGateStage.
+    on_regression attribute documentation) and coerces ``match_on_signature``
+    to ``List[str]``. Other fields are numeric / string and coerced
+    via the standard constructor; invalid types raise early at load
+    time (fail-fast).
+    """
+    # Lazy import to avoid circular dependency with schema.py
+    from hft_ops.manifest.schema import PostTrainingGateStage
+
+    on_regression = raw.get("on_regression", "warn")
+    if on_regression not in ("warn", "abort", "record_only"):
+        raise ValueError(
+            f"stages.post_training_gate.on_regression must be one of "
+            f"{{'warn', 'abort', 'record_only'}}, got {on_regression!r}"
+        )
+
+    match_sig = raw.get(
+        "match_on_signature",
+        ["model_type", "labeling_strategy", "horizon_value"],
+    )
+    if not isinstance(match_sig, list):
+        raise ValueError(
+            f"stages.post_training_gate.match_on_signature must be a list, "
+            f"got {type(match_sig).__name__}"
+        )
+
+    return PostTrainingGateStage(
+        enabled=bool(raw.get("enabled", False)),
+        on_regression=on_regression,
+        primary_metric=str(raw.get("primary_metric", "")),
+        min_metric_floor=float(raw.get("min_metric_floor", 0.05)),
+        min_ratio_vs_prior_best=float(raw.get("min_ratio_vs_prior_best", 0.9)),
+        match_on_signature=[str(x) for x in match_sig],
+        cost_breakeven_bps=float(raw.get("cost_breakeven_bps", 1.4)),
+        output_dir=str(raw.get("output_dir", "")),
+    )
+
+
 def _build_sweep(raw: Dict[str, Any]) -> SweepConfig:
     """Build SweepConfig from raw YAML dict."""
     axes_raw = raw.get("axes", [])
@@ -353,6 +406,9 @@ def load_manifest(
         ),
         validation=_build_validation(stages_raw.get("validation", {})),
         training=_build_training(stages_raw.get("training", {})),
+        post_training_gate=_build_post_training_gate(
+            stages_raw.get("post_training_gate", {})
+        ),
         signal_export=_build_signal_export(stages_raw.get("signal_export", {})),
         backtesting=_build_backtesting(stages_raw.get("backtesting", {})),
     )

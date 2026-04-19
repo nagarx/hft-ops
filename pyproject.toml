@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hft-ops"
-version = "0.2.0"
+version = "0.3.0-dev"
 description = "Central experiment orchestrator for the HFT pipeline"
 requires-python = ">=3.10"
 dependencies = [

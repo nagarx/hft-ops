@@ -1,6 +1,6 @@
 # hft-ops — Codebase Reference
 
-> **Version**: 0.3.0-dev | **Schema**: 2.2 | **Tests**: 428 | **Last Updated**: 2026-04-20 (Phase 7 Stage 7.4 Rounds 4 + 5 closeout)
+> **Version**: 0.3.0-dev | **Schema**: 2.2 | **Tests**: 433 | **Last Updated**: 2026-04-20 (Phase 7 Stage 7.4 Rounds 4 + 5 + 6 closeout — Round 6 post-push-audit: loader silent-drop fix for `stages.post_training_gate` YAML + Stages-parity regression guard)
 >
 > **Phase 7 Stage 7.4 Round 4 (SHIPPED 2026-04-20)**: Post-audit adversarial pass closed three latent Round-1-through-3 gaps and one new BLOCKER: (a) **C1-complete** — `TrainingRunner._capture_training_metrics` now iterates the full regression val_* taxonomy (5 max + 3 min imported from `post_training_gate` SSoT) + classification keys (`val_accuracy`, `val_macro_f1`, `val_signal_rate`) with NaN/Inf finite-guards, replacing the Round-1 3-key subset that silently dropped regression metrics; (b) **Gate-report surfacing (Option C)** — `cli.py::_record_experiment` now harvests via a generic loop reading `captured_metrics["gate_report"]` from every stage and stores under `ExperimentRecord.gate_reports[stage_name]` — Phase 8 `post_backtest_gate` plugs in with zero schema change; `validation.py` and `post_training_gate.py` both emit under the uniform `"gate_report"` key (was `"validation_report"` / `"post_training_gate"`); lazy `from_dict` migration shim lifts pre-Round-4 nested records with 2026-08-01 removal deadline; (c) **Atomic `_save_index`** — tmp+fsync+`os.replace` eliminates the transient bad-state window that would force full `_rebuild_index` on the next load. 29 new unit tests (17 `_capture_training_metrics` coverage + 12 `gate_reports` integration/migration/fingerprint-stability). Test counts 399→428.
 >
@@ -146,12 +146,28 @@ Training stage: accepts either `config: <path>` (legacy) or inline `trainer_conf
 
 ### 2.7 ledger/
 
-**ExperimentRecord** — immutable record with:
-- Identity: experiment_id, fingerprint, manifest_path
-- Provenance: git hash, config hashes, data hash, timestamp
-- Config snapshot: full extractor TOML + trainer YAML as dicts
-- Results: training_metrics, backtest_metrics, dataset_health
-- Metadata: tags, hypothesis, notes, status, stages_completed
+**ExperimentRecord** — immutable record (Phase 6 6B.1a: canonical home is now
+`hft_contracts.experiment_record`; this `hft_ops.ledger.experiment_record`
+module is a re-export shim with removal deadline 2026-10-31):
+- Identity: `experiment_id`, `fingerprint`, `manifest_path`
+- Provenance: `Provenance` (git hash, config hashes, data hash, timestamp)
+- Config snapshot: `extraction_config`, `training_config`, `backtest_params`
+- Results: `training_metrics`, `backtest_metrics`, `dataset_health`
+- Metadata: `tags`, `hypothesis`, `notes`, `status`, `stages_completed`
+- **Phase 4 4c.4 (2026-04-16)**: `feature_set_ref: Optional[Dict[str, str]]`
+  — `{name, content_hash}` propagated from trainer `signal_metadata.json`
+  when `DataConfig.feature_set` is set; `None` otherwise
+- **Phase 7 Stage 7.4 Round 4 (2026-04-20)**: `gate_reports: Dict[str, Dict[str, Any]]`
+  — generic cross-stage gate-report surface keyed by stage name
+  (`"validation"`, `"post_training_gate"`, future `"post_backtest_gate"`);
+  replaces the Round 1 pattern of nesting post-training gate output under
+  `training_metrics["post_training_gate"]`; fingerprint-stable (gate outcomes
+  are observations, never hashed by `compute_fingerprint`). Pre-Round-4
+  records migrate lazily via `ExperimentRecord.from_dict` shim with removal
+  deadline 2026-08-01
+- **Sweep metadata** (Phase 5): `sweep_id`, `axis_values`, `record_type`
+  (`"training"` | `"sweep_aggregate"` | `"analysis"` | ...),
+  `sub_records` (for aggregates), `parent_experiment_id`
 
 **ExperimentLedger** — append-only JSON-backed storage:
 - `register(record)` — store new record, update index
@@ -243,31 +259,41 @@ hft-ops run manifest.yaml
 | `hft-ops ledger list` | List all experiments |
 | `hft-ops ledger show <id>` | Show full record |
 | `hft-ops ledger search --tags ... --min-f1 ...` | Search ledger |
+| `hft-ops ledger rebuild-index [--dry-run]` | Re-project all records through the current `index_entry()` whitelist (Phase 7.4 Round 4, commit `6ba4e93`). Needed after hft-contracts whitelist expansions; see `ExperimentRecord.index_entry()` for current fields. |
+| `hft-ops ledger fingerprint-explain <manifest.yaml>` | Show the inputs `compute_fingerprint` hashed (Phase 4 4c.3) — debugging dedup decisions |
 | `hft-ops check-dup <manifest>` | Check for duplicates |
 | `hft-ops sweep expand <manifest>` | Dry expansion showing grid points |
-| `hft-ops sweep run <manifest>` | Execute all grid points (--continue-on-failure) |
+| `hft-ops sweep run <manifest>` | Execute all grid points (`--continue-on-failure`) |
 | `hft-ops sweep results <sweep_id>` | Compare results from a sweep |
+| `hft-ops feature-sets list` | List registry entries at `contracts/feature_sets/` |
+| `hft-ops feature-sets show <name>` | Show full FeatureSet JSON |
+| `hft-ops evaluate --save-feature-set <name>` | Produce a FeatureSet from an evaluator run (Phase 4 Batch 4b) |
 
 ---
 
 ## 6. Testing
 
-248 tests across 14 files (per-file counts verified via `pytest --collect-only -q` on 2026-04-15 post-Batch-4b):
+**433 tests** at HEAD (post Phase 7 Stage 7.4 Round 6 post-push-audit fix —
+added `_build_post_training_gate` loader + 4 regression tests + 1 parity
+test iterating `fields(Stages)` to prevent the class of silent-drop bug).
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_manifest_schema.py` | 40 | Schema defaults, variable resolution, YAML loading, inline-base absolutization |
-| `test_ledger.py` | 25 | CRUD, filtering, persistence, notes update |
-| `test_provenance.py` | 20 | Hashing, git info, provenance building |
-| `test_sweep.py` | 19 | Sweep validation (8), grid expansion (11) |
-| `test_bugfixes_phase2b.py` | 16 | Phase 2b bug-fix regression guards (compat banner, inline-base absolutization) |
-| `test_validator.py` | 16 | Feature count, window_size, horizon resolution, cross-module |
-| `test_validation_stage.py` | 11 | IC gate / `fast_gate` library integration |
-| `test_dedup.py` | 8 | Fingerprint determinism, dedup lookup |
-| `test_fingerprint_base_mutation.py` | 5 | §2.7b regression guard — `compute_fingerprint` resolves `_base:` before hashing; cycle/depth/malformed hard errors propagate |
+Test file inventory (30 files, grouped by concern). For exact per-file counts
+run `pytest --collect-only -q`; the figures below are anchor points from
+incremental phase landings:
+
+| Group | Tests (approx.) | Coverage |
+|---|---|---|
+| **Manifest schema + loader** — `test_manifest_schema.py`, `test_validator.py` | 45 + 16 | Schema defaults, YAML loading, variable resolution, Stages parity, post_training_gate loader (Round 6 regression) |
+| **Ledger + dedup** — `test_ledger.py`, `test_dedup.py`, `test_fingerprint_base_mutation.py`, `test_fingerprint_feature_set_*.py`, `test_fingerprint_hard_fail.py`, `test_ledger_rebuild_index.py`, `test_cli_fingerprint_explain.py`, `test_experiment_record_feature_set_ref.py` | 80+ | CRUD, fingerprint determinism, §2.7b resolved-dict hashing, feature_set normalization, rebuild-index CLI, gate_reports persistence |
+| **Provenance** — `test_provenance.py` | 20+ | Hashing, git info, Provenance building, shim back-compat |
+| **Sweep** — `test_sweep.py`, `test_sweep_cross_stage_routing.py`, `test_sweep_axis_values_preserved.py`, `test_sweep_aggregate_writer.py`, `test_variable_resolution_post_expansion.py`, `test_sweep_templates.py` | 70+ | Grid expansion, cross-stage routing, aggregate writer, post-expansion resolver, MVP templates |
+| **Stage runners** — `test_validation_stage.py`, `test_post_training_gate.py`, `test_signal_export_harvest.py`, `test_training_capture_metrics.py` | 120+ | IC gate, PostTrainingGateRunner (3 checks × 3 dispositions), feature_set_ref harvest, C1-complete regression-metric capture |
+| **FeatureSet** — `test_feature_sets.py`, `test_feature_sets_producer.py`, `test_feature_sets_registry_walkup.py`, `test_feature_sets_writer.py` | 60+ | Schema, hashing, producer, registry walk-up, atomic writer |
+| **Phase 2b regression guards** — `test_bugfixes_phase2b.py` | 16 | Compat banner, inline-base absolutization |
+| **Post-ship CLIs** — `test_ledger_rebuild_index.py`, `test_cli_fingerprint_explain.py` | 14 | Round 4 post-validation CLI additions |
 
 ```bash
-.venv/bin/python -m pytest tests/ -v
+.venv/bin/python -m pytest tests/ -v     # expect 433 passed
 ```
 
 ---

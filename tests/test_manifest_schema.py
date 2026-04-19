@@ -582,3 +582,140 @@ stages:
             "Legacy path and inline trainer_config should fingerprint identically "
             "when they resolve to the same trainer YAML content."
         )
+
+
+class TestPostTrainingGateLoader:
+    """Phase 7 Stage 7.4 Round 6 (2026-04-20, post-push-audit fix):
+    regression tests for the silent-drop bug where ``load_manifest``
+    was missing the ``post_training_gate`` kwarg when building
+    ``Stages(...)``. The stage's default_factory silently filled
+    ``enabled=False``, ignoring user YAML. Violated hft-rules §5.
+    """
+
+    def test_yaml_enabled_true_reaches_manifest(self, tmp_path: Path):
+        """User-authored `enabled: true` must land on the manifest."""
+        manifest_path = tmp_path / "m.yaml"
+        manifest_path.write_text("""
+experiment:
+  name: gate_on
+  contract_version: "2.2"
+pipeline_root: "."
+stages:
+  post_training_gate:
+    enabled: true
+    on_regression: abort
+    min_metric_floor: 0.10
+    min_ratio_vs_prior_best: 0.8
+    primary_metric: test_ic
+    cost_breakeven_bps: 2.0
+    match_on_signature:
+      - model_type
+      - horizon_value
+""")
+        m = load_manifest(manifest_path)
+        assert m.stages.post_training_gate.enabled is True
+        assert m.stages.post_training_gate.on_regression == "abort"
+        assert m.stages.post_training_gate.min_metric_floor == 0.10
+        assert m.stages.post_training_gate.min_ratio_vs_prior_best == 0.8
+        assert m.stages.post_training_gate.primary_metric == "test_ic"
+        assert m.stages.post_training_gate.cost_breakeven_bps == 2.0
+        assert m.stages.post_training_gate.match_on_signature == [
+            "model_type", "horizon_value",
+        ]
+
+    def test_yaml_absent_uses_defaults(self, tmp_path: Path):
+        """No `post_training_gate:` section → defaults (enabled=False)."""
+        manifest_path = tmp_path / "m.yaml"
+        manifest_path.write_text("""
+experiment:
+  name: no_gate
+  contract_version: "2.2"
+pipeline_root: "."
+""")
+        m = load_manifest(manifest_path)
+        assert m.stages.post_training_gate.enabled is False
+        assert m.stages.post_training_gate.on_regression == "warn"
+
+    def test_invalid_on_regression_raises_at_load(self, tmp_path: Path):
+        """Fail-fast on invalid `on_regression` (hft-rules §5)."""
+        manifest_path = tmp_path / "m.yaml"
+        manifest_path.write_text("""
+experiment:
+  name: bad_gate
+  contract_version: "2.2"
+pipeline_root: "."
+stages:
+  post_training_gate:
+    enabled: true
+    on_regression: silently_ignore
+""")
+        with pytest.raises(ValueError, match="on_regression must be one of"):
+            load_manifest(manifest_path)
+
+    def test_non_list_match_on_signature_raises(self, tmp_path: Path):
+        """Fail-fast on type error in list field."""
+        manifest_path = tmp_path / "m.yaml"
+        manifest_path.write_text("""
+experiment:
+  name: bad_sig
+  contract_version: "2.2"
+pipeline_root: "."
+stages:
+  post_training_gate:
+    enabled: true
+    match_on_signature: not-a-list
+""")
+        with pytest.raises(ValueError, match="match_on_signature must be a list"):
+            load_manifest(manifest_path)
+
+
+class TestStagesLoaderParity:
+    """Iterate every field in the ``Stages`` dataclass and ensure each has
+    a corresponding `_build_*` helper called inside ``load_manifest``.
+    Regression guard for the Round-6 silent-drop class of bug: adding a
+    new stage without wiring a loader helper would silently fill with
+    default_factory and ignore user YAML.
+
+    Phase 7 Stage 7.4 Round 6 (2026-04-20).
+    """
+
+    def test_every_stage_field_round_trips_from_yaml(self, tmp_path: Path):
+        """Round-trip test: for each field in Stages, provide a minimal
+        YAML `stages.<field>: {...}` and confirm the loader constructs
+        a NON-DEFAULT-FACTORY instance (proxy: `enabled: true` is set).
+
+        Fails on the first stage that doesn't honor user YAML — proving
+        a loader helper is missing or not wired into `Stages(...)`.
+        """
+        from dataclasses import fields
+
+        stage_fields = fields(Stages)
+        # Every stage dataclass in the pipeline has an ``enabled: bool``
+        # field by convention. Set enabled=true in YAML; verify loader
+        # propagates it. If default_factory silently filled, enabled is False.
+        for f in stage_fields:
+            stage_name = f.name
+            # Skip sweep/backtest_params etc. if any non-Stage fields are in Stages;
+            # `Stages` currently only contains Stage subclasses, each with `enabled`.
+            stage_cls = f.type if isinstance(f.type, type) else None
+            if stage_cls is None:
+                continue
+
+            m_path = tmp_path / f"m_{stage_name}.yaml"
+            m_path.write_text(f"""
+experiment:
+  name: stage_parity_{stage_name}
+  contract_version: "2.2"
+pipeline_root: "."
+stages:
+  {stage_name}:
+    enabled: true
+""")
+            manifest = load_manifest(m_path)
+            stage_instance = getattr(manifest.stages, stage_name)
+            assert getattr(stage_instance, "enabled") is True, (
+                f"Stages.{stage_name}.enabled=True in YAML but loader returned False. "
+                f"Likely missing `_build_{stage_name}` helper or missing "
+                f"kwarg in Stages(...) constructor at loader.py::load_manifest. "
+                f"This is the same class of bug as Round 6's silent-drop."
+            )
