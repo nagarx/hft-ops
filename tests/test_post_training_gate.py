@@ -442,7 +442,6 @@ class TestFindPriorBestExperiment:
             ledger_dir=tmp_path,
             match_signature={"model_type": "tlob"},
             metric_name="test_ic",
-            exclude_experiment_name="current_exp",
         )
         assert result_id == ""
         assert result_val is None
@@ -483,13 +482,22 @@ class TestFindPriorBestExperiment:
                 "labeling_strategy": "regression",
             },
             metric_name="test_ic",
-            exclude_experiment_name="different_current",
         )
         assert n == 3
         assert result_val == 0.40
         assert "exp_b" in result_id
 
-    def test_excludes_current_experiment(self, tmp_path: Path):
+    def test_same_name_prior_is_included(self, tmp_path: Path):
+        """Phase 7 Stage 7.4 post-validation A-H5 fix (2026-04-19): gate runs
+        BEFORE _record_experiment, so the current run's record is never in
+        the ledger at gate time. Name-based exclusion (removed) was
+        silently discarding LEGITIMATE prior runs of the same manifest
+        (researcher iteration / sweep sibling grid points).
+
+        Pre-fix: this test asserted n == 0 (current_exp excluded by name).
+        Post-fix: prior run IS included — researcher gets "current vs
+        previous attempt" comparison.
+        """
         records_dir = tmp_path / "records"
         records_dir.mkdir()
         from hft_contracts.experiment_record import ExperimentRecord
@@ -512,11 +520,11 @@ class TestFindPriorBestExperiment:
             ledger_dir=tmp_path,
             match_signature={"model_type": "tlob"},
             metric_name="test_ic",
-            exclude_experiment_name="current_exp",
         )
-        # current_exp is excluded by name → no matches
-        assert n == 0
-        assert result_val is None
+        # A-H5 fix: no name-based exclusion; prior run IS included as baseline
+        assert n == 1
+        assert result_val == 0.50
+        assert "cur_20260101" in result_id
 
     def test_degenerate_signature_returns_empty(self, tmp_path: Path):
         """Phase 7 post-validation regression guard: when match_signature has
@@ -558,7 +566,6 @@ class TestFindPriorBestExperiment:
                 "horizon_value": 0,
             },
             metric_name="test_ic",
-            exclude_experiment_name="current_exp",
         )
         # Must return empty — NOT the 0.99 IC record that would pass
         # the vacuous-match.
@@ -600,7 +607,6 @@ class TestFindPriorBestExperiment:
             ledger_dir=tmp_path,
             match_signature={"model_type": "tlob"},
             metric_name="test_ic",
-            exclude_experiment_name="nothing",
         )
         assert n == 1
         assert result_val == 0.30  # matched tlob, not the higher deeplob

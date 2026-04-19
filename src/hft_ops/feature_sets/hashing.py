@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import warnings as _warnings
 
-_REMOVAL_VERSION = "0.4.0"
+# Calendar-driven shim deadline (Phase 7 post-validation, 2026-04-19).
+# See provenance/lineage.py for rationale — 6 months from Phase 6 6B.3.
+_REMOVAL_DATE = "2026-10-31"
 _SYMBOL_HOMES = {
     "compute_feature_set_hash": "hft_contracts.feature_sets.hashing",
     # `_sanitize_for_hash` was a re-export alias of
@@ -53,7 +55,7 @@ def __getattr__(name: str):
                 f"`hft_ops.feature_sets.hashing.{name}` is a Phase 6 6B.3 "
                 f"re-export shim. Migrate to "
                 f"`from {canonical_module} import {canonical_attr}` "
-                f"before the {_REMOVAL_VERSION} removal. "
+                f"before the {_REMOVAL_DATE} removal deadline. "
                 f"(This warning fires once per symbol per process.)",
                 DeprecationWarning,
                 stacklevel=2,

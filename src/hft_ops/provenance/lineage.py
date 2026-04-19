@@ -27,7 +27,13 @@ from __future__ import annotations
 import warnings as _warnings
 
 _CANONICAL_MODULE = "hft_contracts.provenance"
-_REMOVAL_VERSION = "0.4.0"
+# Calendar-driven shim deadline (Phase 7 post-validation, 2026-04-19):
+# matches the `feature_preset` deprecation pattern (calendar date, NOT
+# version). Version-driven deadlines ("0.4.0") were ambiguous because
+# hft-ops has no fixed release cadence. A calendar date gives consumers
+# a concrete migration window. 6-month grace period from Phase 6 6B.4
+# (2026-04-17) → removal deadline 2026-10-31 (end-of-month alignment).
+_REMOVAL_DATE = "2026-10-31"
 _PUBLIC_NAMES = frozenset({
     "GitInfo",
     "NOT_GIT_TRACKED_SENTINEL",
@@ -57,7 +63,7 @@ def __getattr__(name: str):
                 f"`hft_ops.provenance.lineage.{name}` is a Phase 6 6B.4 "
                 f"re-export shim. Migrate to "
                 f"`from {_CANONICAL_MODULE} import {name}` before the "
-                f"{_REMOVAL_VERSION} removal. "
+                f"{_REMOVAL_DATE} removal deadline. "
                 f"(This warning fires once per symbol per process.)",
                 DeprecationWarning,
                 stacklevel=2,

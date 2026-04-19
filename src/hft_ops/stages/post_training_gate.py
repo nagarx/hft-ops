@@ -290,7 +290,6 @@ class PostTrainingGateRunner:
                     ledger_dir=config.paths.ledger_dir,
                     match_signature=match_signature,
                     metric_name=primary_name,
-                    exclude_experiment_name=manifest.experiment.name,
                 )
             )
 
@@ -577,7 +576,6 @@ def _find_prior_best_experiment(
     ledger_dir: Path,
     match_signature: Dict[str, Any],
     metric_name: str,
-    exclude_experiment_name: str,
 ) -> tuple[str, Optional[float], int]:
     """Query the ledger for the best prior experiment matching signature.
 
@@ -593,6 +591,17 @@ def _find_prior_best_experiment(
     against the best-ever regression IC). The guard returns an empty
     result, which downstream the ``_check_prior_best_ratio`` treats as
     "no baseline → skipped / pass by default".
+
+    Phase 7 post-validation 2nd round (2026-04-19): A-H5 fix — removed
+    the `exclude_experiment_name` parameter. Gate runs BEFORE
+    ``_record_experiment``, so the current run's record is never yet in
+    the ledger at gate time — name-based exclusion only caught OTHER
+    runs of the same manifest (e.g., a researcher iterating on
+    hyperparameters; a sweep grid point with sibling points already
+    registered). In both cases the researcher WANTS the comparison:
+    iteration → "is this attempt better than my last?", sweep → "is
+    this grid point better than its siblings?". The old exclusion was
+    silently discarding these legitimate baselines.
     """
     # Lazy-import to avoid circular module load
     from hft_ops.ledger import ExperimentLedger  # noqa: WPS433
@@ -621,8 +630,6 @@ def _find_prior_best_experiment(
     # etc., plus training_metrics.
     matching: List[Dict[str, Any]] = []
     for entry in ledger._index:
-        if entry.get("name") == exclude_experiment_name:
-            continue
         # Only consider completed training records (skip analysis, calibration,
         # evaluation, sweep_aggregate).
         if entry.get("record_type", "training") != "training":

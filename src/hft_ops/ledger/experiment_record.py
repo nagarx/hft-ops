@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import warnings as _warnings
 
-_REMOVAL_VERSION = "0.4.0"
+# Calendar-driven shim deadline (Phase 7 post-validation, 2026-04-19).
+# See provenance/lineage.py for rationale — 6 months from Phase 6 6B.1a.
+_REMOVAL_DATE = "2026-10-31"
 # Map symbol name → (canonical module path) so re-exports remain explicit.
 _SYMBOL_HOMES = {
     "ExperimentRecord": "hft_contracts.experiment_record",
@@ -54,7 +56,7 @@ def __getattr__(name: str):
                 f"`hft_ops.ledger.experiment_record.{name}` is a "
                 f"Phase 6 6B.1a re-export shim. Migrate to "
                 f"`from {canonical} import {name}` before the "
-                f"{_REMOVAL_VERSION} removal. "
+                f"{_REMOVAL_DATE} removal deadline. "
                 f"(This warning fires once per symbol per process.)",
                 DeprecationWarning,
                 stacklevel=2,

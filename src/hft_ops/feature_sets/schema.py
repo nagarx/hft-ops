@@ -25,7 +25,9 @@ from __future__ import annotations
 import warnings as _warnings
 
 _CANONICAL_MODULE = "hft_contracts.feature_sets.schema"
-_REMOVAL_VERSION = "0.4.0"
+# Calendar-driven shim deadline (Phase 7 post-validation, 2026-04-19).
+# See provenance/lineage.py for rationale — 6 months from Phase 6 6B.3.
+_REMOVAL_DATE = "2026-10-31"
 _PUBLIC_NAMES = frozenset({
     "FEATURE_SET_SCHEMA_VERSION",
     "FeatureSet",
@@ -49,7 +51,7 @@ def __getattr__(name: str):
                 f"re-export shim. Migrate to "
                 f"`from {_CANONICAL_MODULE} import {name}` (or the "
                 f"convenience path `from hft_contracts.feature_sets import "
-                f"{name}`) before the {_REMOVAL_VERSION} removal. "
+                f"{name}`) before the {_REMOVAL_DATE} removal deadline. "
                 f"(This warning fires once per symbol per process.)",
                 DeprecationWarning,
                 stacklevel=2,
