@@ -8,11 +8,17 @@ safe (no partial files on SIGKILL or disk-full) and collision-aware
 
 Phase 7 Stage 7.4 Round 5 (2026-04-20): ``atomic_write_json`` +
 ``AtomicWriteError`` moved to the canonical
-``hft_contracts._atomic_io`` module (unified with
+``hft_contracts.atomic_io`` module (unified with
 ``ExperimentRecord.save`` and ``hft_ops.ledger.ledger._save_index``).
 This module re-exports both names for back-compat with pre-Round-5
 importers (Phase 4 consumers used ``from hft_ops.feature_sets.writer
 import atomic_write_json, AtomicWriteError``).
+
+REV 2 pre-push (2026-04-20): canonical module was renamed from
+``hft_contracts._atomic_io`` (deprecated shim) to the public
+``hft_contracts.atomic_io``. Imports below updated accordingly;
+``hft_contracts._atomic_io`` remains as a shim until 2026-10-31 but
+new code should import from ``hft_contracts.atomic_io``.
 
 Protocol (locked by ``tests/test_feature_set_writer.py``):
 
@@ -42,10 +48,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-# Phase 7 Stage 7.4 Round 5: re-export canonical atomic-write primitives
-# from hft_contracts for back-compat. Older code imported these directly
-# from this module; new code should import from hft_contracts._atomic_io.
-from hft_contracts._atomic_io import AtomicWriteError, atomic_write_json
+# Phase 7 Stage 7.4 Round 5 + REV 2 pre-push: re-export canonical
+# atomic-write primitives from hft_contracts for back-compat. Older code
+# imported these directly from this module; new code should import from
+# hft_contracts.atomic_io (public; ``_atomic_io`` is the pre-REV-2 shim).
+from hft_contracts.atomic_io import AtomicWriteError, atomic_write_json
 
 from hft_ops.feature_sets.schema import (
     FeatureSet,

@@ -27,15 +27,17 @@ from hft_ops.stages.base import (
     _tail,
 )
 
-# Phase 6 6A.9 (2026-04-17) + post-validation DRY (2026-04-18):
-# producer-consumer consistency — harvester applies the SAME content_hash
-# format gate as the backtester-facing `hft_contracts.signal_manifest`
-# (which defines the canonical regex). Importing from the SSoT module
-# eliminates the parallel inline definition that existed in Phase 6 6A.9
-# and prevents producer/consumer regex drift. Contract source:
-# pipeline_contract.toml:1211 (64-lowercase-hex pattern) +
-# hft_contracts.canonical_hash.sha256_hex output format.
-from hft_contracts.signal_manifest import _CONTENT_HASH_RE
+# Phase 6 6A.9 (2026-04-17) + post-validation DRY (2026-04-18) + REV 2
+# pre-push (2026-04-20): producer-consumer consistency — harvester applies
+# the SAME content_hash format gate as the backtester-facing
+# `hft_contracts.signal_manifest` (which defines the canonical regex).
+# Importing from the SSoT module eliminates the parallel inline definition
+# that existed in Phase 6 6A.9 and prevents producer/consumer regex drift.
+# REV 2 renamed the module-private `_CONTENT_HASH_RE` to the public
+# `CONTENT_HASH_RE`; `_CONTENT_HASH_RE` is kept as an alias through
+# 2026-10-31. Contract source: pipeline_contract.toml:1211 (64-lowercase-
+# hex pattern) + hft_contracts.canonical_hash.sha256_hex output format.
+from hft_contracts.signal_manifest import CONTENT_HASH_RE
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +93,7 @@ def _harvest_feature_set_ref(
             if (
                 isinstance(name, str)
                 and isinstance(content_hash, str)
-                and _CONTENT_HASH_RE.match(content_hash)
+                and CONTENT_HASH_RE.match(content_hash)
             ):
                 return {"name": name, "content_hash": content_hash}
 

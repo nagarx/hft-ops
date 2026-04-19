@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from hft_contracts._atomic_io import atomic_write_json
+from hft_contracts.atomic_io import atomic_write_json
 from hft_ops.ledger.experiment_record import ExperimentRecord
 
 
@@ -66,7 +66,7 @@ class ExperimentLedger:
         """Persist the index to disk atomically.
 
         Phase 7 Stage 7.4 Round 5 (2026-04-20): delegates to the
-        canonical ``hft_contracts._atomic_io.atomic_write_json`` —
+        canonical ``hft_contracts.atomic_io.atomic_write_json`` —
         unified with ``ExperimentRecord.save`` and
         ``hft_ops.feature_sets.writer.atomic_write_json``. Canonical
         convention (``sort_keys=True`` + trailing newline) ensures
