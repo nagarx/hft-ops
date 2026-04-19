@@ -172,18 +172,20 @@ class TestRebuildIndexCLI:
 
 
 class TestGateReportPersistedInRecord:
-    """Phase 7 Stage 7.4 post-validation B-H1 fix: gate report is persisted
-    into ExperimentRecord.training_metrics via cli.py::_record_experiment.
+    """Phase 7 Stage 7.4 Round 4 (2026-04-20): gate reports land in
+    ``ExperimentRecord.gate_reports`` via the generic harvest loop in
+    ``cli.py::_record_experiment``. Supersedes Round 1's nested-under-
+    training_metrics pattern.
 
     These tests use the _record_experiment helper directly rather than
     round-tripping the full CLI — keeps the test focused on the
     integration point.
     """
 
-    def test_gate_report_lands_in_training_metrics(self, tmp_path: Path):
-        """When post_training_gate ran, its captured_metrics dict
-        containing the full GateReport is nested under
-        training_metrics["post_training_gate"] in the ExperimentRecord.
+    def test_gate_report_lands_in_gate_reports(self, tmp_path: Path):
+        """When post_training_gate ran, its serialized GateReport is
+        stored under ``ExperimentRecord.gate_reports["post_training_gate"]``
+        (Round 4 Option C design).
         """
         from hft_ops.cli import _record_experiment
         from hft_ops.manifest.schema import ExperimentHeader, ExperimentManifest
@@ -209,9 +211,10 @@ class TestGateReportPersistedInRecord:
         }
         gate_result = StageResult(stage_name="post_training_gate")
         gate_result.status = StageStatus.COMPLETED
+        # Round 4: uniform "gate_report" key (was "post_training_gate").
         gate_result.captured_metrics = {
-            "post_training_gate": gate_report,
-            "post_training_gate_summary": "post_training_gate: PASS | test_ic=0.3800",
+            "gate_report": gate_report,
+            "gate_report_summary": "post_training_gate: PASS | test_ic=0.3800",
         }
 
         results = {
@@ -233,16 +236,21 @@ class TestGateReportPersistedInRecord:
         record = ledger.get(experiment_id)
         assert record is not None
 
-        # Gate report lives under training_metrics["post_training_gate"]
-        assert "post_training_gate" in record.training_metrics
-        gate_data = record.training_metrics["post_training_gate"]
+        # Round 4: gate report lives under record.gate_reports[stage_name]
+        assert "post_training_gate" in record.gate_reports
+        gate_data = record.gate_reports["post_training_gate"]
         assert gate_data["status"] == "pass"
         assert gate_data["primary_metric_name"] == "test_ic"
         assert gate_data["primary_metric_value"] == 0.38
 
-        # One-line summary also persisted for grep-friendly display
-        assert "post_training_gate_summary" in record.training_metrics
-        assert "PASS" in record.training_metrics["post_training_gate_summary"]
+        # Legacy nesting MUST NOT be present in fresh records.
+        assert "post_training_gate" not in record.training_metrics
+        assert "post_training_gate_summary" not in record.training_metrics
+
+        # Round 4: gate report status is surfaced via the index_entry()
+        # projection for fast filtering (`hft-ops ledger list --gate-status`).
+        idx = record.index_entry()
+        assert idx["gate_reports"]["post_training_gate"]["status"] == "pass"
 
     def test_gate_report_absent_when_gate_not_run(self, tmp_path: Path):
         """When post_training_gate was not in results (disabled / skipped),

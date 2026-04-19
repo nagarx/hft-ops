@@ -9,6 +9,7 @@ from the export metadata at runtime.
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -23,6 +24,24 @@ from hft_ops.stages.base import (
     StageStatus,
     run_subprocess,
     _tail,
+)
+# Phase 7 Stage 7.4 Round 4 item #1 (C1-complete). Re-use the authoritative
+# regression val_* key taxonomy declared by the PostTrainingGateRunner
+# instead of duplicating the list here. Prevents drift when the gate's
+# primary-metric fallback order changes.
+from hft_ops.stages.post_training_gate import (
+    _REGRESSION_VAL_MAX_KEYS,
+    _REGRESSION_VAL_MIN_KEYS,
+)
+
+# Classification-only max-better val_* keys. (val_signal_rate is emitted by
+# the TLOB / opportunity classification strategies; val_macro_f1 and
+# val_accuracy by every classification strategy.) val_loss lives in
+# _REGRESSION_VAL_MIN_KEYS because it's min-better for any task.
+_CLASSIFICATION_VAL_MAX_KEYS = (
+    "val_accuracy",
+    "val_macro_f1",
+    "val_signal_rate",
 )
 
 
@@ -336,64 +355,94 @@ class TrainingRunner:
     def _capture_training_metrics(self, result: StageResult) -> None:
         """Capture training metrics from the output directory.
 
-        Phase 7 Stage 7.4 (2026-04-19): extended to read both
-        ``training_history.json`` (per-epoch classification metrics) AND
-        ``test_metrics.json`` (regression test-split metrics). Prior
-        implementation only handled classification — regression metrics
-        (``test_ic``, ``test_directional_accuracy``, ``test_r2``, etc.)
-        were silently dropped. PostTrainingGateRunner depends on these
-        metrics being in ``captured_metrics`` to compare against prior
-        best experiments.
+        Phase 7 Stage 7.4 Round 1 (2026-04-19) extended this to read both
+        ``training_history.json`` AND ``test_metrics.json``. Round 4
+        (2026-04-20) closes the C1-complete gap: the Round 1 version only
+        iterated three keys (``val_accuracy``, ``val_macro_f1``,
+        ``val_loss``) for per-epoch history, leaving every regression-
+        specific val_* key silently invisible to ``PostTrainingGateRunner``
+        prior-best lookup on ledger records. Round 4 unifies the
+        iteration over:
+
+        - classification max-better: ``_CLASSIFICATION_VAL_MAX_KEYS``
+        - regression max-better:     ``_REGRESSION_VAL_MAX_KEYS``
+          (re-imported from post_training_gate as SSoT)
+        - min-better (any task):     ``_REGRESSION_VAL_MIN_KEYS``
+          (includes val_loss, val_mae, val_rmse)
+
+        All series values are filtered to finite scalars before max/min
+        reduction to prevent NaN-poisoned ledger entries (rule §2, §8).
 
         Conventions:
-        - Classification runs: ``training_history.json`` is a list-of-
-          dicts (per-epoch); we extract max val_accuracy + max val_macro_f1.
-        - Regression runs: ``test_metrics.json`` is a flat dict of named
-          scalars; we merge ALL float-valued keys into captured_metrics.
+        - per-epoch history is either dict-of-lists (legacy retroactive
+          records) OR list-of-dicts (current MetricLogger callback output;
+          see ``lobtrainer.training.callbacks:552``).
+        - regression runs also write ``test_metrics.json`` — a flat dict of
+          ``{test_<metric>: float}`` (established by
+          ``lobtrainer.training.simple_trainer:223-225``; Round 4 item #6
+          added the same for the PyTorch ``Trainer`` path at
+          ``lob-model-trainer/scripts/train.py``). All finite float values
+          are merged with the exact key preserved.
 
-        Both files may exist (regression runs with per-epoch val IC);
-        merge order is history-first, test-second (test-split wins on
-        key conflict — it's the canonical final metric).
+        Merge order is history-first, test-second — the final test-split
+        metric wins on any key collision since it is the canonical final
+        number used by ``_find_prior_best_experiment``.
         """
         if not result.output_dir:
             return
 
         output_dir = Path(result.output_dir)
 
-        # Classification-style per-epoch history.
+        # Per-epoch validation history.
+        max_keys = _CLASSIFICATION_VAL_MAX_KEYS + _REGRESSION_VAL_MAX_KEYS
+        min_keys = _REGRESSION_VAL_MIN_KEYS
+
+        def _finite(value: Any) -> bool:
+            return (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            )
+
         history_file = output_dir / "training_history.json"
         if history_file.exists():
             try:
                 with open(history_file, "r") as f:
                     history = json.load(f)
                 if isinstance(history, dict):
-                    val_accs = history.get("val_accuracy", [])
-                    if val_accs:
-                        result.captured_metrics["best_val_accuracy"] = max(val_accs)
-                    val_f1s = history.get("val_macro_f1", [])
-                    if val_f1s:
-                        result.captured_metrics["best_val_macro_f1"] = max(val_f1s)
+                    # Legacy dict-of-lists format (retroactive records).
+                    for key in max_keys:
+                        series = [v for v in history.get(key, []) if _finite(v)]
+                        if series:
+                            result.captured_metrics[f"best_{key}"] = max(series)
+                    for key in min_keys:
+                        series = [v for v in history.get(key, []) if _finite(v)]
+                        if series:
+                            result.captured_metrics[f"best_{key}"] = min(series)
                 elif isinstance(history, list):
-                    # List-of-dicts per-epoch format — extract max val_*
-                    # scalar keys opportunistically.
-                    for key in ("val_accuracy", "val_macro_f1", "val_loss"):
+                    # Current list-of-dicts per-epoch format.
+                    for key in max_keys:
                         series = [
                             epoch.get(key)
                             for epoch in history
-                            if isinstance(epoch, dict) and isinstance(epoch.get(key), (int, float))
+                            if isinstance(epoch, dict) and _finite(epoch.get(key))
                         ]
                         if series:
-                            result.captured_metrics[f"best_{key}"] = (
-                                max(series) if key != "val_loss" else min(series)
-                            )
+                            result.captured_metrics[f"best_{key}"] = max(series)
+                    for key in min_keys:
+                        series = [
+                            epoch.get(key)
+                            for epoch in history
+                            if isinstance(epoch, dict) and _finite(epoch.get(key))
+                        ]
+                        if series:
+                            result.captured_metrics[f"best_{key}"] = min(series)
             except (json.JSONDecodeError, OSError):
                 pass
 
         # Regression-style test-split scalar metrics (Phase 7 Stage 7.4).
-        # Convention established by lobtrainer regression export: a flat
-        # dict of {metric_name: float}. Merge all finite-float values into
-        # captured_metrics with the exact key preserved (no prefix), so
-        # PostTrainingGateRunner can read ``test_ic`` directly.
+        # Flat ``{metric: float}`` dict convention. Merge finite values
+        # only — NaN/Inf would poison ledger comparisons (rule §2, §8).
         test_metrics_file = output_dir / "test_metrics.json"
         if test_metrics_file.exists():
             try:
@@ -401,12 +450,8 @@ class TrainingRunner:
                     test_metrics = json.load(f)
                 if isinstance(test_metrics, dict):
                     for key, value in test_metrics.items():
-                        if isinstance(value, (int, float)):
-                            # Guard against NaN/Inf sneaking into the
-                            # ledger — rule §2 + §8.
-                            import math
-                            if math.isfinite(value):
-                                result.captured_metrics[key] = float(value)
+                        if _finite(value):
+                            result.captured_metrics[key] = float(value)
             except (json.JSONDecodeError, OSError):
                 pass
 

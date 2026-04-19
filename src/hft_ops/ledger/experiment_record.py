@@ -16,7 +16,8 @@ New code should import from hft_contracts:
 
 Phase 6 post-validation (2026-04-18): lazy ``__getattr__`` emits
 DeprecationWarning once per symbol access. This shim is scheduled for
-removal in version 0.4.0 — migrate call sites before then.
+removal on ``_REMOVAL_DATE`` (``2026-10-31``) — migrate call sites
+before then.
 
 Phase 6B.1a = dataclass-only narrow move. Phase 7 6B.1b retires
 ``lobtrainer.experiments.ExperimentRegistry`` entirely and ships the

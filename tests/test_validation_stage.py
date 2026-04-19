@@ -180,7 +180,8 @@ class TestValidationPassScenario:
         assert result.captured_metrics["best_feature_ic"] > 0.05
         assert result.captured_metrics["ic_count"] >= 2
         assert np.isfinite(result.captured_metrics["stability"])
-        assert "validation_report" in result.captured_metrics
+        # Round 4 (2026-04-20): uniform "gate_report" key (was "validation_report").
+        assert "gate_report" in result.captured_metrics
 
         # Gate report file must exist on disk
         report_path = Path(result.captured_metrics["gate_report_path"])
@@ -311,7 +312,8 @@ class TestValidationBypassListScenario:
         ops = OpsConfig(paths=paths, dry_run=False, verbose=False)
 
         result = ValidationRunner().run(manifest, ops)
-        report = result.captured_metrics["validation_report"]
+        # Round 4 (2026-04-20): uniform "gate_report" key (was "validation_report").
+        report = result.captured_metrics["gate_report"]
         assert "dark_share" in report["allow_zero_ic_names"]
         assert "time_regime" in report["allow_zero_ic_names"]
 

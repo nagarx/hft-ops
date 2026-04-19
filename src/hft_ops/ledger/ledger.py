@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from hft_contracts._atomic_io import atomic_write_json
 from hft_ops.ledger.experiment_record import ExperimentRecord
 
 
@@ -62,9 +63,24 @@ class ExperimentLedger:
         self._save_index()
 
     def _save_index(self) -> None:
-        """Persist the index to disk."""
-        with open(self._index_path, "w") as f:
-            json.dump(self._index, f, indent=2, default=str)
+        """Persist the index to disk atomically.
+
+        Phase 7 Stage 7.4 Round 5 (2026-04-20): delegates to the
+        canonical ``hft_contracts._atomic_io.atomic_write_json`` —
+        unified with ``ExperimentRecord.save`` and
+        ``hft_ops.feature_sets.writer.atomic_write_json``. Canonical
+        convention (``sort_keys=True`` + trailing newline) ensures
+        index.json is byte-stable across runs for diff tooling.
+
+        Atomicity closes the transient-bad-state window on
+        SIGKILL/ENOSPC/power failure: prior non-atomic
+        ``open(w) + json.dump`` could leave index.json truncated,
+        forcing a full ``_rebuild_index`` on the next load (correct
+        behavior — no data loss thanks to the JSONDecodeError
+        fallback at ``_load_index:48``, but O(N) cost on every
+        startup until a clean write lands).
+        """
+        atomic_write_json(self._index_path, self._index)
 
     def register(self, record: ExperimentRecord) -> str:
         """Register a new experiment record.

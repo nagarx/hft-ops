@@ -723,7 +723,7 @@ class TestRunPassPath:
 
         result = runner.run(manifest, ops)
         assert result.status == StageStatus.COMPLETED
-        gate = result.captured_metrics["post_training_gate"]
+        gate = result.captured_metrics["gate_report"]
         assert gate["status"] == "pass"
         assert gate["primary_metric_name"] == "test_ic"
         assert gate["primary_metric_value"] == 0.38
@@ -755,7 +755,7 @@ class TestRunPassPath:
         result = runner.run(manifest, ops)
         # warn mode: status stays COMPLETED; gate.status == "warn"
         assert result.status == StageStatus.COMPLETED
-        gate = result.captured_metrics["post_training_gate"]
+        gate = result.captured_metrics["gate_report"]
         assert gate["status"] == "warn"
         # Floor check must have failed
         floor_check = next(c for c in gate["checks"] if c["name"] == "floor")
@@ -813,7 +813,7 @@ class TestRunPassPath:
 
         result = runner.run(manifest, ops)
         assert result.status == StageStatus.COMPLETED
-        gate = result.captured_metrics["post_training_gate"]
+        gate = result.captured_metrics["gate_report"]
         assert gate["status"] == "pass"  # record_only forces pass
 
     def test_gate_report_persisted(self, runner, tmp_path: Path):

@@ -386,30 +386,25 @@ def _record_experiment(
             except (OSError, Exception):
                 pass  # Best effort — config may not exist in dry-run or failure
 
-    # Phase 7 Stage 7.4 post-validation (2026-04-19): B-H1 fix — harvest the
-    # post_training_gate report from the gate's captured_metrics and
-    # persist it IN the ExperimentRecord so researchers can:
-    #   (a) see which prior experiments hit regression warnings
-    #       (`hft-ops ledger show <id>` shows full record including gate)
-    #   (b) write ad-hoc queries like "experiments with gate status=warn"
-    #       via `hft-ops ledger list` or programmatic filter on
-    #       `training_metrics.post_training_gate.status`
-    # Pre-fix: gate wrote gate_report.json to disk but NEVER reached the
-    # record — ephemeral only, invisible to all ledger tooling.
-    # Implementation: nest the report under training_metrics (a
-    # Dict[str, Any] already typed for free-form sub-dicts; no schema
-    # change required on ExperimentRecord). Includes both the full
-    # report dict AND the one-line summary for grep-friendly display.
-    if "post_training_gate" in results:
-        gate_captured = results["post_training_gate"].captured_metrics
-        if "post_training_gate" in gate_captured:
-            training_metrics["post_training_gate"] = gate_captured[
-                "post_training_gate"
-            ]
-        if "post_training_gate_summary" in gate_captured:
-            training_metrics["post_training_gate_summary"] = gate_captured[
-                "post_training_gate_summary"
-            ]
+    # Phase 7 Stage 7.4 Round 4 (2026-04-20): generic gate-report
+    # harvest. Every runner that emits a gate writes its serialized
+    # report under the uniform ``result.captured_metrics["gate_report"]``
+    # key. Harvest ALL of them into ``ExperimentRecord.gate_reports``
+    # keyed by stage name — researchers can then query
+    # ``ledger list --gate-status warn`` across every gate type
+    # uniformly (validation, post_training_gate, future
+    # post_backtest_gate) without per-gate CLI special-casing.
+    #
+    # Supersedes Round 1's nested-under-training_metrics pattern
+    # (which violated the training_metrics flat-scalar-dict contract
+    # and was silently filtered from ``index_entry()``). Records
+    # written pre-Round-4 still load correctly via the migration shim
+    # in ``ExperimentRecord.from_dict`` (removal deadline 2026-08-01).
+    gate_reports: Dict[str, Dict[str, Any]] = {}
+    for stage_name, stage_result in results.items():
+        report = stage_result.captured_metrics.get("gate_report")
+        if isinstance(report, dict):
+            gate_reports[stage_name] = report
 
     # Phase 4 Batch 4c.4 (2026-04-16): harvest `feature_set_ref` from
     # signal_export's captured_metrics (populated by
@@ -435,6 +430,7 @@ def _record_experiment(
         contract_version=manifest.experiment.contract_version,
         training_config=training_config,
         training_metrics=training_metrics,
+        gate_reports=gate_reports,
         tags=manifest.experiment.tags,
         hypothesis=manifest.experiment.hypothesis,
         description=manifest.experiment.description,

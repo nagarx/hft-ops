@@ -120,7 +120,7 @@ class GateReport:
     """Full post-training gate report.
 
     Written to ``<output_dir>/gate_report.json``. Summary attached to
-    ``StageResult.captured_metrics["post_training_gate"]`` so cli.py
+    ``StageResult.captured_metrics["gate_report"]`` so cli.py
     _record_experiment can propagate into ExperimentRecord.notes.
     """
 
@@ -356,8 +356,13 @@ class PostTrainingGateRunner:
 
         result.duration_seconds = time.monotonic() - start
         result.output_dir = str(output_dir_path)
-        result.captured_metrics["post_training_gate"] = report.to_dict()
-        result.captured_metrics["post_training_gate_summary"] = report.summary()
+        # Phase 7 Stage 7.4 Round 4 (2026-04-20): uniform "gate_report"
+        # key across every stage that emits one (validation, post_training,
+        # future post_backtest). cli.py::_record_experiment harvests via
+        # generic ``result.captured_metrics.get("gate_report")`` loop so
+        # new gate stages plug in with zero CLI changes.
+        result.captured_metrics["gate_report"] = report.to_dict()
+        result.captured_metrics["gate_report_summary"] = report.summary()
 
         logger.info("post_training_gate: %s", report.summary())
 

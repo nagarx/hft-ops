@@ -6,6 +6,14 @@ Phase 4 introduces the first mutable registry inside ``contracts/`` —
 safe (no partial files on SIGKILL or disk-full) and collision-aware
 (refuse to silently clobber a prior write under the same name).
 
+Phase 7 Stage 7.4 Round 5 (2026-04-20): ``atomic_write_json`` +
+``AtomicWriteError`` moved to the canonical
+``hft_contracts._atomic_io`` module (unified with
+``ExperimentRecord.save`` and ``hft_ops.ledger.ledger._save_index``).
+This module re-exports both names for back-compat with pre-Round-5
+importers (Phase 4 consumers used ``from hft_ops.feature_sets.writer
+import atomic_write_json, AtomicWriteError``).
+
 Protocol (locked by ``tests/test_feature_set_writer.py``):
 
 1. Resolve the target path: ``<feature_sets_dir>/<name>.json``.
@@ -18,31 +26,26 @@ Protocol (locked by ``tests/test_feature_set_writer.py``):
      must either bump the name suffix or pass ``--force``).
 3. If the path exists and ``force=True``:
    - Overwrite (same atomic protocol).
-4. Serialize the FeatureSet via ``to_dict`` → ``json.dumps`` with
-   ``sort_keys=True, indent=2, default=str`` + trailing newline.
-   Matches golden-fixture convention at
-   ``lob-model-trainer/tests/fixtures/golden/generate_snapshots.py:100``.
-5. Write to ``<target>.tmp.<pid>.<ns_time>`` → ``f.flush()`` →
-   ``os.fsync(fd)`` → ``os.replace(tmp, target)``. ``os.replace`` is
-   atomic on POSIX (same-filesystem rename is a single syscall) and
-   Windows (``MoveFileEx`` with ``MOVEFILE_REPLACE_EXISTING``).
+4. Serialize the FeatureSet via ``to_dict`` → ``atomic_write_json``
+   with canonical convention (``sort_keys=True`` + trailing newline;
+   matches golden-fixture convention at
+   ``lob-model-trainer/tests/fixtures/golden/generate_snapshots.py``).
 
 The writer integrity-verifies the FeatureSet BEFORE writing: callers
 that construct a FeatureSet with a mismatched hash cannot poison the
 registry. Verification uses ``FeatureSet.verify_integrity`` which
 recomputes the hash from product fields.
-
-This is the FIRST atomic-write helper in the monorepo. If a second
-mutable-registry emerges (Phase 5+), extract to ``hft_utils``.
 """
 
 from __future__ import annotations
 
 import json
-import os
-import time
 from pathlib import Path
-from typing import Any, Mapping
+
+# Phase 7 Stage 7.4 Round 5: re-export canonical atomic-write primitives
+# from hft_contracts for back-compat. Older code imported these directly
+# from this module; new code should import from hft_contracts._atomic_io.
+from hft_contracts._atomic_io import AtomicWriteError, atomic_write_json
 
 from hft_ops.feature_sets.schema import (
     FeatureSet,
@@ -58,69 +61,6 @@ class FeatureSetExists(FileExistsError):
     Idempotent re-writes (same content hash) do NOT raise — they silently
     return the existing path.
     """
-
-
-class AtomicWriteError(OSError):
-    """An atomic write failed after tmp creation but before rename.
-
-    The caller should inspect ``os.listdir(target.parent)`` for orphan
-    ``.tmp.*`` files and delete them if the write is known to have
-    failed permanently.
-    """
-
-
-def atomic_write_json(
-    path: Path,
-    obj: Mapping[str, Any],
-    *,
-    indent: int = 2,
-) -> None:
-    """Write a JSON-serializable object to ``path`` atomically.
-
-    Crash-safe (SIGKILL between write and rename leaves at most a stale
-    ``<path>.tmp.<pid>.<ns>`` file, never a partial ``<path>``).
-
-    Serialization convention matches the monorepo (``sort_keys=True,
-    default=str``) + trailing newline. Callers requiring NaN/Inf
-    sanitization should pre-process the dict before calling this.
-
-    Args:
-        path: Target file path (will be created or replaced).
-        obj: Mapping to serialize.
-        indent: JSON indent spaces. Default 2 matches the golden-fixture
-            convention.
-
-    Raises:
-        OSError: On disk errors (file system full, permission denied).
-        AtomicWriteError: If rename fails after tmp creation.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Use a pid+time_ns suffix so concurrent writers to the same name
-    # do not collide on the tmp file. os.replace semantics then mean
-    # whichever tmp gets renamed first wins (LIFO semantics — OK for
-    # FeatureSet producers which should not actually run concurrently).
-    tmp_path = path.with_name(
-        f"{path.name}.tmp.{os.getpid()}.{time.time_ns()}"
-    )
-
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(obj, f, sort_keys=True, indent=indent, default=str)
-            f.write("\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
-    except OSError as exc:
-        # Best-effort cleanup; failure here is non-fatal (orphan tmp is
-        # worse than a double-delete error).
-        try:
-            if tmp_path.exists():
-                tmp_path.unlink()
-        except OSError:
-            pass
-        raise AtomicWriteError(
-            f"Atomic write failed for {path}: {exc}"
-        ) from exc
 
 
 def write_feature_set(

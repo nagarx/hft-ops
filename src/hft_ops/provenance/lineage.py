@@ -15,8 +15,8 @@ Phase 6 post-validation (2026-04-18): lazy ``__getattr__`` emits
 DeprecationWarning once per symbol access to prevent shim ossification.
 Python's default filter hides DeprecationWarning outside ``__main__``;
 pytest surfaces it; explicit `-W error::DeprecationWarning` errors. This
-shim is scheduled for removal in version 0.4.0 — migrate call sites to
-``hft_contracts.provenance`` imports before then.
+shim is scheduled for removal on ``_REMOVAL_DATE`` (``2026-10-31``) —
+migrate call sites to ``hft_contracts.provenance`` imports before then.
 
 See PIPELINE_ARCHITECTURE.md §17.3 and the Phase 7 migration guide at
 ``docs/phase7_roadmap.md`` (if present).

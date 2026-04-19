@@ -220,8 +220,23 @@ class ValidationRunner:
             output_dir_path / "gate_report.json"
         )
         # Embed the full serialized report so the ledger can store it
-        # without a second disk read.
-        result.captured_metrics["validation_report"] = gate_report
+        # without a second disk read. Phase 7 Stage 7.4 Round 4
+        # (2026-04-20): renamed "validation_report" → "gate_report" for
+        # uniform cross-stage harvesting in cli.py::_record_experiment.
+        # Phase 7 Stage 7.4 Round 5 (2026-04-20): inject a ``status``
+        # field (lower-case verdict) so the dict conforms to the
+        # ``hft_contracts.gate_report.GateReportDict`` convention.
+        # ``fast_gate.GateReport`` historically used ``verdict: "PASS"|"FAIL"``
+        # (upper-case); post_training_gate uses ``status: "pass"|"warn"|"abort"``
+        # (lower-case). Unifying at the ADAPTER layer avoids breaking
+        # fast_gate's public ``verdict`` field (preserved intact below)
+        # while giving the ledger consumer one uniform key.
+        # The legacy aliases ("gate_report_path", "best_feature", etc.)
+        # above remain as top-level scalars for backward compatibility
+        # with consumers that expected flat access.
+        if "verdict" in gate_report and "status" not in gate_report:
+            gate_report["status"] = str(gate_report["verdict"]).lower()
+        result.captured_metrics["gate_report"] = gate_report
 
         # Disposition: apply on_fail policy
         verdict_pass = gate_report["verdict"] == "PASS"

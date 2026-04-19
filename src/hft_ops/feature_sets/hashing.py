@@ -17,7 +17,7 @@ New code should import from hft_contracts:
 
 Phase 6 post-validation (2026-04-18): lazy ``__getattr__`` emits
 DeprecationWarning once per symbol access. Scheduled for removal in
-version 0.4.0.
+on ``_REMOVAL_DATE`` (``2026-10-31``).
 
 See PIPELINE_ARCHITECTURE.md §17.3.
 """
