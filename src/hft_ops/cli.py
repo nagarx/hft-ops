@@ -131,12 +131,39 @@ def _resolve_pipeline_root(ctx_root: Optional[str]) -> Path:
     help="Path to HFT-pipeline-v2 root. Auto-detected if not specified.",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Verbose subprocess output.")
+@click.option(
+    "--strict-index",
+    is_flag=True,
+    default=False,
+    help=(
+        "Phase 8B: fail-fast when ledger/index.json schema differs from "
+        "code-side INDEX_SCHEMA_VERSION (instead of auto-rebuilding). "
+        "Auto-enabled when CI=true env var is set. Intended for CI runs "
+        "so a forgotten rebuild-index commit or forgotten version bump "
+        "produces a visible failure."
+    ),
+)
 @click.pass_context
-def main(ctx: click.Context, pipeline_root: Optional[str], verbose: bool) -> None:
+def main(
+    ctx: click.Context,
+    pipeline_root: Optional[str],
+    verbose: bool,
+    strict_index: bool,
+) -> None:
     """hft-ops: Central experiment orchestrator for the HFT pipeline."""
     ctx.ensure_object(dict)
     ctx.obj["pipeline_root"] = pipeline_root
     ctx.obj["verbose"] = verbose
+    # Phase 8B: set the env var here so downstream ExperimentLedger()
+    # constructions (including inside subprocesses) auto-detect via
+    # ``_detect_strict_index_from_env``. The env-var path avoids needing
+    # to thread a ``strict_index`` kwarg through every CLI subcommand that
+    # constructs an ExperimentLedger.
+    if strict_index:
+        import os
+
+        os.environ["HFT_OPS_STRICT_INDEX"] = "1"
+    ctx.obj["strict_index"] = strict_index
 
 
 @main.command()

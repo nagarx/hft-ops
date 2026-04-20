@@ -793,14 +793,35 @@ def check_duplicate(
     if not index_path.exists():
         return None
 
+    # Phase 8B MUST-FIX (Agent 1 BUG-1, 2026-04-20): previously this reader
+    # did a direct ``json.load`` bypassing ``ExperimentLedger._load_index``,
+    # which silently broke the strict-mode contract AND allowed duplicate
+    # registration when on-disk envelope was stale (a rebuilt envelope had
+    # more entries than the pre-rebuild snapshot dedup saw). Fixed by
+    # routing through ``ExperimentLedger`` so the same envelope-detection +
+    # strict-mode dispatch runs here as in all other ledger consumers.
+    #
+    # Exception dispatch:
+    #   - ``StaleLedgerIndexError`` (strict mode + stale index) → propagate.
+    #     This is the Phase 8B CI-fails-fast contract: dedup is the most
+    #     frequent code path; masking staleness here would defeat the whole
+    #     trackability substrate.
+    #   - ``OSError`` / ``json.JSONDecodeError`` → return None (preserves
+    #     the prior permissive behavior for non-staleness errors like
+    #     ``PermissionError``). Under non-strict mode, malformed JSON is
+    #     handled internally by ``_load_index`` and never leaks here.
+    from hft_ops.ledger.ledger import ExperimentLedger, StaleLedgerIndexError
+
     try:
-        with open(index_path, "r") as f:
-            index = json.load(f)
-    except (json.JSONDecodeError, OSError):
+        ledger = ExperimentLedger(ledger_dir)
+    except StaleLedgerIndexError:
+        # Strict-mode staleness signal — fail fast; do NOT silently return
+        # None (that would mask the staleness from the caller, re-opening
+        # the silent-omission class Phase 8B exists to eliminate).
+        raise
+    except (OSError, json.JSONDecodeError):
+        # Non-staleness construction failures (permission denied, etc.) —
+        # permissive behavior: caller can proceed without dedup.
         return None
 
-    for entry in index:
-        if entry.get("fingerprint") == fingerprint:
-            return entry
-
-    return None
+    return ledger.find_by_fingerprint(fingerprint)

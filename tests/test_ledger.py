@@ -305,3 +305,608 @@ class TestRecordType:
         assert loaded.record_type == "training"  # default
         assert loaded.sub_records == []
         assert loaded.parent_experiment_id == ""
+
+
+class TestLedgerIndexSchemaEnvelope:
+    """Phase 8B: ``index.json`` envelope format + auto-invalidation.
+
+    The envelope wraps entries in ``{"schema": {"version": ...}, "entries": [...]}``.
+    When on-disk MAJOR.MINOR version differs from code-side
+    ``hft_contracts.INDEX_SCHEMA_VERSION``, ``_load_index`` auto-rebuilds
+    (loudly logged) — closing the silent-omission class that occurred when
+    ``ExperimentRecord.index_entry()`` whitelist extensions were invisible
+    to old records until manual ``hft-ops ledger rebuild-index``.
+    """
+
+    def test_save_writes_envelope_format(self, tmp_path: Path) -> None:
+        """`_save_index` produces envelope-shaped JSON with `schema` + `entries`."""
+        import json
+
+        from hft_contracts import INDEX_SCHEMA_VERSION
+
+        ledger = ExperimentLedger(tmp_path)
+        ledger.register(_make_record("t_aaaa_20260101T000000_11111111"))
+
+        with open(tmp_path / "index.json", "r") as f:
+            on_disk = json.load(f)
+
+        assert isinstance(on_disk, dict), (
+            f"envelope format should be dict with 'schema' + 'entries'; got {type(on_disk).__name__}"
+        )
+        assert "schema" in on_disk, "envelope must carry 'schema' key"
+        assert "entries" in on_disk, "envelope must carry 'entries' key"
+        assert on_disk["schema"]["version"] == INDEX_SCHEMA_VERSION
+        assert "written_at" in on_disk["schema"]
+        assert "last_rebuild_source" in on_disk["schema"]
+        assert isinstance(on_disk["entries"], list)
+        assert len(on_disk["entries"]) == 1
+
+    def test_load_envelope_with_matching_version_no_rebuild(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """Matching MAJOR.MINOR version → fast path, no rebuild, no WARN."""
+        import logging
+
+        # First ledger instance: establishes envelope with current version.
+        ledger1 = ExperimentLedger(tmp_path)
+        ledger1.register(_make_record("t_bbbb_20260101T000000_22222222"))
+
+        # Second instance: should load directly from envelope without rebuild.
+        with caplog.at_level(logging.WARNING, logger="hft_ops.ledger.ledger"):
+            ledger2 = ExperimentLedger(tmp_path)
+
+        assert ledger2.count() == 1
+        # No WARN messages — matching version is the fast path.
+        warn_messages = [
+            rec.message for rec in caplog.records if rec.levelno == logging.WARNING
+        ]
+        assert warn_messages == [], (
+            f"matching version should produce zero WARN messages; got {warn_messages}"
+        )
+
+    def test_load_legacy_bare_list_auto_migrates_to_envelope(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """Pre-Phase-8B bare-list index.json auto-migrates on first load."""
+        import json
+        import logging
+
+        # Simulate pre-Phase-8B state: bare-list index.json.
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        record = _make_record("t_cccc_20260101T000000_33333333")
+        record.save(tmp_path / "records" / f"{record.experiment_id}.json")
+
+        legacy_index = [record.index_entry()]
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump(legacy_index, f)
+
+        with caplog.at_level(logging.WARNING, logger="hft_ops.ledger.ledger"):
+            ledger = ExperimentLedger(tmp_path)
+
+        assert ledger.count() == 1
+
+        # After load, the file should be in envelope format.
+        with open(tmp_path / "index.json", "r") as f:
+            on_disk = json.load(f)
+        assert isinstance(on_disk, dict) and "entries" in on_disk, (
+            "legacy bare-list must auto-migrate to envelope format on load"
+        )
+        assert on_disk["schema"]["last_rebuild_source"] == "auto_legacy_bare_list"
+
+        # WARN must be emitted — migration is a silent-omission-class guard event.
+        warn_messages = [
+            rec.message for rec in caplog.records if rec.levelno == logging.WARNING
+        ]
+        assert any("auto_legacy_bare_list" in m for m in warn_messages), (
+            f"legacy migration must WARN; got {warn_messages}"
+        )
+
+    def test_load_malformed_json_triggers_rebuild(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """Truncated/malformed JSON at index.json → auto-rebuild from records/."""
+        import logging
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        record = _make_record("t_dddd_20260101T000000_44444444")
+        record.save(tmp_path / "records" / f"{record.experiment_id}.json")
+
+        # Simulate power-loss / mid-write truncation.
+        with open(tmp_path / "index.json", "w") as f:
+            f.write('{"schema": {"version": "1.0.0"')  # Truncated mid-dict
+
+        with caplog.at_level(logging.WARNING, logger="hft_ops.ledger.ledger"):
+            ledger = ExperimentLedger(tmp_path)
+
+        # Rebuild should recover the on-disk record.
+        assert ledger.count() == 1
+        # WARN must surface the rebuild reason.
+        warn_messages = [
+            rec.message for rec in caplog.records if rec.levelno == logging.WARNING
+        ]
+        assert any("auto_malformed" in m for m in warn_messages), (
+            f"malformed JSON must WARN; got {warn_messages}"
+        )
+
+    def test_load_version_mismatch_triggers_rebuild(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """On-disk envelope with different MAJOR.MINOR → auto-rebuild + WARN.
+
+        This is THE test for the silent-omission class that Phase 8B exists to
+        eliminate. A developer extends ``index_entry()`` whitelist + bumps
+        MINOR; on next load the old envelope is detected as stale and the
+        index is regenerated.
+        """
+        import json
+        import logging
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        record = _make_record("t_eeee_20260101T000000_55555555")
+        record.save(tmp_path / "records" / f"{record.experiment_id}.json")
+
+        # Simulate an older code version having written the index.
+        stale_envelope = {
+            "schema": {
+                "version": "0.9.0",  # Older MAJOR.MINOR
+                "written_at": "2026-01-01T00:00:00+00:00",
+                "last_rebuild_source": "manual",
+            },
+            "entries": [],  # Old projection may have had fewer keys
+        }
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump(stale_envelope, f)
+
+        with caplog.at_level(logging.WARNING, logger="hft_ops.ledger.ledger"):
+            ledger = ExperimentLedger(tmp_path)
+
+        assert ledger.count() == 1, (
+            "version-mismatch rebuild must re-project from records/*.json"
+        )
+        warn_messages = [
+            rec.message for rec in caplog.records if rec.levelno == logging.WARNING
+        ]
+        assert any("version_mismatch" in m and "0.9.0" in m for m in warn_messages), (
+            f"version mismatch must WARN with on-disk version; got {warn_messages}"
+        )
+
+        # After rebuild, on-disk envelope should carry the current version +
+        # the rebuild-source diagnostic.
+        with open(tmp_path / "index.json", "r") as f:
+            on_disk = json.load(f)
+        assert on_disk["schema"]["last_rebuild_source"].startswith(
+            "auto_version_mismatch"
+        )
+
+
+class TestIndexSchemaNeedsRebuildHelper:
+    """Phase 8B: direct tests on the `_index_schema_needs_rebuild` helper.
+
+    Exercises the MAJOR.MINOR comparison logic independently of ledger
+    construction, ensuring PATCH-only diffs do NOT trigger rebuild and
+    unparseable versions DO (fail-safe).
+    """
+
+    def test_same_version_no_rebuild(self) -> None:
+        from hft_contracts import INDEX_SCHEMA_VERSION
+        from hft_ops.ledger.ledger import _index_schema_needs_rebuild
+
+        assert not _index_schema_needs_rebuild(INDEX_SCHEMA_VERSION)
+
+    def test_patch_diff_no_rebuild(self) -> None:
+        """PATCH-only diff is reserved for docstring changes; no rebuild."""
+        from hft_ops.ledger.ledger import _index_schema_needs_rebuild
+
+        # Current code says "1.0.0"; simulate on-disk "1.0.99".
+        # (PATCH differs; MAJOR.MINOR matches.)
+        assert not _index_schema_needs_rebuild("1.0.99")
+
+    def test_minor_diff_triggers_rebuild(self) -> None:
+        from hft_ops.ledger.ledger import _index_schema_needs_rebuild
+
+        assert _index_schema_needs_rebuild("1.1.0")
+
+    def test_major_diff_triggers_rebuild(self) -> None:
+        from hft_ops.ledger.ledger import _index_schema_needs_rebuild
+
+        assert _index_schema_needs_rebuild("2.0.0")
+
+    def test_unparseable_version_triggers_rebuild(self) -> None:
+        """Fail-safe: unrecognised / missing version forces rebuild."""
+        from hft_ops.ledger.ledger import _index_schema_needs_rebuild
+
+        assert _index_schema_needs_rebuild("")
+        assert _index_schema_needs_rebuild("not-a-version")
+        assert _index_schema_needs_rebuild("1.0")  # Missing PATCH
+        assert _index_schema_needs_rebuild("1.0.0-pre")  # Pre-release not supported
+
+
+class TestAllIndexConsumersGoThroughLoadIndex:
+    """Phase 8B Step B.3 regression: lock the invariant that every ledger
+    consumer method reads from ``self._index`` (populated once by
+    ``_load_index``) rather than by direct ``json.load`` on the on-disk
+    ``index.json`` file. Agent 1's adversarial validation flagged that
+    ``dedup.py::check_duplicate`` was the only direct-read site (already
+    fixed in Step B.2a); this regression guard ensures no future
+    refactor re-introduces a direct-read path that bypasses the
+    ``_load_index`` envelope + auto-rebuild logic.
+
+    Method: construct a ledger with one record, confirm ``index.json``
+    exists, then RENAME the file so any attempt to re-read it raises
+    ``FileNotFoundError``. Call every consumer — if the invariant holds
+    they all work from the in-memory ``self._index`` without re-touching
+    the renamed file. If a future commit re-introduces a direct read,
+    the rename causes an observable failure.
+    """
+
+    def test_consumers_work_after_index_file_renamed(
+        self, tmp_path: Path
+    ) -> None:
+        import os
+
+        ledger = ExperimentLedger(tmp_path)
+        record = _make_record("t_audit_20260420T000000_auditaud")
+        ledger.register(record)
+
+        index_path = tmp_path / "index.json"
+        renamed_path = tmp_path / "_index_renamed.json"
+        assert index_path.exists(), "register() should have produced index.json"
+        os.rename(index_path, renamed_path)
+        assert not index_path.exists(), "rename must remove the original path"
+
+        # All 6 consumer methods must work from self._index (in-memory),
+        # not from a re-read of the (now-absent) index.json.
+        assert len(ledger.list_all()) == 1, "list_all must use self._index"
+        assert ledger.list_ids() == [record.experiment_id], (
+            "list_ids must use self._index"
+        )
+        assert ledger.count() == 1, "count must use self._index"
+        assert len(ledger.filter()) == 1, "filter must use self._index"
+        assert ledger.find_by_fingerprint("nonexistent") is None, (
+            "find_by_fingerprint must use self._index (returning None is OK — "
+            "the point is that it doesn't crash on missing file)"
+        )
+        found_entry = ledger.find_by_fingerprint(record.fingerprint)
+        assert found_entry is not None, (
+            "find_by_fingerprint must locate the real fingerprint via self._index"
+        )
+        summary = ledger.summary()
+        assert summary["total_experiments"] == 1, (
+            "summary must use self._index"
+        )
+
+
+class TestStrictIndexMode:
+    """Phase 8B Step B.2b: ``strict_index=True`` elevates schema mismatch
+    from "auto-rebuild + WARN" to "fail-fast with StaleLedgerIndexError".
+
+    Intended for CI: a developer who extends ``index_entry()`` whitelist
+    without bumping ``INDEX_SCHEMA_VERSION``, or who forgets to commit a
+    refreshed ``index.json``, sees a hard CI failure rather than silent
+    auto-rebuild that masks the drift.
+
+    Three trigger paths all must raise under strict mode:
+    1. Version mismatch (older MAJOR.MINOR on disk vs code).
+    2. Legacy bare-list format.
+    3. Malformed JSON (truncated / non-list-non-dict root).
+
+    A fourth test verifies CI=true auto-detection (resolves the prior
+    open question about whether env detection should be the default).
+    """
+
+    def test_strict_mode_raises_on_version_mismatch(
+        self, tmp_path: Path
+    ) -> None:
+        import json
+
+        from hft_ops.ledger.ledger import StaleLedgerIndexError
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        record = _make_record("t_strict_v_20260420T000000_strictv00")
+        record.save(tmp_path / "records" / f"{record.experiment_id}.json")
+
+        stale_envelope = {
+            "schema": {
+                "version": "0.9.0",  # Older MAJOR.MINOR than current 1.0.0.
+                "written_at": "2026-01-01T00:00:00+00:00",
+                "last_rebuild_source": "manual",
+            },
+            "entries": [],
+        }
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump(stale_envelope, f)
+
+        with pytest.raises(StaleLedgerIndexError) as exc_info:
+            ExperimentLedger(tmp_path, strict_index=True)
+
+        msg = str(exc_info.value)
+        assert "stale" in msg.lower(), (
+            f"error message must include 'stale'; got: {msg}"
+        )
+        assert "0.9.0" in msg, (
+            f"error message must include the on-disk version; got: {msg}"
+        )
+        assert "rebuild-index" in msg, (
+            f"error message must suggest the rebuild-index recovery path; got: {msg}"
+        )
+
+    def test_strict_mode_raises_on_legacy_bare_list(
+        self, tmp_path: Path
+    ) -> None:
+        import json
+
+        from hft_ops.ledger.ledger import StaleLedgerIndexError
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump([{"experiment_id": "legacy_format"}], f)
+
+        with pytest.raises(StaleLedgerIndexError, match=r"legacy"):
+            ExperimentLedger(tmp_path, strict_index=True)
+
+    def test_strict_mode_raises_on_malformed_json(self, tmp_path: Path) -> None:
+        from hft_ops.ledger.ledger import StaleLedgerIndexError
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        with open(tmp_path / "index.json", "w") as f:
+            f.write('{"schema": {"version":')  # Truncated mid-dict.
+
+        with pytest.raises(StaleLedgerIndexError, match=r"malformed"):
+            ExperimentLedger(tmp_path, strict_index=True)
+
+    def test_strict_mode_does_NOT_raise_on_fresh_ledger(
+        self, tmp_path: Path
+    ) -> None:
+        """First-time init on an empty ledger dir is NOT a strict-fail
+        condition — a fresh ledger is the expected starting state, not
+        drift. Strict only fires when an existing index.json signals
+        staleness (version mismatch, legacy format, corruption).
+        """
+        # Fresh tmp_path — no records/ or index.json exists yet.
+        ledger = ExperimentLedger(tmp_path, strict_index=True)
+        assert ledger.count() == 0
+
+    def test_strict_mode_does_NOT_raise_on_matching_version(
+        self, tmp_path: Path
+    ) -> None:
+        """Current INDEX_SCHEMA_VERSION envelope should load without
+        complaint under strict mode (the fast path).
+        """
+        ledger1 = ExperimentLedger(tmp_path, strict_index=False)
+        ledger1.register(_make_record("t_strict_ok_20260420T000000_strictok0"))
+
+        # Second construction in strict mode — should load cleanly.
+        ledger2 = ExperimentLedger(tmp_path, strict_index=True)
+        assert ledger2.count() == 1
+
+    def test_ci_env_var_enables_strict_mode(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """CI=true env var auto-enables strict mode when
+        ``strict_index`` kwarg is not explicitly passed (resolving the
+        prior open question about whether env detection should be the
+        default). Mirrors GitHub Actions / GitLab CI / CircleCI /
+        Buildkite runner conventions.
+        """
+        import json
+
+        from hft_ops.ledger.ledger import StaleLedgerIndexError
+
+        # Set CI=true in environment.
+        monkeypatch.setenv("CI", "true")
+        monkeypatch.delenv("HFT_OPS_STRICT_INDEX", raising=False)
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        # Write a stale envelope to trigger the check.
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump([{"experiment_id": "legacy"}], f)
+
+        # Note: no explicit strict_index arg; env var should elevate.
+        with pytest.raises(StaleLedgerIndexError):
+            ExperimentLedger(tmp_path)
+
+    def test_hft_ops_strict_index_env_var_enables_strict_mode(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """HFT_OPS_STRICT_INDEX=1 env var (explicit override) also
+        enables strict mode when no kwarg is passed.
+        """
+        import json
+
+        from hft_ops.ledger.ledger import StaleLedgerIndexError
+
+        monkeypatch.setenv("HFT_OPS_STRICT_INDEX", "1")
+        monkeypatch.delenv("CI", raising=False)
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump([{"experiment_id": "legacy"}], f)
+
+        with pytest.raises(StaleLedgerIndexError):
+            ExperimentLedger(tmp_path)
+
+    # Phase 8B MUST-FIX (Agent 2 P1, 2026-04-20): symmetry + negative-case
+    # coverage for env-var truthy parsing.
+
+    def test_hft_ops_strict_index_accepts_true_alias(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """HFT_OPS_STRICT_INDEX=true (lower/upper case), "yes", "on"
+        also enable strict mode — symmetric with CI env var parsing.
+        """
+        import json
+
+        from hft_ops.ledger.ledger import StaleLedgerIndexError
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump([{"experiment_id": "legacy"}], f)
+
+        for truthy in ("true", "TRUE", "True", "yes", "YES", "on", "1"):
+            monkeypatch.setenv("HFT_OPS_STRICT_INDEX", truthy)
+            monkeypatch.delenv("CI", raising=False)
+            with pytest.raises(StaleLedgerIndexError):
+                ExperimentLedger(tmp_path)
+
+    def test_strict_mode_NOT_triggered_by_falsy_env_values(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Negative case: CI=false, CI=0, HFT_OPS_STRICT_INDEX=false,
+        HFT_OPS_STRICT_INDEX=0, and empty-string values all leave strict
+        mode DISABLED. Prevents CI gate bypass if user sets a falsy
+        literal, expecting it to mean "no strict mode".
+        """
+        import json
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        # Legacy-format index on disk — would trigger strict mode if enabled.
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump([{"experiment_id": "legacy"}], f)
+
+        falsy_values = [("CI", "false"), ("CI", "0"), ("CI", "FALSE"),
+                        ("CI", "no"), ("CI", "off"), ("CI", ""),
+                        ("HFT_OPS_STRICT_INDEX", "false"),
+                        ("HFT_OPS_STRICT_INDEX", "0"),
+                        ("HFT_OPS_STRICT_INDEX", "")]
+        for var_name, var_value in falsy_values:
+            monkeypatch.setenv(var_name, var_value)
+            monkeypatch.delenv("CI" if var_name != "CI" else "HFT_OPS_STRICT_INDEX",
+                               raising=False)
+            # Should NOT raise — auto-rebuild proceeds since strict is off.
+            ledger = ExperimentLedger(tmp_path)
+            assert ledger is not None, (
+                f"{var_name}={var_value!r} must NOT enable strict mode"
+            )
+
+
+class TestDedupCheckDuplicateEnvelopeCompat:
+    """Phase 8B MUST-FIX (Agent 1 BUG-1, 2026-04-20):
+    ``dedup.py::check_duplicate`` previously did a direct ``json.load`` on
+    ``index.json`` bypassing ``ExperimentLedger._load_index`` — breaking
+    the strict-mode contract and allowing silent duplicate registration
+    when on-disk envelope was stale. Fixed by routing the dedup check
+    through ``ExperimentLedger``. These tests lock the post-fix behavior.
+    """
+
+    def test_check_duplicate_reads_envelope_format(self, tmp_path: Path) -> None:
+        """After registering a record (envelope on disk), `check_duplicate`
+        finds the fingerprint via the envelope's `entries` list — matching
+        what `ExperimentLedger.find_by_fingerprint` would return.
+        """
+        from hft_ops.ledger.dedup import check_duplicate
+
+        ledger = ExperimentLedger(tmp_path)
+        record = _make_record("t_dedup_env_20260420T000000_dedupenv1")
+        ledger.register(record)
+
+        # On-disk is envelope-format post-register.
+        found = check_duplicate(record.fingerprint, tmp_path)
+        assert found is not None, (
+            "check_duplicate must find registered fingerprint in envelope"
+        )
+        assert found["experiment_id"] == record.experiment_id
+
+    def test_check_duplicate_reads_legacy_bare_list_via_autoload(
+        self, tmp_path: Path
+    ) -> None:
+        """Legacy bare-list index.json on disk: `check_duplicate` goes
+        through `ExperimentLedger._load_index` which auto-migrates to
+        envelope on construction. Dedup then succeeds against the
+        re-projected entries.
+        """
+        import json
+
+        from hft_ops.ledger.dedup import check_duplicate
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        record = _make_record("t_dedup_legacy_20260420T000000_dedupleg")
+        record.save(tmp_path / "records" / f"{record.experiment_id}.json")
+
+        # Write legacy bare-list with the record already present.
+        legacy = [record.index_entry()]
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump(legacy, f)
+
+        # check_duplicate should find the record (auto-migration re-projects).
+        found = check_duplicate(record.fingerprint, tmp_path)
+        assert found is not None, (
+            "check_duplicate must find fingerprint via auto-migrated envelope"
+        )
+
+    def test_check_duplicate_propagates_stale_error_under_strict_mode(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Under `CI=true` (strict), `check_duplicate` on a stale envelope
+        must raise `StaleLedgerIndexError` — NOT silently return None. This
+        was the critical BUG-1 fix: prior to Phase 8B MUST-FIX, `check_duplicate`
+        was the most-called silent-failure vector for stale-index drift.
+        """
+        import json
+
+        from hft_ops.ledger.dedup import check_duplicate
+        from hft_ops.ledger.ledger import StaleLedgerIndexError
+
+        monkeypatch.setenv("CI", "true")
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump([{"experiment_id": "legacy"}], f)  # Legacy bare-list.
+
+        with pytest.raises(StaleLedgerIndexError):
+            check_duplicate("any_fingerprint", tmp_path)
+
+    def test_check_duplicate_returns_none_when_ledger_dir_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """Preserve permissive behavior: missing ledger dir → return None
+        (caller proceeds without dedup). This path pre-dates Phase 8B but
+        must continue to work through the refactor.
+        """
+        from hft_ops.ledger.dedup import check_duplicate
+
+        # Never-created index.json → early-return.
+        assert check_duplicate("fp", tmp_path) is None
+
+
+class TestAutoMigrationRoundtrip:
+    """Phase 8B MUST-ADD (Agent 2 P1): explicit roundtrip after rebuild.
+    After auto-migration from legacy bare-list, a second
+    `ExperimentLedger(dir)` MUST hit the fast path with zero WARN log —
+    proves the auto-migration output is re-loadable at fast-path speed.
+    """
+
+    def test_second_load_hits_fast_path_after_legacy_migration(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        import json
+        import logging
+
+        (tmp_path / "records").mkdir(parents=True, exist_ok=True)
+        record = _make_record("t_migrate_20260420T000000_migrate00")
+        record.save(tmp_path / "records" / f"{record.experiment_id}.json")
+
+        # Pre-Phase-8B legacy bare-list.
+        with open(tmp_path / "index.json", "w") as f:
+            json.dump([record.index_entry()], f)
+
+        # First load: migrates — expect WARN.
+        with caplog.at_level(logging.WARNING, logger="hft_ops.ledger.ledger"):
+            ledger1 = ExperimentLedger(tmp_path)
+        assert ledger1.count() == 1
+        migrate_warns = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("auto_legacy_bare_list" in m for m in migrate_warns), (
+            f"first load must WARN on migration; got {migrate_warns}"
+        )
+
+        # Second load: envelope is now current, fast path — expect ZERO warn.
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="hft_ops.ledger.ledger"):
+            ledger2 = ExperimentLedger(tmp_path)
+        assert ledger2.count() == 1
+        post_migration_warns = [
+            r.message for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert post_migration_warns == [], (
+            f"second load after migration must hit fast path (no WARN); "
+            f"got {post_migration_warns}"
+        )

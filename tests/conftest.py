@@ -10,6 +10,27 @@ import pytest
 import yaml
 
 
+@pytest.fixture(autouse=True)
+def _clean_strict_index_env(monkeypatch):
+    """Phase 8B MUST-FIX (Agent 3): autouse fixture that clears
+    ``HFT_OPS_STRICT_INDEX`` and ``CI`` env vars at the START of every
+    hft-ops test. Without this, a test that sets ``CI=true`` via
+    monkeypatch (for strict-mode coverage) could leak state into the
+    next test if pytest runs them in the same process and the test-
+    specific monkeypatch tears down incorrectly. Also protects against
+    the case where a developer runs hft-ops tests inside a CI-like
+    shell (local dev with ``CI=true`` in their shell profile).
+
+    The cleanup is deliberately AUTOUSE so every test starts in a known
+    non-strict state; individual tests that WANT strict mode use their
+    own ``monkeypatch.setenv("CI", "true")`` and that explicit set
+    supersedes this fixture within their scope.
+    """
+    monkeypatch.delenv("HFT_OPS_STRICT_INDEX", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    yield
+
+
 @pytest.fixture
 def tmp_pipeline(tmp_path: Path) -> Path:
     """Create a minimal mock pipeline directory structure for testing."""

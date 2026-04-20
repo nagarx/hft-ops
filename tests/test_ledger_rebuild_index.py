@@ -71,7 +71,13 @@ class TestRebuildIndexCLI:
         assert index_path.exists()
         with open(index_path) as f:
             idx = json.load(f)
-        assert len(idx) == 3
+        # Phase 8B (2026-04-20): index.json is envelope-formatted
+        # ``{"schema": {...}, "entries": [...]}``. Extract entries.
+        assert isinstance(idx, dict), (
+            "Phase 8B envelope: index.json must be a dict with 'schema' + 'entries'"
+        )
+        entries = idx["entries"]
+        assert len(entries) == 3
 
     def test_rebuild_repopulates_new_whitelist_keys(self, tmp_path: Path):
         """Simulate a whitelist expansion scenario: records on disk have
@@ -111,11 +117,14 @@ class TestRebuildIndexCLI:
         )
         assert result.exit_code == 0, result.output
 
-        # Re-read index: regression metrics should now be present
+        # Re-read index: regression metrics should now be present.
+        # Phase 8B (2026-04-20): index.json is envelope-formatted.
         with open(index_path) as f:
             refreshed = json.load(f)
-        assert len(refreshed) == 1
-        entry = refreshed[0]
+        assert isinstance(refreshed, dict)
+        entries = refreshed["entries"]
+        assert len(entries) == 1
+        entry = entries[0]
         # Post-Phase-7.4 whitelist includes test_ic + test_r2
         assert entry["training_metrics"]["test_ic"] == 0.38
         assert entry["training_metrics"]["test_r2"] == 0.12
@@ -131,9 +140,24 @@ class TestRebuildIndexCLI:
             training_metrics={"test_ic": 0.5},
         )
 
-        # Write a stale index with obviously-wrong content
+        # Phase 8B (2026-04-20): write a stale index in VALID envelope form
+        # with WRONG content. Starting from a valid envelope lets us isolate
+        # the dry-run-specific invariant ("rebuild doesn't write") from the
+        # Phase 8B auto-migration-on-load path ("legacy bare-list / malformed
+        # JSON gets rebuilt on load" — see TestLedgerIndexSchemaEnvelope in
+        # test_ledger.py for those). A real post-Phase-8B ledger is always
+        # envelope-formatted, so this mirrors production state.
+        from hft_contracts import INDEX_SCHEMA_VERSION
+
         index_path = ledger_dir / "index.json"
-        wrong_payload = [{"experiment_id": "WRONG", "name": "stale"}]
+        wrong_payload = {
+            "schema": {
+                "version": INDEX_SCHEMA_VERSION,
+                "written_at": "2026-04-20T00:00:00+00:00",
+                "last_rebuild_source": "manual",
+            },
+            "entries": [{"experiment_id": "WRONG", "name": "stale"}],
+        }
         with open(index_path, "w") as f:
             json.dump(wrong_payload, f)
         original_mtime = index_path.stat().st_mtime

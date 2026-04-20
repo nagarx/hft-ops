@@ -98,12 +98,35 @@ class TestCheckDuplicate:
         assert result is None
 
     def test_match_found(self, tmp_path: Path):
+        # Phase 8B MUST-FIX (2026-04-20): `check_duplicate` now routes through
+        # `ExperimentLedger._load_index`, which treats `records/*.json` as
+        # authoritative and re-projects the index envelope on legacy-bare-list
+        # detection. Pre-Phase-8B test wrote ONLY `index.json` with no matching
+        # record file; that scenario now correctly yields an empty envelope
+        # (the legacy bare-list entries for records-that-don't-exist are
+        # phantoms — dropping them is a feature, not a bug). Updated to
+        # register via ExperimentLedger so both records/ and the envelope
+        # reflect the same ground truth.
+        from hft_ops.ledger.experiment_record import ExperimentRecord
+        from hft_ops.ledger.ledger import ExperimentLedger
+        from hft_ops.provenance.lineage import GitInfo, Provenance
+
         ledger_dir = tmp_path / "ledger"
-        ledger_dir.mkdir()
-        entry = {"experiment_id": "exp1", "fingerprint": "aaa", "status": "completed"}
-        index = [entry]
-        (ledger_dir / "index.json").write_text(json.dumps(index))
+        ledger = ExperimentLedger(ledger_dir)
+        record = ExperimentRecord(
+            experiment_id="exp1_20260420T000000_aaaaaaaa",
+            name="exp1",
+            fingerprint="aaa",
+            contract_version="2.2",
+            status="completed",
+            created_at="2026-04-20T00:00:00+00:00",
+            provenance=Provenance(
+                git=GitInfo(commit_hash="x", branch="main", dirty=False),
+                contract_version="2.2",
+            ),
+        )
+        ledger.register(record)
 
         result = check_duplicate("aaa", ledger_dir)
         assert result is not None
-        assert result["experiment_id"] == "exp1"
+        assert result["fingerprint"] == "aaa"
