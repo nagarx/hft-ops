@@ -1171,7 +1171,55 @@ def sweep_expand(manifest_path: str) -> None:
 @click.option(
     "--continue-on-failure",
     is_flag=True,
-    help="Continue to next grid point if one fails.",
+    help=(
+        "[DEPRECATED — use --on-failure continue] Continue to next grid "
+        "point if one fails. Will be removed 2026-10-31."
+    ),
+)
+@click.option(
+    "--parallel",
+    type=int,
+    default=1,
+    show_default=True,
+    help=(
+        "Phase 8A.1: grid-point concurrency. N>1 dispatches via "
+        "WorkerPoolExecutor with GPU semaphore + SIGINT cascade. "
+        "NOTE: Part 1 lands the scheduler infrastructure + CLI surface; "
+        "full sweep-loop wire-in is Part 2 (follow-up commit) — N>1 "
+        "currently emits a WARNING and falls back to sequential."
+    ),
+)
+@click.option(
+    "--on-failure",
+    type=str,
+    default=None,
+    help=(
+        "Phase 8A.1: failure policy. One of: continue | abort | retry:N "
+        "(e.g. retry:2). Default continue (when --parallel > 1) or abort "
+        "(legacy sequential default). Supersedes --continue-on-failure."
+    ),
+)
+@click.option(
+    "--gpus",
+    type=str,
+    default=None,
+    help=(
+        "Phase 8A.1: GPU id assignment. Comma-separated (e.g. \"0,1\") "
+        "or \"none\" for CPU-only. Auto-detected via nvidia-smi when "
+        "unset. Currently wired into GPUSemaphore infrastructure only; "
+        "full per-worker assignment ships in Part 2."
+    ),
+)
+@click.option(
+    "--cpu-budget",
+    type=int,
+    default=None,
+    help=(
+        "Phase 8A.1: total CPU threads allotted. Workers inject "
+        "RAYON_NUM_THREADS/OMP_NUM_THREADS/MKL_NUM_THREADS = "
+        "(cpu_budget / parallel) into subprocess env to prevent "
+        "oversubscription. Defaults to os.cpu_count()."
+    ),
 )
 @click.pass_context
 def sweep_run(
@@ -1181,13 +1229,92 @@ def sweep_run(
     stages: Optional[str],
     force: bool,
     continue_on_failure: bool,
+    parallel: int,
+    on_failure: Optional[str],
+    gpus: Optional[str],
+    cpu_budget: Optional[int],
 ) -> None:
     """Execute all grid points in a sweep manifest.
 
     Each grid point runs the same pipeline as 'hft-ops run' but with
     axis-specific overrides. Results are linked by a shared sweep_id.
     """
+    import warnings as _warnings
     from hft_ops.manifest.sweep import expand_sweep
+    from hft_ops.scheduler.executor import OnFailureMode, parse_on_failure
+
+    # -----------------------------------------------------------------
+    # Phase 8A.1: failure-policy flag resolution.
+    # --continue-on-failure is DEPRECATED and maps to --on-failure continue
+    # when the new flag is unset. Emits DeprecationWarning if user sets
+    # the old flag. Removal deadline 2026-10-31.
+    # -----------------------------------------------------------------
+    if continue_on_failure:
+        if on_failure is not None:
+            console.print(
+                "[red]--continue-on-failure is mutually exclusive with "
+                "--on-failure. Use only --on-failure.[/red]"
+            )
+            sys.exit(1)
+        _warnings.warn(
+            "--continue-on-failure is deprecated. Use --on-failure continue. "
+            "Removal target 2026-10-31.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        on_failure = "continue"
+    if on_failure is None:
+        # Legacy default: abort on first failure (matches pre-Phase-8A.1).
+        # When --parallel > 1 ships Part 2 full wire-in, the natural
+        # default will flip to `continue` because aborting a 30-point
+        # sweep on one failure is disruptive.
+        on_failure = "abort"
+    try:
+        _failure_mode, _max_retries = parse_on_failure(on_failure)
+    except ValueError as exc:
+        console.print(f"[red]--on-failure: {exc}[/red]")
+        sys.exit(1)
+
+    # -----------------------------------------------------------------
+    # Phase 8A.1 Part 1 scope: parallel dispatch wire-in deferred.
+    # Scheduler primitives (WorkerPoolExecutor, GPUSemaphore,
+    # signal_handler, SWEEP_FAILURE contract, dedup filter) are shipped
+    # + tested in this commit (+18 tests). The sweep_run body refactor
+    # to split into (worker-runs-stages) + (parent-registers-records) is
+    # a separate ~200 LOC focused change (Part 2). For now, --parallel
+    # > 1 emits a loud WARNING and falls back to sequential execution
+    # so users are never silently running the wrong path.
+    # -----------------------------------------------------------------
+    if parallel > 1:
+        console.print(
+            f"[yellow]⚠ --parallel={parallel} — Phase 8A.1 Part 1 "
+            f"infrastructure only; sweep-loop parallel wire-in lands "
+            f"in Part 2. Falling back to sequential (parallel=1) for "
+            f"this run.[/yellow]"
+        )
+        parallel = 1
+
+    # --gpus / --cpu-budget are also Part-2 wire-ins. Validate parsing
+    # here so the user gets immediate feedback on typos.
+    if gpus is not None and gpus.lower() not in ("none", "auto"):
+        try:
+            _gpu_ids = [int(s.strip()) for s in gpus.split(",") if s.strip()]
+        except ValueError:
+            console.print(
+                f"[red]--gpus: expected 'none', 'auto', or comma-separated "
+                f"integers (e.g. '0,1'), got {gpus!r}[/red]"
+            )
+            sys.exit(1)
+    if cpu_budget is not None and cpu_budget <= 0:
+        console.print(
+            f"[red]--cpu-budget: must be positive integer, got {cpu_budget}[/red]"
+        )
+        sys.exit(1)
+
+    # Legacy flag (before full Part-2 on_failure integration): the existing
+    # sequential loop key-off ``continue_on_failure`` bool. Derive it from
+    # the resolved _failure_mode.
+    continue_on_failure = _failure_mode != OnFailureMode.ABORT
 
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)

@@ -824,4 +824,16 @@ def check_duplicate(
         # permissive behavior: caller can proceed without dedup.
         return None
 
-    return ledger.find_by_fingerprint(fingerprint)
+    entry = ledger.find_by_fingerprint(fingerprint)
+
+    # Phase 8A.1 (2026-04-20): SWEEP_FAILURE records share their
+    # fingerprint with the would-be successful record for the same
+    # treatment — so retries can match for downstream analysis. If
+    # check_duplicate returned a SWEEP_FAILURE match, operators retrying
+    # a failed grid point would be silently blocked as "already run".
+    # Filter them out so retries run.
+    #
+    # Locked by ``test_scheduler_parallel.py::TestDedupSkipsSweepFailure``.
+    if entry is not None and entry.get("record_type") == "sweep_failure":
+        return None
+    return entry
