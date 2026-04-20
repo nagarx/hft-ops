@@ -101,6 +101,122 @@ python3 scripts/validate_manifest.py experiments/nvda_hmhp_40feat_xnas_h10.yaml
 
 ---
 
+## Feature Importance (Phase 8C-α Stage C.1, 2026-04-20)
+
+Post-training permutation importance quantifies each feature's contribution
+to the trained model's predictive metric on a held-out eval split. The
+trainer's `PermutationImportanceCallback` invokes at `on_train_end`, writes
+`outputs/<experiment>/feature_importance_v1.json`, and the artifact is then
+auto-routed by hft-ops Stage C.3 into
+`hft-ops/ledger/feature_importance/{yyyy_mm}/<sha>.json` with a reference
+on `ExperimentRecord.artifacts[]`.
+
+### When to enable
+
+- **After a successful experiment** — use an importance audit to rank which
+  features actually drove the predictive metric (permuting a "real"
+  predictor collapses the metric; permuting a noise feature barely moves
+  it).
+- **Before promoting a feature to STRONG-KEEP** — Phase 8C-β Stage C.5
+  feedback-merge (deferred) will flip evaluator tiers based on K≥5
+  importance artifacts per feature_set. To be feedback-merge-eligible,
+  use a registered FeatureSet (`data.feature_set: <name>_v1`); otherwise
+  the artifact emits a WARN and is dead-end for merge.
+
+### How to enable (minimal YAML)
+
+Add the `importance:` block to the trainer's `ExperimentConfig` — either
+directly in a trainer YAML, or via the base fragment:
+
+```yaml
+# lob-model-trainer/configs/experiments/<your_experiment>.yaml
+_base:
+  - models/tlob_compact_regression.yaml
+  - datasets/nvda_e5_60s.yaml
+  - labels/regression_huber.yaml
+  - train/regression_default.yaml
+  - train/importance_default.yaml   # <-- enables post-training importance
+name: my_experiment_with_importance
+```
+
+Or inline the block in an hft-ops unified manifest:
+
+```yaml
+# hft-ops/experiments/<your_experiment>.yaml
+stages:
+  training:
+    trainer_config:
+      # ... existing config ...
+      importance:
+        enabled: true
+        n_permutations: 100       # baseline CI; bump to 500 for tight CI
+        n_seeds: 3                # bump to 5 for Stage C.5 feedback-merge
+        subsample: 5000           # eval-split subsample; -1 = full
+        block_length_samples: 1   # 1 = element-wise; N = day-preserving
+        seed: 42
+        eval_split: "test"
+        baseline_metric: "auto"   # auto = IC (regression) / accuracy (classification)
+```
+
+See `hft-ops/experiments/e5_60s_importance_audit.yaml` for a complete
+working example replicating the E5 H10 training path with importance
+enabled.
+
+### What it produces
+
+- **`outputs/<experiment>/feature_importance_v1.json`** — trainer-side
+  artifact. Schema: `hft_contracts.FeatureImportanceArtifact v2`.
+- **`hft-ops/ledger/feature_importance/{yyyy_mm}/<sha>.json`** — content-
+  addressed ledger copy.
+- **`ExperimentRecord.artifacts[]` entry** — `{kind: "feature_importance",
+  path, sha256, bytes, method}` — surfaced via
+  `index_entry()::artifact_kinds` for fast ledger queries.
+
+Inspect via:
+```bash
+# ledger list, filter by artifact kind (once Stage C.4 query layer lands)
+hft-ops ledger list | grep feature_importance
+
+# Manual inspection
+python3 -c "
+from hft_contracts import FeatureImportanceArtifact
+a = FeatureImportanceArtifact.load('outputs/<exp>/feature_importance_v1.json')
+for f in sorted(a.features, key=lambda f: -f.importance_mean)[:10]:
+    print(f'{f.feature_name:30s} importance={f.importance_mean:+.4f} ± {f.importance_std:.4f}  stability={f.stability:.2f}')
+"
+```
+
+### Compute cost guidance
+
+Compute: `n_permutations × n_seeds × n_features` model forward passes on
+the subsample. For a 98-feature × T=20 TLOB-H10 model:
+
+| Configuration | Approx compute | When |
+|---|---|---|
+| Defaults (100 × 3 × 5000) | 15-30 min CPU | Default audit |
+| Tight CI (500 × 5 × 5000) | 2-4 hours CPU | Pre-Stage-C.5 feedback-merge input |
+| Full eval (subsample=-1, 500 × 5) | 10-20 hours CPU | Publication-grade importance ranking |
+
+Importance runs AFTER training completes — a failure in the callback
+logs + swallows (training checkpoint is preserved; only the importance
+artifact is missing). This is deliberate — importance is an observation,
+not a treatment, and losing it should not invalidate a successful
+training run.
+
+### Deferred capabilities (Phase 8C-β / 8D)
+
+- `hft-ops feedback-status --feature-set <name>` CLI — K-count readiness
+  reporting. (Stage C.6.)
+- `hft-ops ledger/query.py::find_feedback_artifacts(content_hash, K)` —
+  query layer for Stage C.5 consumer. (Stage C.4.)
+- Evaluator `merge_feedback_into_profiles()` — flips
+  `FeatureProfile.reconciled_tier` based on K-seed aggregated importance.
+  (Stage C.5.)
+- SHAP / Integrated-Gradients / attention-map importance — separate
+  `artifact_kinds` with their own schemas. (Phase 8D+.)
+
+---
+
 ## Data Flow and Contracts
 
 ```

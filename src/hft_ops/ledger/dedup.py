@@ -570,6 +570,28 @@ def _extract_fingerprint_fields(config: Dict[str, Any]) -> Dict[str, Any]:
         "name", "description", "tags", "version",
         "output_dir", "log_level", "verbose",
         "experiment",
+        # Phase 8C-α post-audit round-2 (2026-04-20 architect-Q7 wire-in):
+        # `importance` is an OBSERVATION (post-training permutation
+        # importance), NOT a treatment. Enabling importance on an existing
+        # experiment does NOT change what gets trained; it only adds a
+        # post-hoc analysis. Fingerprint-including would create
+        # Phase-3-§3.3b-class ledger conflation: same trained model →
+        # different fingerprints depending on whether the operator asked
+        # for importance. Excluded for the same reason `artifacts[]` /
+        # `gate_reports[]` are excluded. Locked by regression test
+        # `test_importance_field_excluded_from_fingerprint`.
+        "importance",
+        # Round-3 post-audit Agent-3 H2 defensive add: `artifacts` lives
+        # on ``ExperimentRecord`` (output side) and structurally does
+        # NOT flow into `compute_fingerprint` (which reads the manifest
+        # config tree, not the record). Blacklisting it here is
+        # defense-in-depth: if a FUTURE refactor ever serializes record
+        # fields into the fingerprint input — e.g., for "fingerprint
+        # includes observed gate_reports" hypothetical — the strip
+        # catches it before it becomes a Phase-3-§3.3b-class
+        # ledger-conflation bug. Matches the symmetry with
+        # `importance` (both are observations).
+        "artifacts",
     }
 
     def _strip(d: Dict[str, Any]) -> Dict[str, Any]:
@@ -668,6 +690,14 @@ def compute_fingerprint_explain(
                     target[part] = {}
                 target = target[part]
             target[parts[-1]] = value
+
+        # Round-3 post-audit Agent-3 H2 fix: re-strip after overrides are
+        # merged. Overrides can inject observation-tier keys (e.g.,
+        # `overrides["importance.enabled"] = True`) AFTER the initial
+        # `_extract_fingerprint_fields` stripped them — a hidden path
+        # for observation fields to leak into fingerprints. Pass 2 of
+        # the blacklist ensures observations-via-overrides also strip.
+        effective_train = _extract_fingerprint_fields(effective_train)
 
         if manifest.stages.training.horizon_value is not None:
             effective_train["_horizon_value"] = manifest.stages.training.horizon_value

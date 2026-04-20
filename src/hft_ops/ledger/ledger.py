@@ -367,10 +367,16 @@ class ExperimentLedger:
            skipped with a WARN log, never partial-routed. Boundary
            validation per hft-rules §8.
 
-        2. **Content-address** via SHA-256 of the raw file bytes. Gives
-           file-integrity: two artifacts with bit-identical content
-           produce the same hash → same target path → natural
-           de-duplication. Uses ``hft_contracts.canonical_hash.sha256_hex``
+        2. **Content-address** via canonical-JSON SHA-256 of the
+           validated artifact (``validated.content_hash()``) — survives
+           Phase 9 SQLite BLOB migration where on-disk serialization
+           may differ from in-memory canonical form. Two artifacts
+           with bit-identical content produce the same hash → same
+           target path → natural de-duplication. Falls back to
+           raw-bytes SHA (``sha256_hex(file_bytes)``) for validator
+           objects lacking ``content_hash()`` method — flagged as a
+           future contract concern (see fallback-path code comments).
+           Both paths use the ``hft_contracts.canonical_hash.sha256_hex``
            SSoT — ZERO re-derivation.
 
         3. **Route** to ``ledger_dir/<storage_subdir>/<yyyy_mm>/<sha>.json``
@@ -513,14 +519,44 @@ class ExperimentLedger:
         if hasattr(validated, "method"):
             method = str(getattr(validated, "method", ""))
 
-        # -------- Content-address via SHA-256 of raw bytes ---------------
+        # -------- Content-address via canonical-JSON SHA-256 ------------
+        # Phase 8C-α post-audit round-2 architect-Q2 unification:
+        # previously the router hashed raw file bytes; the dataclass
+        # offers ``content_hash()`` via canonical-JSON. Two sources of
+        # truth → silent divergence (raw-bytes is fragile to
+        # whitespace/key-order / Python-version / JSON-serializer
+        # differences; canonical-JSON is format-stable). Adopt the
+        # dataclass method so hashes survive Phase 9 SQLite migration
+        # when files may move into BLOB storage with different
+        # on-disk serialization. Cost: ~2× on tiny artifacts
+        # (<5KB); irrelevant.
+        #
+        # ALSO read raw bytes so size_bytes metadata reflects on-disk
+        # file size (operator semantics: "bytes stored on disk"),
+        # NOT serialized-dict size. Sacrifices nothing.
         try:
             data = src.read_bytes()
         except OSError as exc:
             _LOGGER.warning("Cannot read artifact %s: %s", src, exc)
             return None
-        sha = sha256_hex(data)
         size_bytes = len(data)
+        # Use the dataclass's canonical-JSON content_hash() for
+        # addressability. If the validator returns an object without
+        # content_hash(), fall back to raw-bytes SHA for backward-
+        # compat — but this branch never triggers today for
+        # FeatureImportanceArtifact (always has content_hash()).
+        if hasattr(validated, "content_hash"):
+            try:
+                sha = validated.content_hash()
+            except Exception as exc:
+                _LOGGER.warning(
+                    "Canonical content_hash() failed for %s (stage=%s, "
+                    "kind=%s): %s. Falling back to raw-bytes SHA.",
+                    src, stage_name, pattern["kind"], exc,
+                )
+                sha = sha256_hex(data)
+        else:
+            sha = sha256_hex(data)
 
         # -------- Route to ledger storage --------------------------------
         yyyy_mm = datetime.now(timezone.utc).strftime("%Y_%m")

@@ -1,0 +1,178 @@
+# =============================================================================
+# Experiment: E5 60s Importance Audit — Phase 8C-α Stage C.1 exemplar
+# =============================================================================
+#
+# Demonstrates the Phase 8C-α Stage C.1 feature-importance-audit flow
+# (wired 2026-04-20 post-audit round-2). Replicates the E5 60s regression
+# training path and adds the `importance:` block on the trainer config
+# so the trainer auto-invokes `PermutationImportanceCallback.on_train_end`
+# to compute + emit `feature_importance_v1.json` in the output dir.
+#
+# Full data flow:
+#   1. Extraction (shared with e5_timebased_60s export)
+#   2. Training (TLOB regression H10, IDENTICAL hyperparameters to
+#      baseline E5 — only the `importance:` block is added, which is
+#      fingerprint-EXCLUDED per hft-rules §7 — so this manifest's
+#      fingerprint MATCHES the E5 baseline. Re-run against an existing
+#      E5 record produces a duplicate-warning; pass `--force` to re-run
+#      purely for the importance audit, OR use an importance-only
+#      manifest against an existing trained checkpoint.)
+#   3. On train_end: PermutationImportanceCallback runs on the TEST
+#      split (config.importance.eval_split), computes 100 × 3 × 98
+#      forward passes × 5000-sample subsample → writes
+#      feature_importance_v1.json.
+#   4. hft-ops ledger (Phase 8C-α Stage C.3) auto-routes the artifact
+#      to hft-ops/ledger/feature_importance/{yyyy_mm}/<sha>.json and
+#      appends {kind, path, sha256, bytes, method} to
+#      ExperimentRecord.artifacts[].
+#   5. ExperimentRecord.index_entry()::artifact_kinds surfaces
+#      "feature_importance" for fast `ledger list --has-artifact` query.
+#
+# Stage C.5 feedback-merge (Phase 8C-β, deferred) will consume the
+# artifact when `feature_set_ref` is populated — achieved here by using
+# `data.feature_set: nvda_short_term_98_src98_v1` (a hypothetical
+# registered FeatureSet; substitute an actually-registered name when
+# available). Without `feature_set`, the artifact emits a WARN and is
+# still ledger-routed but dead-end for merge.
+#
+# Expected compute overhead vs. baseline:
+#   Training: unchanged (importance runs POST-training, after
+#     best-weights restore + checkpoint save).
+#   Importance audit: ~15-30 min CPU on a 98-feature × T=20 model with
+#     defaults (n_permutations=100, n_seeds=3, subsample=5000).
+#
+# Usage:
+#   hft-ops run experiments/e5_60s_importance_audit.yaml
+#
+# Reference:
+#   - Phase 8C-α Stage C.1 (trainer producer)
+#   - configs/bases/train/importance_default.yaml (enablement fragment)
+#   - hft_contracts.FeatureImportanceArtifact (schema v2)
+#   - hft-ops/ledger/ledger.py::persist_post_stage_artifacts (routing)
+# =============================================================================
+
+experiment:
+  name: "e5_60s_importance_audit"
+  description: >
+    Feature-importance audit of the E5 60s TLOB H10 regression model.
+    Identical training hyperparameters to the E5 baseline; adds post-
+    training permutation importance to quantify per-feature contribution
+    on the held-out test split.
+  hypothesis: >
+    DEPTH_NORM_OFI (feature 85) is expected to dominate importance
+    rankings with substantial positive importance_mean at high stability.
+    Near-zero-predictive-IC features (those flagged DISCARD by the
+    pre-training evaluator) should show importance_mean ~0 — if any
+    shows stably-positive importance_mean with stability > 0.6, that
+    feature is a candidate for tier-flip at Stage C.5.
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - e5
+    - regression
+    - h10
+    - 60s
+    - importance
+    - audit
+    - phase-8c-alpha
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    trainer_config:
+      name: E5_60s_Importance_Audit
+      description: "E5 Phase 8C-α Stage C.1 importance audit: TLOB H10 regression + permutation importance."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s"
+        feature_count: 98
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 0
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false  # no-CVML baseline for cleaner importance attribution
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42
+        mixed_precision: false
+
+      # === Phase 8C-α Stage C.1 importance audit block ===
+      # See lob-model-trainer/configs/bases/train/importance_default.yaml
+      # for full field documentation + compute-cost guidance. When
+      # this block is omitted (or importance.enabled=false), the
+      # trainer callback is auto-skipped with zero overhead.
+      importance:
+        enabled: true
+        method: permutation
+        n_permutations: 100
+        n_seeds: 3
+        subsample: 5000
+        block_length_samples: 1
+        seed: 42
+        eval_split: "test"
+        baseline_metric: "auto"  # resolves to val_ic for regression
+
+      output_dir: outputs/experiments/e5_60s_importance_audit
+      log_level: INFO
+      tags: [e5, nvda, regression, h10, 60s, importance, audit]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    horizon_value: 10
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: false
+
+  backtesting:
+    enabled: false
