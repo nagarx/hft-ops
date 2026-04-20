@@ -542,6 +542,29 @@ def _record_experiment(
     )
 
     ledger = _construct_ledger_or_exit(paths.ledger_dir)
+
+    # Phase 8C-α Stage C.3 (2026-04-20): route post-stage artifacts into
+    # ledger content-addressed storage BEFORE registration — so the
+    # persisted ExperimentRecord carries the populated ``artifacts[]``
+    # list. Currently routes ``feature_importance_v1.json`` from the
+    # trainer's PermutationImportanceCallback (Phase 8C-α Stage C.1,
+    # shipping next). Routing is idempotent + graceful no-op when the
+    # artifact isn't present (e.g., trainer ImportanceConfig.enabled=False
+    # OR training stage was SKIPPED via cache hit).
+    training_stage_result = results.get("training")
+    if training_stage_result is not None and training_stage_result.output_dir:
+        training_output_dir = Path(training_stage_result.output_dir)
+        routed_count = ledger.persist_post_stage_artifacts(
+            stage_name="training",
+            output_dir=training_output_dir,
+            record=record,
+        )
+        if routed_count > 0:
+            console.print(
+                f"  [dim]Routed {routed_count} post-training artifact(s) "
+                f"to ledger storage[/dim]"
+            )
+
     ledger.register(record)
 
     console.print(f"[green]Registered: {experiment_id}[/green]")

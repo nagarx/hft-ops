@@ -560,6 +560,228 @@ class TestIndexSchemaNeedsRebuildHelper:
         assert _index_schema_needs_rebuild("1.0.0-pre")  # Pre-release not supported
 
 
+class TestPersistPostStageArtifacts:
+    """Phase 8C-α Stage C.3: post-stage artifact routing invariants."""
+
+    def _make_artifact_dict(self, feature_name: str = "depth_norm_ofi") -> Dict:
+        """Minimal valid FeatureImportanceArtifact dict for fixture use."""
+        return {
+            "schema_version": "1",
+            "method": "permutation",
+            "baseline_metric": "val_ic",
+            "baseline_value": 0.245,
+            "block_size_days": 1,
+            "n_permutations": 500,
+            "n_seeds": 5,
+            "seed": 42,
+            "eval_split": "test",
+            "features": [
+                {
+                    "feature_name": feature_name,
+                    "feature_index": 85,
+                    "importance_mean": 0.023,
+                    "importance_std": 0.004,
+                    "ci_lower_95": 0.015,
+                    "ci_upper_95": 0.031,
+                    "n_permutations": 500,
+                    "n_seeds_aggregated": 5,
+                    "stability": 0.85,
+                }
+            ],
+            "feature_set_ref": {"name": "test_v1", "content_hash": "a" * 64},
+            "experiment_id": "exp_test",
+            "fingerprint": "b" * 64,
+            "model_type": "tlob",
+            "timestamp_utc": "2026-04-20T12:00:00+00:00",
+            "method_caveats": [],
+        }
+
+    def _make_record(self) -> ExperimentRecord:
+        """Minimal ExperimentRecord fixture."""
+        return ExperimentRecord(
+            experiment_id="test_exp",
+            name="test",
+            fingerprint="f" * 64,
+            contract_version="2.2",
+            status="completed",
+            created_at="2026-04-20T00:00:00+00:00",
+            provenance=Provenance(
+                git=GitInfo(commit_hash="x", branch="main", dirty=False),
+                contract_version="2.2",
+            ),
+        )
+
+    def test_routes_feature_importance_artifact_end_to_end(
+        self, tmp_path: Path
+    ) -> None:
+        """Happy path: trainer writes feature_importance_v1.json →
+        ledger.persist_post_stage_artifacts() → file copied to
+        content-addressed storage → record.artifacts[] populated.
+        """
+        import json as _json
+        # Create pipeline-root-like layout
+        pipeline_root = tmp_path / "pipeline"
+        ledger_dir = pipeline_root / "hft-ops" / "ledger"
+        ledger_dir.mkdir(parents=True)
+        output_dir = pipeline_root / "outputs" / "test_exp"
+        output_dir.mkdir(parents=True)
+
+        # Write a trainer-like artifact
+        artifact_path = output_dir / "feature_importance_v1.json"
+        artifact_data = self._make_artifact_dict()
+        artifact_path.write_text(_json.dumps(artifact_data, sort_keys=True))
+
+        # Route
+        ledger = ExperimentLedger(ledger_dir)
+        record = self._make_record()
+        count = ledger.persist_post_stage_artifacts(
+            "training", output_dir, record,
+        )
+
+        assert count == 1
+        assert len(record.artifacts) == 1
+
+        entry = record.artifacts[0]
+        assert entry["kind"] == "feature_importance"
+        assert entry["method"] == "permutation"
+        assert len(entry["sha256"]) == 64
+        assert entry["bytes"] > 0
+
+        # Target file must exist in ledger storage
+        target_path_rel = entry["path"]
+        target_path = pipeline_root / target_path_rel
+        assert target_path.exists(), (
+            f"Artifact must be copied to ledger storage at "
+            f"{target_path} (relative: {target_path_rel})"
+        )
+        assert target_path.read_bytes() == artifact_path.read_bytes(), (
+            "Routed file content must match source byte-for-byte"
+        )
+
+    def test_content_address_is_sha256_stable(self, tmp_path: Path) -> None:
+        """Same content → same SHA-256 → same target path. Invariant for
+        the content-addressing contract.
+        """
+        import json as _json
+        pipeline_root = tmp_path / "pipeline"
+        ledger_dir = pipeline_root / "hft-ops" / "ledger"
+        ledger_dir.mkdir(parents=True)
+        output_dir = pipeline_root / "outputs" / "e1"
+        output_dir.mkdir(parents=True)
+        artifact_data = self._make_artifact_dict()
+        (output_dir / "feature_importance_v1.json").write_text(
+            _json.dumps(artifact_data, sort_keys=True)
+        )
+
+        ledger = ExperimentLedger(ledger_dir)
+        rec1 = self._make_record()
+        ledger.persist_post_stage_artifacts("training", output_dir, rec1)
+        sha1 = rec1.artifacts[0]["sha256"]
+
+        # Re-route the SAME content (e.g., second run with identical output)
+        rec2 = self._make_record()
+        ledger.persist_post_stage_artifacts("training", output_dir, rec2)
+        sha2 = rec2.artifacts[0]["sha256"]
+
+        assert sha1 == sha2, "Same file content MUST produce same SHA-256"
+        assert rec1.artifacts[0]["path"] == rec2.artifacts[0]["path"], (
+            "Same SHA → same target path (content-addressed storage)"
+        )
+
+    def test_idempotent_re_routing_does_not_duplicate(
+        self, tmp_path: Path
+    ) -> None:
+        """Re-routing an already-stored artifact is a no-op for the
+        filesystem (target already exists, copy skipped) but still
+        appends metadata to record.artifacts[] (different record may
+        need the reference).
+        """
+        import json as _json
+        pipeline_root = tmp_path / "pipeline"
+        ledger_dir = pipeline_root / "hft-ops" / "ledger"
+        ledger_dir.mkdir(parents=True)
+        output_dir = pipeline_root / "outputs" / "e1"
+        output_dir.mkdir(parents=True)
+        (output_dir / "feature_importance_v1.json").write_text(
+            _json.dumps(self._make_artifact_dict(), sort_keys=True)
+        )
+
+        ledger = ExperimentLedger(ledger_dir)
+        rec1 = self._make_record()
+        ledger.persist_post_stage_artifacts("training", output_dir, rec1)
+        target_after_first = pipeline_root / rec1.artifacts[0]["path"]
+        first_mtime = target_after_first.stat().st_mtime
+
+        # Re-route — target file should NOT be touched (copy skipped)
+        rec2 = self._make_record()
+        ledger.persist_post_stage_artifacts("training", output_dir, rec2)
+        target_after_second = pipeline_root / rec2.artifacts[0]["path"]
+        second_mtime = target_after_second.stat().st_mtime
+
+        assert target_after_first == target_after_second
+        assert first_mtime == second_mtime, (
+            "Idempotent re-routing must NOT re-copy (preserves target mtime)"
+        )
+
+    def test_missing_output_dir_returns_zero(self, tmp_path: Path) -> None:
+        """Graceful no-op when stage was SKIPPED or FAILED and output_dir
+        doesn't exist. Does NOT raise.
+        """
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        ledger = ExperimentLedger(ledger_dir)
+        rec = self._make_record()
+
+        count = ledger.persist_post_stage_artifacts("training", None, rec)
+        assert count == 0
+        assert rec.artifacts == []
+
+        count2 = ledger.persist_post_stage_artifacts(
+            "training", tmp_path / "nonexistent", rec,
+        )
+        assert count2 == 0
+        assert rec.artifacts == []
+
+    def test_malformed_artifact_skipped_with_warning(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """hft-rules §8 boundary validation: malformed artifacts are
+        logged + skipped, never partial-routed. Legal file present but
+        content is not a valid FeatureImportanceArtifact → skipped.
+        """
+        import logging as _logging
+        pipeline_root = tmp_path / "pipeline"
+        ledger_dir = pipeline_root / "hft-ops" / "ledger"
+        ledger_dir.mkdir(parents=True)
+        output_dir = pipeline_root / "outputs" / "e_bad"
+        output_dir.mkdir(parents=True)
+
+        # Write a file with the expected filename but missing required fields
+        (output_dir / "feature_importance_v1.json").write_text(
+            '{"schema_version": "1", "method": "permutation"}'
+            # missing required fields: baseline_metric, features, etc.
+        )
+
+        ledger = ExperimentLedger(ledger_dir)
+        rec = self._make_record()
+        with caplog.at_level(_logging.WARNING):
+            count = ledger.persist_post_stage_artifacts(
+                "training", output_dir, rec,
+            )
+
+        assert count == 0, "Malformed artifact must NOT be routed"
+        assert rec.artifacts == [], "record.artifacts must remain empty"
+        # The validator must have produced a warning
+        assert any(
+            "validation failed" in r.message.lower()
+            or "malformed" in r.message.lower()
+            for r in caplog.records
+        ), (
+            f"Expected WARN about validation failure. Got: "
+            f"{[r.message for r in caplog.records]}"
+        )
+
+
 class TestAllIndexConsumersGoThroughLoadIndex:
     """Phase 8B Step B.3 regression: lock the invariant that every ledger
     consumer method reads from ``self._index`` (populated once by

@@ -17,13 +17,43 @@ import json
 import logging
 import os
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from hft_contracts import INDEX_SCHEMA_VERSION
 from hft_contracts.atomic_io import atomic_write_json
+from hft_contracts.canonical_hash import sha256_hex
 from hft_ops.ledger.experiment_record import ExperimentRecord
+
+# ---------------------------------------------------------------------------
+# Phase 8C-α Stage C.3: post-stage artifact routing
+# ---------------------------------------------------------------------------
+#
+# Registry of stage-output file patterns that should be content-addressed
+# and routed into ledger storage. Keys:
+#   filename        — expected filename in ``output_dir/`` (not a glob)
+#   kind            — value stored in record.artifacts[i]["kind"]; must match
+#                     pipeline_contract.toml [artifacts.*] entry
+#   storage_subdir  — subdirectory under ledger_dir/ for content-addressed
+#                     files (e.g., "feature_importance" → ledger/feature_importance/)
+#   validator       — import path of a callable that parses + validates the
+#                     file before routing. Must raise on malformed input so
+#                     the routing skips partial artifacts (hft-rules §8
+#                     "Validate inputs at system boundaries").
+#
+# Adding a new artifact kind: (1) land its schema in hft-contracts;
+# (2) add `[artifacts.<kind>_schema]` section in pipeline_contract.toml;
+# (3) append to _POST_STAGE_ARTIFACT_PATTERNS here with validator ref.
+_POST_STAGE_ARTIFACT_PATTERNS: List[Dict[str, str]] = [
+    {
+        "filename": "feature_importance_v1.json",
+        "kind": "feature_importance",
+        "storage_subdir": "feature_importance",
+        "validator": "hft_contracts.feature_importance_artifact.FeatureImportanceArtifact.load",
+    },
+]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -320,6 +350,168 @@ class ExperimentLedger:
             "entries": self._index,
         }
         atomic_write_json(self._index_path, envelope)
+
+    def persist_post_stage_artifacts(
+        self,
+        stage_name: str,
+        output_dir: Optional[Path],
+        record: ExperimentRecord,
+    ) -> int:
+        """Phase 8C-α Stage C.3 (2026-04-20): route post-stage artifacts.
+
+        Scans ``output_dir`` for known artifact file patterns
+        (``_POST_STAGE_ARTIFACT_PATTERNS``). For each found artifact:
+
+        1. **Validate** via the pattern's ``validator`` callable (e.g.,
+           ``FeatureImportanceArtifact.load``) — malformed artifacts are
+           skipped with a WARN log, never partial-routed. Boundary
+           validation per hft-rules §8.
+
+        2. **Content-address** via SHA-256 of the raw file bytes. Gives
+           file-integrity: two artifacts with bit-identical content
+           produce the same hash → same target path → natural
+           de-duplication. Uses ``hft_contracts.canonical_hash.sha256_hex``
+           SSoT — ZERO re-derivation.
+
+        3. **Route** to ``ledger_dir/<storage_subdir>/<yyyy_mm>/<sha>.json``
+           via ``shutil.copy2`` (preserves timestamps). The yyyy_mm prefix
+           buckets by write-month so ``ls`` remains reasonable at scale.
+           Idempotent: if the target already exists (same content routed
+           previously), the copy is skipped — not an error.
+
+        4. **Append** metadata ``{kind, method, path, sha256, bytes}`` to
+           ``record.artifacts[]`` in place. Caller is responsible for
+           persisting the record (via ``self.register`` or
+           ``record.save``).
+
+        Single-writer invariant preserved: parent invokes this method;
+        workers under parallel dispatch return their StageResult dicts
+        and let parent handle routing. Called BEFORE ``self.register``
+        in cli.py::_record_experiment so the stored record carries the
+        populated artifacts[] field.
+
+        Args:
+            stage_name: Reserved for future per-stage routing rules.
+                Currently unused (all patterns route regardless of stage).
+            output_dir: Stage's output directory. None or non-existent
+                returns 0 (graceful no-op for SKIPPED / FAILED stages).
+            record: ExperimentRecord being built. Mutated in place:
+                matched artifacts are appended to ``record.artifacts``.
+
+        Returns:
+            Number of artifacts successfully routed (0 if none found,
+            validation failed, or output_dir is None).
+        """
+        if output_dir is None or not output_dir.exists():
+            return 0
+
+        routed = 0
+        for pattern in _POST_STAGE_ARTIFACT_PATTERNS:
+            src = output_dir / pattern["filename"]
+            if not src.exists():
+                continue
+            metadata = self._content_address_artifact(src, pattern)
+            if metadata is not None:
+                record.artifacts.append(metadata)
+                routed += 1
+        return routed
+
+    def _content_address_artifact(
+        self,
+        src: Path,
+        pattern: Dict[str, str],
+    ) -> Optional[Dict[str, Any]]:
+        """Validate, content-hash, and route a single artifact file.
+
+        Returns ``{kind, method, path, sha256, bytes}`` or None on any
+        failure (logged at WARN; caller decides how to proceed).
+
+        Boundary validation: loads the artifact via the pattern's
+        validator callable. For ``feature_importance`` → calls
+        ``FeatureImportanceArtifact.load`` which raises on malformed
+        schema. A failed validation skips routing without corrupting
+        the ledger state (hft-rules §8).
+        """
+        # -------- Validation -------------------------------------------------
+        # Resolve validator from import path (lazy — avoid circular imports)
+        validator_path = pattern["validator"]
+        try:
+            module_path, _, attr_path = validator_path.rpartition(".")
+            cls_path, _, method_name = module_path.rpartition(".")
+            import importlib
+            module = importlib.import_module(cls_path)
+            cls = getattr(module, method_name)
+            validator = getattr(cls, attr_path)
+        except Exception as exc:  # pragma: no cover — misconfigured pattern
+            _LOGGER.warning(
+                "Artifact routing: cannot resolve validator %r for %s: %s",
+                validator_path, src, exc,
+            )
+            return None
+
+        try:
+            validated = validator(src)
+        except Exception as exc:
+            _LOGGER.warning(
+                "Artifact validation failed for %s (kind=%s): %s. Skipping route.",
+                src, pattern["kind"], exc,
+            )
+            return None
+
+        # -------- Extract method field (artifact-kind-specific) ----------
+        method = ""
+        if hasattr(validated, "method"):
+            method = str(getattr(validated, "method", ""))
+
+        # -------- Content-address via SHA-256 of raw bytes ---------------
+        try:
+            data = src.read_bytes()
+        except OSError as exc:
+            _LOGGER.warning("Cannot read artifact %s: %s", src, exc)
+            return None
+        sha = sha256_hex(data)
+        size_bytes = len(data)
+
+        # -------- Route to ledger storage --------------------------------
+        yyyy_mm = datetime.now(timezone.utc).strftime("%Y_%m")
+        target_dir = self._ledger_dir / pattern["storage_subdir"] / yyyy_mm
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            _LOGGER.warning(
+                "Cannot create artifact storage dir %s: %s", target_dir, exc,
+            )
+            return None
+        target = target_dir / f"{sha}.json"
+
+        # Idempotent: skip copy if target already exists (same content →
+        # same hash → same path → already routed, by any prior run).
+        if not target.exists():
+            try:
+                shutil.copy2(src, target)
+            except OSError as exc:
+                _LOGGER.warning(
+                    "Artifact copy failed %s → %s: %s", src, target, exc,
+                )
+                return None
+
+        # -------- Build metadata entry for ExperimentRecord.artifacts[] -----
+        # Path relative to pipeline_root for portability. ledger_dir is
+        # typically pipeline_root/hft-ops/ledger; .parent.parent = pipeline_root.
+        try:
+            rel_path = str(target.relative_to(self._ledger_dir.parent.parent))
+        except ValueError:
+            # Fall back to absolute if the relative computation fails
+            # (e.g., non-standard ledger_dir layout in tests).
+            rel_path = str(target)
+
+        return {
+            "kind": pattern["kind"],
+            "method": method,
+            "path": rel_path,
+            "sha256": sha,
+            "bytes": size_bytes,
+        }
 
     def register(self, record: ExperimentRecord) -> str:
         """Register a new experiment record.
