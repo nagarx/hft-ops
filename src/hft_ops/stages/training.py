@@ -330,6 +330,7 @@ class TrainingRunner:
                 cmd,
                 cwd=config.paths.trainer_dir,
                 verbose=config.verbose,
+                env=config.env_overrides or None,
             )
             result.duration_seconds = time.monotonic() - start
             result.stdout = _tail(proc.stdout or "")

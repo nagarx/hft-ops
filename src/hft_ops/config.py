@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from hft_ops.paths import PipelinePaths
 
@@ -34,6 +34,17 @@ class OpsConfig:
     verbose: bool = False
     dry_run: bool = False
     cache_extraction: bool = True
+    # Phase 8A.1 Part 2 (2026-04-20): per-worker subprocess env injection
+    # for parallel dispatch. Stage runners merge this dict into their
+    # subprocess env via ``run_subprocess(env=ops_config.env_overrides)``.
+    # Used to inject:
+    #   - ``CUDA_VISIBLE_DEVICES=<id>`` to pin worker N to GPU X
+    #   - ``RAYON_NUM_THREADS`` / ``OMP_NUM_THREADS`` / ``MKL_NUM_THREADS``
+    #     per-worker slice of the total cpu_budget
+    # Default empty dict preserves pre-Part-2 behavior (no env overrides).
+    # Parent builds per-worker OpsConfig via ``dataclasses.replace`` to
+    # avoid sharing mutable state across threads.
+    env_overrides: Dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_pipeline_root(

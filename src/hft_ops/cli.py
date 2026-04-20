@@ -1317,29 +1317,25 @@ def sweep_run(
         sys.exit(1)
 
     # -----------------------------------------------------------------
-    # Phase 8A.1 Part 1 scope: parallel dispatch wire-in deferred.
-    # Scheduler primitives (WorkerPoolExecutor, GPUSemaphore,
-    # signal_handler, SWEEP_FAILURE contract, dedup filter) are shipped
-    # + tested in this commit (+18 tests). The sweep_run body refactor
-    # to split into (worker-runs-stages) + (parent-registers-records) is
-    # a separate ~200 LOC focused change (Part 2). For now, --parallel
-    # > 1 emits a loud WARNING and falls back to sequential execution
-    # so users are never silently running the wrong path.
+    # Phase 8A.1 Part 2 (2026-04-20): parallel-sweep dispatch via
+    # WorkerPoolExecutor. Serial path (parallel=1) is unchanged — the
+    # full re-dispatch through the scheduler only activates when
+    # ``--parallel > 1`` is passed. See ``_run_sweep_parallel`` below
+    # for the parallel code path.
     # -----------------------------------------------------------------
-    if parallel > 1:
-        console.print(
-            f"[yellow]⚠ --parallel={parallel} — Phase 8A.1 Part 1 "
-            f"infrastructure only; sweep-loop parallel wire-in lands "
-            f"in Part 2. Falling back to sequential (parallel=1) for "
-            f"this run.[/yellow]"
-        )
-        parallel = 1
 
-    # --gpus / --cpu-budget are also Part-2 wire-ins. Validate parsing
-    # here so the user gets immediate feedback on typos.
-    if gpus is not None and gpus.lower() not in ("none", "auto"):
+    # Parse --gpus / --cpu-budget.
+    gpu_ids: List[int] = []
+    if gpus is None or gpus.lower() == "auto":
+        # Auto-detect: on macOS or non-CUDA Linux, nvidia-smi absent →
+        # empty list → CPU-only path. On CUDA hosts, enumerate visible
+        # GPUs. Minimal impl for MVP: just empty unless explicit.
+        gpu_ids = []
+    elif gpus.lower() == "none":
+        gpu_ids = []
+    else:
         try:
-            _gpu_ids = [int(s.strip()) for s in gpus.split(",") if s.strip()]
+            gpu_ids = [int(s.strip()) for s in gpus.split(",") if s.strip()]
         except ValueError:
             console.print(
                 f"[red]--gpus: expected 'none', 'auto', or comma-separated "
@@ -1418,6 +1414,28 @@ def sweep_run(
     # Phase 5 FULL-A Block 3: accumulate per-grid-point summaries for the
     # aggregate record written at loop end.
     child_summaries: list[dict] = []
+
+    # Phase 8A.1 Part 2 (2026-04-20): parallel-dispatch branch. When
+    # ``--parallel > 1``, route through WorkerPoolExecutor (threads) +
+    # sweep_dispatch helper. Serial path below stays unchanged.
+    if parallel > 1:
+        from hft_ops.cli_parallel_sweep import run_sweep_parallel
+        return run_sweep_parallel(
+            experiments_with_axes=experiments_with_axes,
+            manifest=manifest,
+            ops_config=ops_config,
+            paths=paths,
+            sweep_id=sweep_id,
+            sweep_name=sweep_name,
+            parallel=parallel,
+            failure_mode=_failure_mode,
+            max_retries=_max_retries,
+            requested_stages=requested_stages,
+            force=force,
+            gpu_ids=gpu_ids,
+            cpu_budget=cpu_budget,
+            console=console,
+        )
 
     for i, (exp, axis_values) in enumerate(experiments_with_axes, 1):
         console.print(

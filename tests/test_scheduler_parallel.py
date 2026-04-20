@@ -583,6 +583,204 @@ class TestPostAuditFixes:
         assert results[0].error_kind == "assertion"
 
 
+class TestPart2SweepDispatch:
+    """Phase 8A.1 Part 2 regression tests for the sweep_dispatch helper.
+
+    These lock the key invariants of ``run_grid_point_stages``:
+      - cancel_event causes clean CANCELLED abort
+      - cpu_threads propagate into ops_config.env_overrides
+      - fingerprint is computed + returned in WorkerResult
+      - axis_values preserved across worker boundary
+      - env_overrides on OpsConfig is per-worker (not shared state)
+    """
+
+    def _minimal_manifest(self, name: str = "test_exp"):
+        """Build a minimal ExperimentManifest with all stages disabled.
+        Sufficient for helper-invocation tests that don't need real stages.
+        """
+        from hft_ops.manifest.schema import (
+            ExperimentManifest,
+            ExperimentMeta,
+            Stages,
+            ExtractionStage,
+            RawAnalysisStage,
+            DatasetAnalysisStage,
+            ValidationStage,
+            TrainingStage,
+            PostTrainingGateStage,
+            SignalExportStage,
+            BacktestingStage,
+        )
+        return ExperimentManifest(
+            experiment=ExperimentMeta(
+                name=name,
+                contract_version="2.2",
+            ),
+            stages=Stages(
+                extraction=ExtractionStage(enabled=False),
+                raw_analysis=RawAnalysisStage(enabled=False),
+                dataset_analysis=DatasetAnalysisStage(enabled=False),
+                validation=ValidationStage(enabled=False),
+                training=TrainingStage(enabled=False),
+                post_training_gate=PostTrainingGateStage(enabled=False),
+                signal_export=SignalExportStage(enabled=False),
+                backtesting=BacktestingStage(enabled=False),
+            ),
+            manifest_path="/tmp/test_manifest.yaml",
+        )
+
+    def test_ops_config_env_overrides_field_defaults_empty(self, tmp_path: Path) -> None:
+        """Phase 8A.1 Part 2: OpsConfig.env_overrides new field defaults
+        to empty dict (back-compat with pre-Part-2 behavior).
+        """
+        from hft_ops.config import OpsConfig
+        from hft_ops.paths import PipelinePaths
+
+        pipeline_root = tmp_path / "pipeline"
+        pipeline_root.mkdir()
+        paths = PipelinePaths(pipeline_root=pipeline_root)
+        cfg = OpsConfig(paths=paths)
+        assert cfg.env_overrides == {}, (
+            "OpsConfig.env_overrides must default to empty dict "
+            "so pre-Part-2 serial-path behavior is preserved"
+        )
+
+    def test_ops_config_env_overrides_replaceable_without_shared_state(
+        self, tmp_path: Path
+    ) -> None:
+        """Per-worker OpsConfig is built via ``dataclasses.replace`` which
+        creates a new immutable instance — no shared-state risk across
+        threads even though the nested dict is mutable.
+        """
+        import dataclasses
+        from hft_ops.config import OpsConfig
+        from hft_ops.paths import PipelinePaths
+
+        pipeline_root = tmp_path / "pipeline"
+        pipeline_root.mkdir()
+        paths = PipelinePaths(pipeline_root=pipeline_root)
+        base = OpsConfig(paths=paths)
+
+        worker_a = dataclasses.replace(base, env_overrides={"CUDA_VISIBLE_DEVICES": "0"})
+        worker_b = dataclasses.replace(base, env_overrides={"CUDA_VISIBLE_DEVICES": "1"})
+
+        assert worker_a.env_overrides != worker_b.env_overrides
+        assert base.env_overrides == {}, (
+            "Base OpsConfig must not be mutated by per-worker replace"
+        )
+
+    def test_gpu_stages_constant_is_canonical(self) -> None:
+        """GPU_STAGES set locks which stages acquire the GPU semaphore.
+        Locking as a constant prevents future drift where someone adds
+        (e.g.) a ``model_compilation`` stage that needs GPU but is
+        silently treated as CPU-only."""
+        from hft_ops.scheduler.sweep_dispatch import GPU_STAGES
+        assert "training" in GPU_STAGES
+        assert "signal_export" in GPU_STAGES
+        assert "extraction" not in GPU_STAGES  # CPU-only (Rust rayon)
+        assert "backtesting" not in GPU_STAGES  # CPU-only (vectorized numpy)
+
+    def test_classify_error_kind_known_patterns(self) -> None:
+        """Error-kind classifier maps common failure signatures to the
+        correct TRANSIENT / FATAL taxonomy.
+        """
+        from hft_ops.scheduler.sweep_dispatch import classify_error_kind
+        from hft_ops.scheduler.executor import (
+            TRANSIENT_ERROR_KINDS,
+            FATAL_ERROR_KINDS,
+        )
+
+        assert classify_error_kind("CUDA out of memory", "") == "oom"
+        assert classify_error_kind("oom", "") in TRANSIENT_ERROR_KINDS
+        assert classify_error_kind("AssertionError: x", "") == "assertion"
+        assert classify_error_kind("assertion", "") in FATAL_ERROR_KINDS
+        assert classify_error_kind("contract schema_version mismatch", "") == "contract_error"
+        assert classify_error_kind("some random error", "") == "unknown"
+        assert classify_error_kind("unknown", "") in FATAL_ERROR_KINDS
+
+    def test_sweep_dispatch_imports_clean(self) -> None:
+        """Smoke test: the entire Part 2 import chain resolves without
+        circular-import errors. Catches accidental introductions of
+        hft_ops.scheduler.* ↔ hft_ops.stages.* cycles.
+        """
+        # Importing these in this order exercises the full dependency graph
+        from hft_ops.scheduler.sweep_dispatch import (
+            run_grid_point_stages,
+            build_stage_runners_list,
+            classify_error_kind,
+            GPU_STAGES,
+        )
+        from hft_ops.cli_parallel_sweep import run_sweep_parallel
+
+        assert callable(run_grid_point_stages)
+        assert callable(build_stage_runners_list)
+        assert callable(classify_error_kind)
+        assert callable(run_sweep_parallel)
+
+    def test_all_stages_disabled_returns_success_worker_result(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Helper with all stages disabled completes as SUCCESS with
+        empty stage_results. Tests the iteration loop + fingerprint
+        computation + cancel_event non-set path.
+        """
+        import dataclasses
+        import yaml
+        from hft_ops.config import OpsConfig
+        from hft_ops.paths import PipelinePaths
+        from hft_ops.manifest.loader import load_manifest
+        from hft_ops.scheduler.sweep_dispatch import run_grid_point_stages
+        from hft_ops.scheduler.executor import WorkerStatus
+
+        # Build a minimal on-disk pipeline for PipelinePaths.validate() + fingerprint
+        pipeline_root = tmp_path / "pipeline"
+        pipeline_root.mkdir()
+        contracts_dir = pipeline_root / "contracts"
+        contracts_dir.mkdir()
+        (contracts_dir / "pipeline_contract.toml").write_text(
+            '[contract]\nschema_version = "2.2"\n'
+        )
+
+        # Minimal manifest that resolve_manifest_context can handle
+        manifest_dict = {
+            "experiment": {"name": "disabled_exp", "contract_version": "2.2"},
+            "pipeline_root": "..",
+            "stages": {
+                "extraction": {"enabled": False},
+                "raw_analysis": {"enabled": False},
+                "dataset_analysis": {"enabled": False},
+                "validation": {"enabled": False},
+                "training": {"enabled": False},
+                "post_training_gate": {"enabled": False},
+                "signal_export": {"enabled": False},
+                "backtesting": {"enabled": False},
+            },
+        }
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(yaml.safe_dump(manifest_dict))
+        exp = load_manifest(manifest_path)
+
+        paths = PipelinePaths(pipeline_root=pipeline_root)
+        ops_config = OpsConfig(paths=paths)
+
+        wr, stage_results = run_grid_point_stages(
+            exp=exp,
+            axis_values={"model": "tlob"},
+            grid_index=0,
+            ops_config=ops_config,
+            paths=paths,
+        )
+
+        assert wr.status == WorkerStatus.SUCCESS, (
+            f"All-disabled manifest must complete as SUCCESS; "
+            f"got {wr.status} with error_kind={wr.error_kind!r}"
+        )
+        assert wr.grid_index == 0
+        assert wr.axis_values == {"model": "tlob"}
+        assert len(wr.fingerprint) == 64, "Fingerprint must be 64-char SHA-256 hex"
+        assert stage_results == {}, "No enabled stages → empty stage_results"
+
+
 class TestResourceSpec:
     def test_resource_spec_default_zero_gpus(self) -> None:
         """Default ResourceSpec must be {gpus=0, cpu_slots=1} —

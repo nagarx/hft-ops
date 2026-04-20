@@ -97,6 +97,7 @@ class DatasetAnalysisRunner:
                 cmd,
                 cwd=config.paths.dataset_analyzer_dir,
                 verbose=config.verbose,
+                env=config.env_overrides or None,
             )
             result.duration_seconds = time.monotonic() - start
             result.stdout = _tail(proc.stdout or "")
