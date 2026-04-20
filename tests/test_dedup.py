@@ -82,6 +82,58 @@ class TestComputeFingerprint:
         fp2 = compute_fingerprint(m2, paths)
         assert fp1 != fp2
 
+    def test_artifacts_field_excluded_from_fingerprint(
+        self, sample_manifest_yaml: Path, tmp_pipeline: Path
+    ):
+        """Phase 8C-α post-audit (arch-S1, 2026-04-20): lock the
+        fingerprint-vs-artifacts invariant. ``ExperimentRecord.artifacts``
+        is an OBSERVATION (post-training importance artifacts) — NOT a
+        TREATMENT. Including it in the fingerprint would create
+        Phase-3-§3.3b-class ledger conflation: the SAME treatment would
+        produce DIFFERENT fingerprints depending on what the trainer
+        happened to emit, breaking dedup/retry semantics.
+
+        The check: inspect the components dict returned by
+        ``compute_fingerprint_explain`` — NO top-level key may be
+        ``artifacts``, and NO nested stage-config key may be named
+        ``artifacts``. Any future refactor that silently starts
+        hashing artifacts into the fingerprint must first update this
+        test + the Change-Coordination Checklist in root CLAUDE.md.
+        """
+        from hft_ops.ledger.dedup import compute_fingerprint_explain
+
+        paths = PipelinePaths(pipeline_root=tmp_pipeline)
+        manifest = load_manifest(sample_manifest_yaml)
+        _, components = compute_fingerprint_explain(manifest, paths)
+
+        # Top-level: no "artifacts" key
+        assert "artifacts" not in components, (
+            f"compute_fingerprint leaked 'artifacts' as a TOP-LEVEL "
+            f"component. Artifacts are observations, not treatments — "
+            f"including them breaks dedup. "
+            f"Components: {sorted(components.keys())}"
+        )
+
+        # Nested: no sub-component may carry an 'artifacts' subkey
+        def _walk(obj, path="root"):
+            violations = []
+            if isinstance(obj, dict):
+                if "artifacts" in obj:
+                    violations.append(path + ".artifacts")
+                for k, v in obj.items():
+                    violations.extend(_walk(v, f"{path}.{k}"))
+            elif isinstance(obj, list):
+                for i, v in enumerate(obj):
+                    violations.extend(_walk(v, f"{path}[{i}]"))
+            return violations
+
+        nested_violations = _walk(components)
+        assert not nested_violations, (
+            f"compute_fingerprint leaked 'artifacts' as a NESTED "
+            f"component at: {nested_violations}. See hft-rules §7 + "
+            f"CLAUDE.md Invariant 4."
+        )
+
 
 class TestCheckDuplicate:
     def test_no_ledger(self, tmp_path: Path):

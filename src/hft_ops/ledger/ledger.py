@@ -405,21 +405,46 @@ class ExperimentLedger:
         if output_dir is None or not output_dir.exists():
             return 0
 
+        # Post-audit (2026-04-20 Agent-C.3 H2): skip artifacts whose
+        # content hash is already present in record.artifacts[]. If a
+        # stage re-routes (retry, idempotent re-invocation), the dedup
+        # prevents duplicate entries in the record (which would inflate
+        # `artifact_kinds` projections + confuse downstream consumers
+        # that read .artifacts[] as a distinct set).
+        existing_shas = {
+            a.get("sha256")
+            for a in record.artifacts
+            if isinstance(a, dict)
+        }
+
         routed = 0
         for pattern in _POST_STAGE_ARTIFACT_PATTERNS:
             src = output_dir / pattern["filename"]
             if not src.exists():
                 continue
-            metadata = self._content_address_artifact(src, pattern)
-            if metadata is not None:
-                record.artifacts.append(metadata)
-                routed += 1
+            metadata = self._content_address_artifact(src, pattern, stage_name)
+            if metadata is None:
+                continue
+            if metadata.get("sha256") in existing_shas:
+                # Same content already routed for this record — idempotent skip.
+                _LOGGER.debug(
+                    "Artifact sha %s already present on record (stage=%s, "
+                    "kind=%s); skipping duplicate append.",
+                    metadata.get("sha256", "")[:12],
+                    stage_name,
+                    metadata.get("kind", ""),
+                )
+                continue
+            record.artifacts.append(metadata)
+            existing_shas.add(metadata.get("sha256"))
+            routed += 1
         return routed
 
     def _content_address_artifact(
         self,
         src: Path,
         pattern: Dict[str, str],
+        stage_name: str = "",
     ) -> Optional[Dict[str, Any]]:
         """Validate, content-hash, and route a single artifact file.
 
@@ -431,7 +456,31 @@ class ExperimentLedger:
         ``FeatureImportanceArtifact.load`` which raises on malformed
         schema. A failed validation skips routing without corrupting
         the ledger state (hft-rules §8).
+
+        Post-audit (2026-04-20 Agent-C.3 M2): the entire body is
+        wrapped in a defensive try/except so an UNEXPECTED exception
+        (KeyError on a missing pattern field, etc.) never crashes the
+        caller's stage-result processing loop. This is a safety net —
+        the individual operations already catch specific errors + log
+        WARNs; the outer guard catches only the truly unforeseen.
         """
+        try:
+            return self._content_address_artifact_impl(src, pattern, stage_name)
+        except Exception as exc:  # pragma: no cover — defensive guard
+            _LOGGER.warning(
+                "Artifact routing unexpected error for %s (stage=%s, "
+                "pattern=%r): %s. Skipping.",
+                src, stage_name, pattern.get("kind", "?"), exc,
+            )
+            return None
+
+    def _content_address_artifact_impl(
+        self,
+        src: Path,
+        pattern: Dict[str, str],
+        stage_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Inner implementation — see ``_content_address_artifact``."""
         # -------- Validation -------------------------------------------------
         # Resolve validator from import path (lazy — avoid circular imports)
         validator_path = pattern["validator"]
@@ -453,8 +502,9 @@ class ExperimentLedger:
             validated = validator(src)
         except Exception as exc:
             _LOGGER.warning(
-                "Artifact validation failed for %s (kind=%s): %s. Skipping route.",
-                src, pattern["kind"], exc,
+                "Artifact validation failed for %s (stage=%s, kind=%s): %s. "
+                "Skipping route.",
+                src, stage_name, pattern["kind"], exc,
             )
             return None
 
@@ -486,10 +536,31 @@ class ExperimentLedger:
 
         # Idempotent: skip copy if target already exists (same content →
         # same hash → same path → already routed, by any prior run).
+        #
+        # Post-audit round-2 (2026-04-20 hft-ops-review H1): atomic
+        # copy via tmp+rename. A direct ``shutil.copy2(src, target)`` is
+        # NOT atomic — SIGKILL mid-copy leaves a TRUNCATED file at the
+        # content-addressed path. The next invocation sees
+        # ``target.exists()==True``, skips the copy, and serves a
+        # corrupted artifact whose filename (SHA of source) no longer
+        # matches its content. Fix: copy to a sibling ``.tmp`` path
+        # first, then ``os.replace`` atomically. Mirrors
+        # ``hft_contracts.atomic_io.atomic_write_json`` pattern but for
+        # file-copy rather than JSON-encode.
         if not target.exists():
+            tmp = target.with_suffix(target.suffix + f".tmp.{os.getpid()}")
             try:
-                shutil.copy2(src, target)
+                shutil.copy2(src, tmp)
+                os.replace(tmp, target)
             except OSError as exc:
+                # Clean up any partial tmp so it doesn't accumulate.
+                try:
+                    tmp.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    # Secondary failure — log but don't mask the primary.
+                    _LOGGER.debug("Artifact tmp cleanup failed for %s", tmp)
                 _LOGGER.warning(
                     "Artifact copy failed %s → %s: %s", src, target, exc,
                 )

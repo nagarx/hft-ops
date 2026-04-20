@@ -566,11 +566,11 @@ class TestPersistPostStageArtifacts:
     def _make_artifact_dict(self, feature_name: str = "depth_norm_ofi") -> Dict:
         """Minimal valid FeatureImportanceArtifact dict for fixture use."""
         return {
-            "schema_version": "1",
+            "schema_version": "2",
             "method": "permutation",
             "baseline_metric": "val_ic",
             "baseline_value": 0.245,
-            "block_size_days": 1,
+            "block_length_samples": 1,
             "n_permutations": 500,
             "n_seeds": 5,
             "seed": 42,
@@ -779,6 +779,38 @@ class TestPersistPostStageArtifacts:
         ), (
             f"Expected WARN about validation failure. Got: "
             f"{[r.message for r in caplog.records]}"
+        )
+
+    def test_re_routing_same_artifact_on_same_record_dedups(
+        self, tmp_path: Path
+    ) -> None:
+        """Post-audit (2026-04-20 Agent-C.3 H2): calling
+        ``persist_post_stage_artifacts`` twice on the SAME record with
+        the SAME artifact content must NOT append two entries. The
+        record's ``artifacts[]`` is a distinct set by content hash.
+        """
+        import json as _json
+        pipeline_root = tmp_path / "pipeline"
+        ledger_dir = pipeline_root / "hft-ops" / "ledger"
+        ledger_dir.mkdir(parents=True)
+        output_dir = pipeline_root / "outputs" / "e1"
+        output_dir.mkdir(parents=True)
+        (output_dir / "feature_importance_v1.json").write_text(
+            _json.dumps(self._make_artifact_dict(), sort_keys=True)
+        )
+
+        ledger = ExperimentLedger(ledger_dir)
+        rec = self._make_record()
+        n1 = ledger.persist_post_stage_artifacts("training", output_dir, rec)
+        n2 = ledger.persist_post_stage_artifacts("training", output_dir, rec)
+
+        assert n1 == 1
+        assert n2 == 0, (
+            "Re-routing same content on same record must dedup "
+            "(n2=0 means the second call saw the SHA already present)"
+        )
+        assert len(rec.artifacts) == 1, (
+            "Record.artifacts[] must contain ONE entry, not duplicates"
         )
 
 
