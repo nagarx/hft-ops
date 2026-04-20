@@ -32,8 +32,18 @@ class ExtractionStage:
 
     Args:
         enabled: Whether to run this stage.
-        skip_if_exists: Reuse existing exports if output_dir exists
-            and metadata validates against the contract.
+        skip_if_exists: **DEPRECATED as of Phase 8A.0 (2026-04-20)** — legacy
+            filesystem-existence check superseded by the content-addressed
+            extraction cache at ``data/exports/_cache/``. The cache covers
+            config-changes / git-SHA-changes / raw-input-changes that the
+            filename-based ``skip_if_exists`` missed, eliminating a class
+            of silent-correctness bugs where the extractor was SKIPPED but
+            the config had changed in a breaking way. Still honoured as a
+            fallback when cache-key inputs cannot be gathered (e.g., in
+            test environments without git repos). Removal deadline:
+            Phase 9 (when SQLite ledger migration retires the JSON
+            envelope; target Q3 2026). Emits ``DeprecationWarning`` on
+            manifest load when explicitly set to a non-default value.
         config: Path to the extractor TOML config, relative to pipeline_root.
         output_dir: Path for exported data, relative to pipeline_root.
     """
@@ -42,6 +52,28 @@ class ExtractionStage:
     skip_if_exists: bool = True
     config: str = ""
     output_dir: str = ""
+
+    def __post_init__(self) -> None:
+        # Phase 8A.0 (2026-04-20): warn only when user *explicitly* set
+        # ``skip_if_exists: false`` (the default True matches legacy
+        # behavior and the cache supersedes it silently). We cannot tell
+        # "default True" from "explicit True" at dataclass construction
+        # time, so only the False-case triggers the warning (signals
+        # intentional legacy opt-in that is now redundant).
+        if self.skip_if_exists is False:
+            import warnings
+
+            warnings.warn(
+                "ExtractionStage.skip_if_exists=false is deprecated (Phase "
+                "8A.0). The content-addressed extraction cache at "
+                "data/exports/_cache/ supersedes it with stricter "
+                "invalidation (config + git + raw-input + binary + "
+                "platform changes all invalidate). To disable caching "
+                "entirely pass --no-cache-extraction to `hft-ops run`. "
+                "Removal target: Phase 9 (Q3 2026).",
+                DeprecationWarning,
+                stacklevel=3,
+            )
 
 
 @dataclass

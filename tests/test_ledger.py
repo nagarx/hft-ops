@@ -494,17 +494,26 @@ class TestIndexSchemaNeedsRebuildHelper:
         assert not _index_schema_needs_rebuild(INDEX_SCHEMA_VERSION)
 
     def test_patch_diff_no_rebuild(self) -> None:
-        """PATCH-only diff is reserved for docstring changes; no rebuild."""
+        """PATCH-only diff is reserved for docstring changes; no rebuild.
+
+        Phase 8A.0 (2026-04-20) bumped code-side to "1.1.0", so this
+        test now uses "1.1.99" (same MAJOR.MINOR, differing PATCH) to
+        preserve the PATCH-invariance contract.
+        """
         from hft_ops.ledger.ledger import _index_schema_needs_rebuild
 
-        # Current code says "1.0.0"; simulate on-disk "1.0.99".
-        # (PATCH differs; MAJOR.MINOR matches.)
-        assert not _index_schema_needs_rebuild("1.0.99")
+        assert not _index_schema_needs_rebuild("1.1.99")
 
     def test_minor_diff_triggers_rebuild(self) -> None:
+        """MINOR diff is the default whitelist-extension trigger.
+
+        Phase 8A.0 (2026-04-20): code-side is now "1.1.0", so the legacy
+        envelope at "1.0.0" MUST trigger rebuild (this is the actual
+        flow executed on Phase 8A.0's first post-deploy load).
+        """
         from hft_ops.ledger.ledger import _index_schema_needs_rebuild
 
-        assert _index_schema_needs_rebuild("1.1.0")
+        assert _index_schema_needs_rebuild("1.0.0")
 
     def test_major_diff_triggers_rebuild(self) -> None:
         from hft_ops.ledger.ledger import _index_schema_needs_rebuild

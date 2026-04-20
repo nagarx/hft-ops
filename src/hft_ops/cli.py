@@ -143,17 +143,30 @@ def _resolve_pipeline_root(ctx_root: Optional[str]) -> Path:
         "produces a visible failure."
     ),
 )
+@click.option(
+    "--cache-extraction/--no-cache-extraction",
+    default=True,
+    help=(
+        "Phase 8A.0: consult content-addressed extraction cache "
+        "(data/exports/_cache/) before invoking the extractor. "
+        "Default ON. Disable with --no-cache-extraction for debugging "
+        "a specific extraction or when cache-key gathering is "
+        "unavailable (e.g., missing git SHAs)."
+    ),
+)
 @click.pass_context
 def main(
     ctx: click.Context,
     pipeline_root: Optional[str],
     verbose: bool,
     strict_index: bool,
+    cache_extraction: bool,
 ) -> None:
     """hft-ops: Central experiment orchestrator for the HFT pipeline."""
     ctx.ensure_object(dict)
     ctx.obj["pipeline_root"] = pipeline_root
     ctx.obj["verbose"] = verbose
+    ctx.obj["cache_extraction"] = cache_extraction
     # Phase 8B: set the env var here so downstream ExperimentLedger()
     # constructions (including inside subprocesses) auto-detect via
     # ``_detect_strict_index_from_env``. The env-var path avoids needing
@@ -193,6 +206,7 @@ def run(
         paths=paths,
         verbose=ctx.obj.get("verbose", False),
         dry_run=dry_run,
+        cache_extraction=ctx.obj.get("cache_extraction", True),
     )
 
     console.print(f"[bold]Loading manifest:[/bold] {manifest_path}")
@@ -433,6 +447,27 @@ def _record_experiment(
         if isinstance(report, dict):
             gate_reports[stage_name] = report
 
+    # Phase 8A.0 (2026-04-20): harvest extraction-cache observability from
+    # the extraction stage's captured_metrics. Flattened into top-level
+    # ``ExperimentRecord.cache_info`` so ``ledger list --cache-hit true``
+    # filters without reaching into per-stage nested dicts. Absence of
+    # the extraction stage (e.g., dataset_analysis-only manifests) leaves
+    # cache_info={}.
+    cache_info: Dict[str, Any] = {}
+    if "extraction" in results:
+        extraction_captured = results["extraction"].captured_metrics
+        # Project only the 5 cache-* observation keys; leave the rest of
+        # captured_metrics alone (stage-local, not record-level).
+        for key in (
+            "cache_hit",
+            "cache_key",
+            "cache_seconds_saved",
+            "cache_linked_files",
+            "cache_link_type",
+        ):
+            if key in extraction_captured:
+                cache_info[key] = extraction_captured[key]
+
     # Phase 4 Batch 4c.4 (2026-04-16): harvest `feature_set_ref` from
     # signal_export's captured_metrics (populated by
     # `SignalExportRunner._harvest_feature_set_ref` from signal_metadata.json).
@@ -458,6 +493,7 @@ def _record_experiment(
         training_config=training_config,
         training_metrics=training_metrics,
         gate_reports=gate_reports,
+        cache_info=cache_info,
         tags=manifest.experiment.tags,
         hypothesis=manifest.experiment.hypothesis,
         description=manifest.experiment.description,
@@ -1159,6 +1195,7 @@ def sweep_run(
         paths=paths,
         verbose=ctx.obj.get("verbose", False),
         dry_run=dry_run,
+        cache_extraction=ctx.obj.get("cache_extraction", True),
     )
 
     console.print(f"[bold]Loading sweep manifest:[/bold] {manifest_path}")
@@ -1732,6 +1769,184 @@ def feature_sets_show(
         console.print(f"  Description:          {fs.description}")
     if fs.notes:
         console.print(f"  Notes:                {fs.notes}")
+
+
+# =============================================================================
+# Phase 8A.0 — Extraction cache subcommand group (P0: ls/gc/pin/unpin)
+# =============================================================================
+
+
+@main.group(name="cache")
+def cache_group() -> None:
+    """Phase 8A.0 — content-addressed extraction cache admin.
+
+    The cache lives at ``data/exports/_cache/<64hex>/``. Entries are
+    finalized readonly; operator mutations happen through these
+    subcommands (or via ``hft-ops run --no-cache-extraction`` at the
+    invocation level).
+    """
+
+
+@cache_group.command(name="ls")
+@click.option(
+    "--sort-by",
+    type=click.Choice(["mtime", "size", "created"]),
+    default="mtime",
+    help="Sort entries: mtime (last-hit, LRU order), size, or created time.",
+)
+@click.option("--limit", type=int, default=50, help="Max entries to show.")
+@click.pass_context
+def cache_ls(ctx: click.Context, sort_by: str, limit: int) -> None:
+    """List extraction-cache entries with size + last-hit time."""
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    cache_root = pipeline_root / "data" / "exports" / "_cache"
+    if not cache_root.exists():
+        console.print("[yellow]Cache is empty (no _cache/ directory).[/yellow]")
+        return
+
+    entries = []
+    for child in cache_root.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name.startswith("_") or ".tmp" in child.name:
+            continue
+        if len(child.name) != 64 or not all(c in "0123456789abcdef" for c in child.name):
+            continue
+        try:
+            size_bytes = sum(f.stat().st_size for f in child.rglob("*") if f.is_file())
+        except OSError:
+            size_bytes = 0
+        mtime = child.stat().st_mtime
+
+        manifest_path = child / "CACHE_MANIFEST.json"
+        created = ""
+        if manifest_path.exists():
+            try:
+                import json
+                created = json.loads(manifest_path.read_text()).get("created_at_utc", "")
+            except (OSError, json.JSONDecodeError):
+                pass
+        entries.append({
+            "key": child.name,
+            "size_gb": size_bytes / (1024 ** 3),
+            "mtime": mtime,
+            "created": created,
+        })
+
+    if sort_by == "size":
+        entries.sort(key=lambda e: e["size_gb"], reverse=True)
+    elif sort_by == "created":
+        entries.sort(key=lambda e: e["created"], reverse=True)
+    else:  # mtime
+        entries.sort(key=lambda e: e["mtime"], reverse=True)
+
+    if not entries:
+        console.print("[yellow]No cache entries found.[/yellow]")
+        return
+
+    from datetime import datetime, timezone
+
+    console.print(f"[bold]{len(entries)} entries (sorted by {sort_by}):[/bold]")
+    for entry in entries[:limit]:
+        last_hit = datetime.fromtimestamp(entry["mtime"], tz=timezone.utc).isoformat(timespec="seconds")
+        console.print(
+            f"  {entry['key'][:12]}...  "
+            f"size={entry['size_gb']:.2f} GB  "
+            f"last_hit={last_hit}  "
+            f"created={entry['created'] or 'unknown'}"
+        )
+
+
+@cache_group.command(name="gc")
+@click.option("--older-than", type=int, default=None, help="Evict entries older than N days.")
+@click.option("--max-size", type=float, default=None, help="Evict LRU entries until total size ≤ N GB.")
+@click.option("--dry-run", is_flag=True, help="Show what would be evicted, don't delete.")
+@click.pass_context
+def cache_gc(
+    ctx: click.Context,
+    older_than: Optional[int],
+    max_size: Optional[float],
+    dry_run: bool,
+) -> None:
+    """Evict cache entries per LRU + age + size-budget policy.
+
+    Filters combine with AND semantics. Pinned entries (see `cache pin`)
+    are never evicted.
+    """
+    if older_than is None and max_size is None:
+        console.print(
+            "[yellow]No filter specified. Pass --older-than DAYS or "
+            "--max-size GB (or both).[/yellow]"
+        )
+        return
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    cache_root = pipeline_root / "data" / "exports" / "_cache"
+
+    from hft_ops.scheduler.extraction_cache import gc_cache
+
+    evicted = gc_cache(
+        cache_root,
+        older_than_days=older_than,
+        max_size_gb=max_size,
+        dry_run=dry_run,
+    )
+
+    if not evicted:
+        console.print("[green]Nothing to evict under current filters.[/green]")
+        return
+
+    prefix = "[yellow]Would evict[/yellow]" if dry_run else "[red]Evicted[/red]"
+    console.print(f"{prefix} {len(evicted)} entries:")
+    for path in evicted:
+        console.print(f"  {Path(path).name[:12]}...")
+
+
+@cache_group.command(name="pin")
+@click.argument("cache_key")
+@click.pass_context
+def cache_pin(ctx: click.Context, cache_key: str) -> None:
+    """Pin a cache entry so GC never evicts it."""
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    cache_root = pipeline_root / "data" / "exports" / "_cache"
+    _update_pinned(cache_root, add=cache_key)
+    console.print(f"[green]Pinned cache key {cache_key[:12]}...[/green]")
+
+
+@cache_group.command(name="unpin")
+@click.argument("cache_key")
+@click.pass_context
+def cache_unpin(ctx: click.Context, cache_key: str) -> None:
+    """Unpin a cache entry (make it GC-eligible again)."""
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    cache_root = pipeline_root / "data" / "exports" / "_cache"
+    _update_pinned(cache_root, remove=cache_key)
+    console.print(f"[green]Unpinned cache key {cache_key[:12]}...[/green]")
+
+
+def _update_pinned(
+    cache_root: Path,
+    *,
+    add: Optional[str] = None,
+    remove: Optional[str] = None,
+) -> None:
+    """Update ``_PINNED.json`` atomically via hft_contracts.atomic_io."""
+    import json
+
+    from hft_contracts.atomic_io import atomic_write_json
+
+    cache_root.mkdir(parents=True, exist_ok=True)
+    pin_file = cache_root / "_PINNED.json"
+    pinned = set()
+    if pin_file.exists():
+        try:
+            pinned = set(json.loads(pin_file.read_text()).get("pinned_keys", []))
+        except (OSError, json.JSONDecodeError):
+            pass
+    if add:
+        pinned.add(add)
+    if remove:
+        pinned.discard(remove)
+    atomic_write_json(pin_file, {"pinned_keys": sorted(pinned)})
 
 
 if __name__ == "__main__":
