@@ -213,23 +213,16 @@ def run_sweep_parallel(
         exp, axes, fingerprint = index_to_meta[wr.grid_index]
 
         if wr.status == WorkerStatus.SUCCESS:
-            # Re-run the stages via the helper to produce full StageResult objects
-            # for _record_experiment. This is not a re-execution — the helper
-            # returns cached StageResult metadata from the worker's prior run
-            # via a separate code path. For MVP, we re-resolve context and
-            # re-issue the stage runners using the SKIPPED path (output_dir
-            # already exists + cache/skip_if_exists paths short-circuit).
-            # Alternative: worker returns full StageResult dict inline with
-            # WorkerResult.stage_results — see follow-up.
-            #
-            # Phase 8A.1 Part 2 MVP: construct minimal StageResult objects
-            # from the preview dict returned by the worker, sufficient for
-            # _record_experiment's subset access pattern. Full-fidelity
-            # StageResult pass-through lands in Part 2.1 (requires stage
-            # runners to return picklable metrics dicts that parent can
-            # inflate back into StageResult without re-running).
-            stage_results = _preview_dicts_to_stage_results(wr.stage_results)
-
+            # Post-audit fix (2026-04-20): ``wr.stage_results`` holds
+            # FULL ``StageResult`` objects (thread-based pass-through;
+            # no pickling). Previously we reconstructed from preview
+            # dicts — which dropped ``captured_metrics``, silently
+            # losing cache_info / gate_reports / feature_set_ref /
+            # training metrics from every parallel-mode ledger record.
+            stage_results: Dict[str, StageResult] = {
+                name: sr for name, sr in wr.stage_results.items()
+                if isinstance(sr, StageResult)
+            }
             record_id = _record_experiment(
                 exp, paths, fingerprint, stage_results, wr.duration_seconds,
             )
@@ -342,7 +335,11 @@ def _build_task_closure(
     Closure captures per-worker resource assignment + helper invocation.
     """
     def task() -> WorkerResult:
-        wr, _stage_results = run_grid_point_stages(
+        # Post-audit fix (2026-04-20): ``run_grid_point_stages`` now
+        # returns just ``WorkerResult`` (not tuple). Full StageResult
+        # objects are carried on ``WorkerResult.stage_results`` via
+        # thread-shared memory.
+        return run_grid_point_stages(
             exp=exp,
             axis_values=axis_values,
             grid_index=grid_index,
@@ -354,38 +351,7 @@ def _build_task_closure(
             gpu_runtime_dir=gpu_runtime_dir,
             cancel_event=cancel_event,
         )
-        return wr
     return task
-
-
-def _preview_dicts_to_stage_results(
-    stage_preview_dicts: Dict[str, Any],
-) -> Dict[str, StageResult]:
-    """Reconstruct minimal ``StageResult`` objects from the preview dicts
-    returned by ``run_grid_point_stages``. Only includes status / output_dir
-    / duration / error_message — the fields ``_record_experiment`` reads.
-
-    For Phase 8A.1 Part 2 MVP this is sufficient because the current
-    ``_record_experiment`` code path accesses these fields only. Richer
-    captured_metrics pass-through is a Part-2.1 follow-up.
-    """
-    results: Dict[str, StageResult] = {}
-    for stage_name, preview in stage_preview_dicts.items():
-        if not isinstance(preview, dict):
-            continue
-        status_str = preview.get("status", "")
-        try:
-            status_enum = StageStatus(status_str) if status_str else StageStatus.PENDING
-        except ValueError:
-            status_enum = StageStatus.PENDING
-        results[stage_name] = StageResult(
-            stage_name=stage_name,
-            status=status_enum,
-            duration_seconds=preview.get("duration_seconds", 0.0),
-            output_dir=preview.get("output_dir", ""),
-            error_message=preview.get("error_message", ""),
-        )
-    return results
 
 
 def _build_sweep_failure_record(

@@ -148,15 +148,23 @@ def run_grid_point_stages(
     gpu_runtime_dir: Optional[Path] = None,
     gpu_timeout_seconds: float = 1800.0,
     cancel_event: Optional[threading.Event] = None,
-) -> Tuple[WorkerResult, Dict[str, StageResult]]:
+) -> WorkerResult:
     """Run all enabled stages for one grid point. Pure function —
     does NOT touch the ledger. Safe to call from a worker thread.
 
-    Returns a tuple ``(WorkerResult, stage_results_dict)`` where:
-      - ``WorkerResult`` carries status / fingerprint / error_kind /
-        duration / axis_values for parent-side registration.
-      - ``stage_results_dict`` is the raw ``{stage_name: StageResult}``
-        mapping used by ``_record_experiment`` (parent-only).
+    Returns a ``WorkerResult`` with ``stage_results`` populated as
+    ``Dict[str, StageResult]`` (full objects, not preview dicts).
+
+    Post-audit fix (2026-04-20): originally returned a tuple of
+    (WorkerResult-with-preview-dicts, full-StageResult-dict). Caller
+    discarded the second element, forcing parent to reconstruct
+    StageResult from preview — which DROPPED ``captured_metrics``.
+    That silently broke cache_info / gate_reports / feature_set_ref /
+    training-metrics harvest under ``--parallel > 1``. Since we run
+    on ThreadPoolExecutor (shared memory), the full StageResult
+    objects pass through the WorkerResult without serialization.
+    A future ProcessPoolExecutor migration would require explicit
+    pickle-safe projection — but that's out-of-scope for Part 2 MVP.
 
     Parent is responsible for:
       - Pre-dispatch dedup (``check_duplicate`` + skip)
@@ -238,18 +246,18 @@ def run_grid_point_stages(
                 grid_index, stage_name,
             )
             duration = time.monotonic() - point_start
-            return (
-                WorkerResult(
-                    grid_index=grid_index,
-                    status=WorkerStatus.CANCELLED,
-                    fingerprint=fingerprint,
-                    axis_values=axis_values,
-                    stage_results={n: _stage_result_preview(r) for n, r in results.items()},
-                    error_kind="cancelled",
-                    stderr_tail="cancelled by parent signal handler",
-                    duration_seconds=duration,
-                ),
-                results,
+            return WorkerResult(
+                grid_index=grid_index,
+                status=WorkerStatus.CANCELLED,
+                fingerprint=fingerprint,
+                axis_values=axis_values,
+                # Full StageResult pass-through (threads share memory;
+                # no pickle concern). Post-audit fix for captured_metrics
+                # data-loss under --parallel > 1.
+                stage_results=dict(results),
+                error_kind="cancelled",
+                stderr_tail="cancelled by parent signal handler",
+                duration_seconds=duration,
             )
 
         if not enabled:
@@ -335,29 +343,17 @@ def run_grid_point_stages(
         status=WorkerStatus.FAILED if point_failed else WorkerStatus.SUCCESS,
         fingerprint=fingerprint,
         axis_values=axis_values,
-        stage_results={n: _stage_result_preview(r) for n, r in results.items()},
+        # Post-audit fix (2026-04-20): full StageResult pass-through.
+        # ThreadPoolExecutor shares memory → no serialization needed.
+        # Parent's _record_experiment reads captured_metrics from multiple
+        # stages (extraction.cache_info, */.gate_report, signal_export.
+        # feature_set_ref, training.training_metrics). Preview-dicts would
+        # silently drop these fields → ledger data-loss under --parallel>1.
+        stage_results=dict(results),
         error_kind=error_kind,
         stderr_tail=stderr_tail,
         exit_code=exit_code,
         attempt=1,  # Parent overrides on retry
         duration_seconds=duration,
     )
-    return worker_result, results
-
-
-def _stage_result_preview(sr: StageResult) -> Dict[str, Any]:
-    """Serialize StageResult to a small preview dict for WorkerResult.
-
-    The full StageResult (with output_dir + captured_metrics + truncated
-    stdout/stderr) is passed back separately via the tuple return of
-    ``run_grid_point_stages`` so the parent's ``_record_experiment``
-    call can consume it. This preview dict is what lives on the
-    ``WorkerResult.stage_results`` field — intentionally small so
-    SWEEP_FAILURE index projections stay compact.
-    """
-    return {
-        "status": sr.status.value if hasattr(sr.status, "value") else str(sr.status),
-        "duration_seconds": sr.duration_seconds,
-        "output_dir": sr.output_dir,
-        "error_message": sr.error_message[:512] if sr.error_message else "",
-    }
+    return worker_result

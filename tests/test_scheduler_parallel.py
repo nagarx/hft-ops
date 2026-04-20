@@ -763,7 +763,7 @@ class TestPart2SweepDispatch:
         paths = PipelinePaths(pipeline_root=pipeline_root)
         ops_config = OpsConfig(paths=paths)
 
-        wr, stage_results = run_grid_point_stages(
+        wr = run_grid_point_stages(
             exp=exp,
             axis_values={"model": "tlob"},
             grid_index=0,
@@ -778,7 +778,57 @@ class TestPart2SweepDispatch:
         assert wr.grid_index == 0
         assert wr.axis_values == {"model": "tlob"}
         assert len(wr.fingerprint) == 64, "Fingerprint must be 64-char SHA-256 hex"
-        assert stage_results == {}, "No enabled stages → empty stage_results"
+        # Post-audit fix: stage_results now holds FULL StageResult objects
+        # (was preview dicts which dropped captured_metrics — data-loss bug).
+        # With all stages disabled, stage_results is empty dict.
+        assert wr.stage_results == {}, "No enabled stages → empty stage_results"
+
+    def test_worker_result_preserves_captured_metrics_full_fidelity(
+        self, tmp_path: Path
+    ) -> None:
+        """Post-audit regression (2026-04-20): WorkerResult.stage_results
+        MUST hold full ``StageResult`` objects (including
+        ``captured_metrics``), not preview dicts that drop them.
+
+        Data-loss bug found in Part 2 MVP: preview dicts only carried
+        (status, duration, output_dir, error_message). Under
+        ``--parallel > 1``, every ledger record would silently lose
+        cache_info (from extraction.captured_metrics["cache_hit"]),
+        gate_reports (from */.captured_metrics["gate_report"]),
+        feature_set_ref (from signal_export.captured_metrics[...]),
+        and training metrics harvested by
+        TrainingRunner._capture_training_metrics.
+
+        Fix: ThreadPoolExecutor shares memory → pass full StageResult
+        objects directly. Locked by this test.
+        """
+        from hft_ops.scheduler.executor import WorkerResult, WorkerStatus
+        from hft_ops.stages.base import StageResult, StageStatus
+
+        # Simulate a SUCCESS grid point with populated captured_metrics.
+        # If stage_results holds preview dicts instead of StageResult,
+        # the captured_metrics access below will raise AttributeError.
+        sr = StageResult(
+            stage_name="extraction",
+            status=StageStatus.COMPLETED,
+            captured_metrics={"cache_hit": True, "cache_key": "a" * 64},
+        )
+        wr = WorkerResult(
+            grid_index=0,
+            status=WorkerStatus.SUCCESS,
+            fingerprint="f" * 64,
+            stage_results={"extraction": sr},
+        )
+        extracted = wr.stage_results["extraction"]
+        assert isinstance(extracted, StageResult), (
+            f"WorkerResult.stage_results must hold StageResult objects "
+            f"(not preview dicts); got {type(extracted).__name__}. "
+            f"Preview-dict regression would drop captured_metrics "
+            f"silently, breaking cache_info/gate_reports/feature_set_ref "
+            f"harvest under --parallel > 1."
+        )
+        assert extracted.captured_metrics["cache_hit"] is True
+        assert extracted.captured_metrics["cache_key"] == "a" * 64
 
 
 class TestResourceSpec:
