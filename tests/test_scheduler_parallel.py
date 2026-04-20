@@ -479,6 +479,110 @@ class TestWorkerPoolExecutor:
 # ============================================================================
 
 
+class TestPostAuditFixes:
+    """Post-audit regression guards for 4-agent validation pass
+    (2026-04-20). Locks CRITICAL/HIGH findings' fixes.
+    """
+
+    def test_gpu_semaphore_double_acquire_raises(self, tmp_path: Path) -> None:
+        """Agent-C M5: double-acquire on the same GPUSemaphore instance
+        previously silently dropped the first lock reference (GC releases
+        the fcntl.flock while caller thinks it still holds exclusive
+        access). Fix: raise RuntimeError.
+        """
+        runtime_dir = tmp_path / "_runtime"
+        runtime_dir.mkdir()
+        sem = GPUSemaphore(gpu_id=0, runtime_dir=runtime_dir, timeout_seconds=2.0)
+        sem.acquire()
+        try:
+            with pytest.raises(RuntimeError, match="already held"):
+                sem.acquire()
+        finally:
+            sem.release()
+
+    def test_retry_attempt_counter_propagates_to_result(
+        self, tmp_path: Path
+    ) -> None:
+        """Agent-C H3: retry counter was computed but never propagated
+        to ``WorkerResult.attempt``. All retries reported attempt=1,
+        making sweep_failure_info.attempt inaccurate for diagnosis.
+        Fix: executor stamps ``retry_counts[task_idx] + 1`` onto the
+        final collected result.
+
+        This test uses a task factory that returns a fresh callable
+        on each call — simulating the retry path in run_all.
+        """
+        # Factory that transitions from FAILED/transient → FAILED/fatal
+        # on second attempt. After first attempt fails transient, retry.
+        # Second attempt also fails but with fatal kind — now we stop.
+        # The collected result should have attempt == 2.
+        call_count = {"n": 0}
+
+        def make_transient_then_fatal_task():
+            def work():
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    return WorkerResult(
+                        grid_index=0,
+                        status=WorkerStatus.FAILED,
+                        fingerprint="f" * 64,
+                        axis_values={},
+                        error_kind="oom",  # TRANSIENT
+                        stderr_tail="oom on attempt 1",
+                    )
+                else:
+                    return WorkerResult(
+                        grid_index=0,
+                        status=WorkerStatus.FAILED,
+                        fingerprint="f" * 64,
+                        axis_values={},
+                        error_kind="assertion",  # FATAL
+                        stderr_tail="fatal on attempt 2",
+                    )
+            return work
+
+        executor = WorkerPoolExecutor(
+            max_workers=1,
+            runtime_dir=tmp_path / "_runtime",
+            on_failure_mode=OnFailureMode.RETRY,
+            max_retries=3,
+        )
+        results = executor.run_all([make_transient_then_fatal_task()])
+        assert len(results) == 1
+        # After 1 retry the attempt counter must be 2, not 1.
+        assert results[0].attempt == 2, (
+            f"Retry attempt counter must propagate to WorkerResult. "
+            f"Expected attempt=2 after 1 retry, got {results[0].attempt}"
+        )
+        assert results[0].error_kind == "assertion"
+
+    def test_grid_index_sentinel_replaced_with_real_index(
+        self, tmp_path: Path
+    ) -> None:
+        """Agent-C M3: ``_run_task_safely`` sets grid_index=-1 on
+        uncaught exception because the wrapper can't know the real
+        index. The caller (run_all) knows task_idx — fix: overwrite
+        the sentinel with the real index.
+        """
+        def raising_task():
+            raise AssertionError("boom from task 0")
+
+        executor = WorkerPoolExecutor(
+            max_workers=1,
+            runtime_dir=tmp_path / "_runtime",
+            on_failure_mode=OnFailureMode.CONTINUE,
+            max_retries=0,
+        )
+        results = executor.run_all([raising_task])
+        assert len(results) == 1
+        assert results[0].grid_index == 0, (
+            f"run_all must replace grid_index=-1 sentinel with real "
+            f"task_idx; got {results[0].grid_index}"
+        )
+        assert results[0].status == WorkerStatus.FAILED
+        assert results[0].error_kind == "assertion"
+
+
 class TestResourceSpec:
     def test_resource_spec_default_zero_gpus(self) -> None:
         """Default ResourceSpec must be {gpus=0, cpu_slots=1} —

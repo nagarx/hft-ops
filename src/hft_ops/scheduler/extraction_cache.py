@@ -244,16 +244,30 @@ def populate(
 ) -> Path:
     """Atomically install ``src_output_dir``'s tree into the cache entry.
 
-    Workflow:
+    Workflow (post-audit 2026-04-20 — agent-B H3 race fix):
       1. Copy src_output_dir → ``<cache_root>/<cache_key>.tmp-<pid>/``
-      2. Write ``CACHE_MANIFEST.json`` into the staging dir
-      3. Apply chmod-readonly recursively (files 0o444, dirs 0o555)
-      4. ``os.rename(tmp, <cache_root>/<cache_key>)`` — POSIX-atomic
-         (last-to-rename wins under concurrent same-key populate)
+         with ``symlinks=True`` — PRESERVES symlinks instead of following
+         (agent-B C2 fix: following symlinks would silently cache foreign
+         content). Any symlink in the extractor output is rejected
+         downstream by ``_reject_symlinks_in_tree``.
+      2. ``_reject_symlinks_in_tree(staging)`` — hard-fail if any symlink
+         present. Cache entries must be self-contained.
+      3. ``_build_files_manifest`` hashes every file.
+      4. Write ``CACHE_MANIFEST.json`` (still on 0o644 files + 0o755 dirs).
+      5. ``_chmod_readonly_files_and_subdirs`` — files 0o444 + SUBDIRS
+         0o555 BEFORE rename. The staging ROOT dir stays 0o755 so macOS
+         APFS ``os.rename`` works (renaming a dir requires write access
+         to the dir being renamed). This CLOSES agent-B H3 race: any
+         concurrent ``resolve_or_link`` that observes the renamed entry
+         sees files + subdirs already readonly, so hardlinks to them
+         cannot be mutated by consumer writes.
+      6. ``os.rename(tmp, <cache_root>/<cache_key>)`` — POSIX-atomic.
+      7. Chmod the FINAL_DIR root to 0o555 (closes the last writable-root
+         window).
 
-    PID-suffixed tmp staging prevents collisions when multiple workers
-    race on the same cache_key. Extractor is deterministic under
-    identical CacheKeyInputs, so all winners produce identical content.
+    Concurrent-populate semantics: PID-suffixed tmp staging prevents
+    collisions; last-to-rename wins (extractor is deterministic under
+    identical CacheKeyInputs, so all winners produce identical content).
     """
     cache_root.mkdir(parents=True, exist_ok=True)
     final_dir = cache_root / cache_key
@@ -264,54 +278,99 @@ def populate(
 
     staging_dir = cache_root / f"{cache_key}{_TMP_SUFFIX}-{os.getpid()}"
     if staging_dir.exists():
-        shutil.rmtree(staging_dir)
+        _rm_readonly_tree(staging_dir)
 
-    # Copy full tree (mutable — will chmod-readonly after manifest write)
-    shutil.copytree(src_output_dir, staging_dir)
+    # Step 1: copy with symlinks PRESERVED (not dereferenced). Then reject.
+    # Agent-B C2: default ``shutil.copytree`` dereferences symlinks, which
+    # would silently cache foreign content if the extractor emitted
+    # symlinks (bug / user misconfiguration / malice).
+    shutil.copytree(src_output_dir, staging_dir, symlinks=True)
 
-    # Build + write CACHE_MANIFEST.json in staging BEFORE chmod
-    files_manifest = _build_files_manifest(staging_dir)
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    manifest = {
-        "schema_version": CACHE_MANIFEST_SCHEMA_VERSION,
-        "cache_key": cache_key,
-        "created_at_utc": now_iso,
-        "last_hit_at_utc": now_iso,  # self-hit at creation (LRU seed)
-        "cache_key_inputs": {
-            "extractor_git_sha": cache_key_inputs.extractor_git_sha,
-            "extractor_cargo_lock_sha256": cache_key_inputs.extractor_cargo_lock_sha256,
-            "reconstructor_git_sha": cache_key_inputs.reconstructor_git_sha,
-            "hft_statistics_git_sha": cache_key_inputs.hft_statistics_git_sha,
-            "raw_input_manifest_hash": cache_key_inputs.raw_input_manifest_hash,
-            "compiled_binary_sha256": cache_key_inputs.compiled_binary_sha256,
-            "platform_target": cache_key_inputs.platform_target,
-            "contract_version": cache_key_inputs.contract_version,
-        },
-        "extractor_duration_seconds": extractor_duration_seconds,
-        "files": files_manifest,
-        "status": "active",
-    }
-    atomic_write_json(staging_dir / CACHE_MANIFEST_NAME, manifest)
+    try:
+        # Step 2: hard-fail on any symlink — cache entries are immutable
+        # content-addressed bundles; external links violate that contract.
+        _reject_symlinks_in_tree(staging_dir)
 
-    # Atomic finalize FIRST (while staging is still writable — chmod-readonly
-    # BEFORE rename breaks ``os.rename`` on macOS/APFS because removing
-    # write permission on the directory itself blocks entry-modification
-    # even when the parent is writable).
+        # Step 3: build manifest (hash files, sizes).
+        files_manifest = _build_files_manifest(staging_dir)
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        manifest = {
+            "schema_version": CACHE_MANIFEST_SCHEMA_VERSION,
+            "cache_key": cache_key,
+            "created_at_utc": now_iso,
+            "last_hit_at_utc": now_iso,  # self-hit at creation (LRU seed)
+            "cache_key_inputs": {
+                "extractor_git_sha": cache_key_inputs.extractor_git_sha,
+                "extractor_cargo_lock_sha256": cache_key_inputs.extractor_cargo_lock_sha256,
+                "reconstructor_git_sha": cache_key_inputs.reconstructor_git_sha,
+                "hft_statistics_git_sha": cache_key_inputs.hft_statistics_git_sha,
+                "raw_input_manifest_hash": cache_key_inputs.raw_input_manifest_hash,
+                "compiled_binary_sha256": cache_key_inputs.compiled_binary_sha256,
+                "platform_target": cache_key_inputs.platform_target,
+                "contract_version": cache_key_inputs.contract_version,
+            },
+            "extractor_duration_seconds": extractor_duration_seconds,
+            "files": files_manifest,
+            "status": "active",
+        }
+
+        # Step 4: write manifest (still writable).
+        atomic_write_json(staging_dir / CACHE_MANIFEST_NAME, manifest)
+
+        # Step 5: chmod files + SUBDIRS readonly BEFORE rename. Root stays
+        # 0o755 so os.rename works on macOS APFS. This closes agent-B H3:
+        # concurrent readers that observe the renamed entry find files
+        # already readonly (no hardlink-through-writable-inode hazard).
+        _chmod_readonly_files_and_subdirs(staging_dir)
+    except (CacheError, OSError):
+        # Cleanup staging and re-raise. Agent-B H1: do NOT silently
+        # tolerate chmod / symlink failures.
+        _rm_readonly_tree(staging_dir)
+        raise
+
+    # Step 6: atomic rename.
     try:
         os.rename(staging_dir, final_dir)
     except OSError:
         # Lost the race to another worker (final_dir now exists); clean up
-        # our staging (which is still writable at this point).
-        if staging_dir.exists():
-            shutil.rmtree(staging_dir, ignore_errors=True)
+        # our staging.
+        _rm_readonly_tree(staging_dir)
         return final_dir
 
-    # Apply chmod-readonly AFTER rename so the cache inode itself is locked
-    # (manifest becomes RO too; ``_flip_status_poisoned`` temporarily unlocks
-    # to flip status).
-    _chmod_readonly_recursive(final_dir)
+    # Step 7: chmod root readonly. Race-window from rename→here is narrow
+    # and harmless: concurrent consumers can HARDLINK against the already-
+    # readonly files but can't ADD new files to the cache entry (the final_dir
+    # root mtime is still writable briefly, but adding files doesn't cause
+    # data corruption, only unusual cache entry state).
+    try:
+        os.chmod(final_dir, _READONLY_DIR_MODE)
+    except OSError:
+        logger.warning(
+            "Failed to chmod final cache entry root to readonly: %s. "
+            "Cache entry is populated but root dir is writable; consumers "
+            "cannot mutate files (already readonly) but could add new "
+            "files to the entry dir. Run `hft-ops cache ls` to inspect.",
+            final_dir,
+        )
 
     return final_dir
+
+
+def _reject_symlinks_in_tree(root: Path) -> None:
+    """Raise ``CacheError`` if any entry in the tree is a symlink.
+
+    Cache entries must be self-contained bundles of real files. A symlink
+    in the source would let the cache reference content outside itself,
+    violating the content-addressed-immutable contract.
+    """
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise CacheError(
+                f"Symlink rejected in extractor output: {path} → "
+                f"{os.readlink(path)!r}. Cache entries must be self-"
+                f"contained. Remove the symlink from the extractor output "
+                f"or pass --no-cache-extraction for this run."
+            )
 
 
 def _build_files_manifest(staging_dir: Path) -> List[Dict[str, Any]]:
@@ -336,41 +395,60 @@ def _build_files_manifest(staging_dir: Path) -> List[Dict[str, Any]]:
     return entries
 
 
-def _chmod_readonly_recursive(root: Path) -> None:
-    """Files → 0o444, dirs → 0o555. Applied post-populate before atomic rename."""
+def _chmod_readonly_files_and_subdirs(root: Path) -> None:
+    """Chmod files 0o444 + SUBDIRS 0o555. Staging ROOT is left 0o755 so
+    macOS APFS ``os.rename`` still works. Caller chmods root post-rename.
+
+    Agent-B H1 fix: fail-loud on any chmod error (was ``logger.debug`` →
+    partial-readonly cache entries silently shipped). Caller must catch
+    and cleanup the staging dir.
+    """
+    # Files first (safe — dirs remain writable to allow post-write access)
     for path in root.rglob("*"):
         if path.is_file():
             try:
                 os.chmod(path, _READONLY_FILE_MODE)
-            except OSError:
-                # Non-fatal — symlinks on some platforms can't chmod. Log + continue.
-                logger.debug("chmod(0o444) failed for %s", path)
+            except OSError as exc:
+                raise CacheError(
+                    f"Failed to chmod(0o444) file {path}: {exc}. Cache "
+                    f"populate aborted to prevent writable cache entries."
+                ) from exc
+    # Subdirs in reverse (deepest first) — but skip the root itself.
     for path in sorted(root.rglob("*"), reverse=True):
         if path.is_dir():
             try:
                 os.chmod(path, _READONLY_DIR_MODE)
-            except OSError:
-                logger.debug("chmod(0o555) failed for %s", path)
-    # Root dir itself
-    try:
-        os.chmod(root, _READONLY_DIR_MODE)
-    except OSError:
-        logger.debug("chmod(0o555) failed for %s", root)
+            except OSError as exc:
+                raise CacheError(
+                    f"Failed to chmod(0o555) subdir {path}: {exc}. Cache "
+                    f"populate aborted."
+                ) from exc
 
 
 def _rm_readonly_tree(root: Path) -> None:
-    """Helper: rmtree a chmod-readonly tree (used for cleanup + flip-poisoned)."""
-    # Make everything writable first
+    """Recursively remove a chmod-readonly tree.
+
+    Agent-B H4 fix: was ``shutil.rmtree(root, ignore_errors=True)`` which
+    silently hid failures — subsequent ``populate`` would then try to
+    rename onto a non-empty ``final_dir`` and silently serve stale cache.
+    Now: raise on persistent failure. Caller must handle.
+    """
+    if not root.exists():
+        return
+    # Make everything writable first so rmtree can unlink
     for path in root.rglob("*"):
         try:
             os.chmod(path, 0o777)
         except OSError:
+            # Best-effort — if chmod fails, rmtree may still succeed on
+            # some filesystems. If rmtree fails, we raise below.
             pass
     try:
         os.chmod(root, 0o777)
     except OSError:
         pass
-    shutil.rmtree(root, ignore_errors=True)
+    # Fail-loud: let OSError propagate.
+    shutil.rmtree(root)
 
 
 # ---------------------------------------------------------------------------
@@ -554,7 +632,14 @@ def _validate_cache_entry(
 
 
 def _flip_status_poisoned(cache_dir: Path, manifest: Dict[str, Any]) -> None:
-    """Mark CACHE_MANIFEST.json status=poisoned. Temporarily unlocks RO file."""
+    """Mark CACHE_MANIFEST.json status=poisoned. Temporarily unlocks RO file.
+
+    Agent-B C3 fix: clear ALL SHA-validation memo entries for this
+    cache_dir so subsequent ``_validate_cache_entry`` calls re-check
+    from scratch. Without this, a memo=True entry would persist in the
+    same process, causing the poisoning-detection to be bypassed on the
+    next resolve in the same process.
+    """
     manifest_path = cache_dir / CACHE_MANIFEST_NAME
     try:
         os.chmod(cache_dir, 0o755)
@@ -569,6 +654,16 @@ def _flip_status_poisoned(cache_dir: Path, manifest: Dict[str, Any]) -> None:
             os.chmod(cache_dir, _READONLY_DIR_MODE)
         except OSError:
             pass
+
+    # Invalidate SHA memo for this cache_dir across ALL pids in this
+    # process (agent-B C3). Iterate because the memo is keyed on
+    # (cache_dir_str, cache_key, pid) — we may have entries from this
+    # process only, but if someone else calls us with the same memo
+    # handle, drop everything referencing this dir.
+    cache_dir_str = str(cache_dir)
+    stale_keys = [k for k in _SHA_VALIDATION_MEMO if k[0] == cache_dir_str]
+    for k in stale_keys:
+        _SHA_VALIDATION_MEMO.pop(k, None)
 
 
 def _update_last_hit_opportunistic(cache_dir: Path, manifest: Dict[str, Any]) -> None:
@@ -697,7 +792,32 @@ def _replicate_tree_to_staging(
                 capture_output=True,
                 timeout=60,
             )
-            return "clonefile", _count_files(staging_dir)
+            # Agent-B H2: if src + dst are on different APFS volumes,
+            # ``cp -c -R`` silently degrades to a regular copy (no COW).
+            # Detect by comparing st_dev; WARN + fall through to
+            # hardlink (closer to user intent — single-tenant lock on the
+            # cache inodes) if detected.
+            try:
+                src_dev = os.stat(cache_entry_dir).st_dev
+                dst_dev = os.stat(staging_dir).st_dev
+                if src_dev != dst_dev:
+                    logger.warning(
+                        "clonefile degraded to full copy (cross-volume: "
+                        "src_dev=%s dst_dev=%s). Cache entry was duplicated "
+                        "%d files instead of COW-linked; this defeats cache "
+                        "space efficiency. Consider co-locating cache_root "
+                        "with output_dir on the same APFS volume. Falling "
+                        "through to hardlink strategy (which would fail "
+                        "with EXDEV and land on symlink — matching intent).",
+                        src_dev, dst_dev, _count_files(staging_dir),
+                    )
+                    _rm_readonly_tree(staging_dir)
+                    # Don't return clonefile; fall through to cascade.
+                else:
+                    return "clonefile", _count_files(staging_dir)
+            except OSError:
+                # Can't stat — assume OK and return.
+                return "clonefile", _count_files(staging_dir)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
             logger.debug("clonefile failed, falling through to hardlink: %s", exc)
             if staging_dir.exists():
@@ -1059,26 +1179,37 @@ def _compute_raw_input_manifest_hash(
 ) -> Optional[str]:
     """Hash the databento-ingest manifest.json for the input data.
 
-    Looks up ``[data].input_dir`` (relative to extractor_dir per TOML
-    convention) and reads ``manifest.json`` there.
+    Agent-B C1 fix: previously had a BASENAME-ONLY fallback
+    (``data_dir / Path(input_dir_rel).name / "manifest.json"``) — two
+    configs pointing at ``data/raw/xnas_2025h1`` vs ``data/raw/xnas_2025h2``
+    would collapse to the same fallback path when primary missed, producing
+    a cache-key collision across different raw data. Fallback removed;
+    fail-closed if the primary path cannot be resolved.
+
+    Looks up ``[data].input_dir`` (resolved relative to extractor_dir per
+    TOML convention) and reads ``manifest.json`` there. Returns None on
+    any failure, which causes ``prepare_cache_key_inputs`` to return None
+    too (fail-closed, no caching).
     """
     data_section = resolved_config.get("data", {})
     input_dir_rel = data_section.get("input_dir")
     if not input_dir_rel:
         return None
     # TOML paths are relative to the extractor_dir (that's where the TOML
-    # is loaded from operationally). Fall back to pipeline data_dir if the
-    # relative path escapes upward.
+    # is loaded from operationally).
     candidate = (extractor_dir / input_dir_rel).resolve()
     manifest_path = candidate / "manifest.json"
     if not manifest_path.exists():
-        # Try under pipeline data_dir directly (some configs use relative
-        # paths that resolve there).
-        alt = (data_dir / Path(input_dir_rel).name / "manifest.json")
-        if alt.exists():
-            manifest_path = alt
-        else:
-            return None
+        # Fail-closed — no basename-fallback (would risk cross-directory
+        # collision).
+        logger.warning(
+            "Cache disabled: databento-ingest manifest.json not found at "
+            "%s (resolved from config.data.input_dir=%s). Rerun with "
+            "--no-cache-extraction to skip caching, OR ensure the input "
+            "data has been ingested via databento-ingest.",
+            manifest_path, input_dir_rel,
+        )
+        return None
     try:
         return hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     except OSError:

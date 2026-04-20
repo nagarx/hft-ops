@@ -833,7 +833,12 @@ def check_duplicate(
     # a failed grid point would be silently blocked as "already run".
     # Filter them out so retries run.
     #
+    # Post-audit (agent-C M1): reference the enum value instead of a
+    # string literal so a future rename of RecordType.SWEEP_FAILURE
+    # breaks the filter at import-time rather than silently shipping.
+    #
     # Locked by ``test_scheduler_parallel.py::TestDedupSkipsSweepFailure``.
-    if entry is not None and entry.get("record_type") == "sweep_failure":
+    from hft_contracts.experiment_record import RecordType
+    if entry is not None and entry.get("record_type") == RecordType.SWEEP_FAILURE.value:
         return None
     return entry

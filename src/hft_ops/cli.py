@@ -28,7 +28,7 @@ from hft_ops.config import OpsConfig
 from hft_ops.ledger.comparator import compare_experiments, diff_experiments
 from hft_ops.ledger.dedup import check_duplicate, compute_fingerprint
 from hft_ops.ledger.experiment_record import ExperimentRecord
-from hft_ops.ledger.ledger import ExperimentLedger
+from hft_ops.ledger.ledger import ExperimentLedger, StaleLedgerIndexError
 from hft_ops.manifest.loader import load_manifest
 from hft_ops.manifest.validator import (
     apply_resolved_context,
@@ -107,6 +107,44 @@ def _summarize_training_history(history: list) -> dict:
         summary["r_squared"] = summary["best_val_r2"]
 
     return summary
+
+
+def _construct_ledger_or_exit(
+    ledger_dir: "Path",
+    *,
+    strict_index: Optional[bool] = None,
+) -> "ExperimentLedger":
+    """Phase 8B post-audit (agent-A CRITICAL) — canonical ledger-construction
+    helper that converts ``StaleLedgerIndexError`` into a formatted CLI
+    error + ``sys.exit(2)``, instead of leaking an unhandled traceback.
+
+    Previously, every ``ExperimentLedger(paths.ledger_dir)`` call site
+    could crash under strict mode (``HFT_OPS_STRICT_INDEX=1`` or
+    ``CI=true``) when the on-disk envelope version differed from the
+    code-side ``INDEX_SCHEMA_VERSION``. That surfaced as a Python
+    traceback to operators, obscuring the actionable recovery hint
+    (``hft-ops ledger rebuild-index``).
+
+    This helper centralizes the exception handling. Every CLI subcommand
+    that constructs a ledger should use this helper, NOT the raw class
+    constructor.
+
+    Pass ``strict_index=False`` in `rebuild-index` (the recovery
+    command must never be gated on the condition it is meant to fix).
+    """
+    try:
+        return ExperimentLedger(ledger_dir, strict_index=strict_index)
+    except StaleLedgerIndexError as exc:
+        console.print(
+            f"[red bold]Stale ledger index (strict mode):[/red bold] {exc}"
+        )
+        console.print(
+            "[yellow]Recovery: run [bold]hft-ops ledger rebuild-index[/bold] "
+            "(that command bypasses strict mode internally), OR "
+            "unset [bold]HFT_OPS_STRICT_INDEX[/bold] / [bold]CI[/bold] "
+            "env vars to auto-rebuild on next load.[/yellow]"
+        )
+        sys.exit(2)
 
 
 def _resolve_pipeline_root(ctx_root: Optional[str]) -> Path:
@@ -503,7 +541,7 @@ def _record_experiment(
         stages_completed=stages_completed,
     )
 
-    ledger = ExperimentLedger(paths.ledger_dir)
+    ledger = _construct_ledger_or_exit(paths.ledger_dir)
     ledger.register(record)
 
     console.print(f"[green]Registered: {experiment_id}[/green]")
@@ -564,7 +602,7 @@ def compare(
     """Compare experiments by metrics."""
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
-    ledger = ExperimentLedger(paths.ledger_dir)
+    ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     tags = filter_tags.split(",") if filter_tags else None
     entries = ledger.filter(tags=tags) if tags else ledger.list_all()
@@ -620,7 +658,7 @@ def diff(ctx: click.Context, id_a: str, id_b: str) -> None:
     """Show detailed diff between two experiments."""
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
-    ledger = ExperimentLedger(paths.ledger_dir)
+    ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     record_a = ledger.get(id_a)
     record_b = ledger.get(id_b)
@@ -711,7 +749,10 @@ def ledger_rebuild_index(ctx: click.Context, dry_run: bool) -> None:
     n_records_on_disk = len(list(records_dir.glob("*.json")))
 
     # Open existing ledger to capture the pre-rebuild index size.
-    ledger = ExperimentLedger(ledger_dir)
+    # rebuild-index bypasses strict mode (agent-A CRITICAL fix) — this
+    # command is the OFFICIAL recovery path, so gating it on the same
+    # strict check it is meant to fix would create a chicken-and-egg.
+    ledger = _construct_ledger_or_exit(ledger_dir, strict_index=False)
     old_index_len = len(ledger._index)
 
     if dry_run:
@@ -807,7 +848,7 @@ def ledger_list(
     """List all experiments in the ledger."""
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
-    exp_ledger = ExperimentLedger(paths.ledger_dir)
+    exp_ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     entries = exp_ledger.filter(status=status, model_type=model_type)
 
@@ -846,7 +887,7 @@ def ledger_show(ctx: click.Context, experiment_id: str) -> None:
     """Show full details of an experiment."""
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
-    exp_ledger = ExperimentLedger(paths.ledger_dir)
+    exp_ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     record = exp_ledger.get(experiment_id)
     if record is None:
@@ -907,7 +948,7 @@ def ledger_search(
     """Search experiments by criteria."""
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
-    exp_ledger = ExperimentLedger(paths.ledger_dir)
+    exp_ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     tag_list = tags.split(",") if tags else None
     entries = exp_ledger.filter(
@@ -1003,7 +1044,7 @@ def ledger_backfill(
 
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
-    exp_ledger = ExperimentLedger(paths.ledger_dir)
+    exp_ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     manifest = _load_manifest(Path(manifest_path))
 
@@ -1481,7 +1522,7 @@ def sweep_run(
         record_id = _record_experiment(exp, paths, fingerprint, results, point_duration)
 
         # Update the record with sweep metadata
-        ledger = ExperimentLedger(paths.ledger_dir)
+        ledger = _construct_ledger_or_exit(paths.ledger_dir)
         record = ledger.get(record_id)
         if record:
             record.sweep_id = sweep_id
@@ -1544,7 +1585,7 @@ def sweep_run(
             failed=failed,
         )
         # Rebuild index so the aggregate record is visible to ledger.filter.
-        ExperimentLedger(paths.ledger_dir)._rebuild_index()
+        _construct_ledger_or_exit(paths.ledger_dir, strict_index=False)._rebuild_index()
 
     # Summary
     console.print(f"\n[bold]{'='*60}[/bold]")
@@ -1574,7 +1615,7 @@ def sweep_results(
     """Show comparison of all experiments in a sweep."""
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
-    ledger = ExperimentLedger(paths.ledger_dir)
+    ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     entries = ledger.filter(sweep_id=sweep_id)
 

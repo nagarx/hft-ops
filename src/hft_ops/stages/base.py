@@ -111,6 +111,14 @@ def run_subprocess(
     bypass-detection in trainer/backtester scripts (Phase 1.4 deprecation
     warnings) suppresses the warning when the script runs under hft-ops.
 
+    Phase 8A.1 Part 1 post-audit (agent-C H4 fix): routes through
+    ``subprocess.Popen`` + ``subprocess_pid_tracker`` so the scheduler
+    SIGINT cascade can SIGTERM cargo/lobtrainer/lobbacktest subprocesses
+    on Ctrl-C. Previously ``subprocess.run`` was opaque to the tracker
+    and the SIGINT cascade would find an empty tracker set (iterating
+    over zero PIDs — silent no-op). This helper preserves the original
+    API signature but tracks the Popen PID for the duration of the call.
+
     Args:
         cmd: Command and arguments.
         cwd: Working directory.
@@ -126,27 +134,46 @@ def run_subprocess(
         subprocess.TimeoutExpired: If timeout is exceeded.
     """
     import os
-
-    kwargs: Dict[str, Any] = {
-        "cwd": str(cwd),
-        "text": True,
-        "timeout": timeout_seconds,
-    }
+    from hft_ops.scheduler.signal_handler import subprocess_pid_tracker
 
     # Always inject the orchestrated marker so trainer scripts (and any other
     # bypass-detecting scripts) know they are running under hft-ops.
     full_env = {**os.environ, "HFT_OPS_ORCHESTRATED": "1"}
     if env is not None:
         full_env.update(env)
-    kwargs["env"] = full_env
 
+    popen_kwargs: Dict[str, Any] = {
+        "cwd": str(cwd),
+        "text": True,
+        "env": full_env,
+    }
     if verbose:
-        kwargs["stdout"] = None
-        kwargs["stderr"] = None
+        # Stream to parent's stdout/stderr — no capture.
+        popen_kwargs["stdout"] = None
+        popen_kwargs["stderr"] = None
     else:
-        kwargs["capture_output"] = True
+        popen_kwargs["stdout"] = subprocess.PIPE
+        popen_kwargs["stderr"] = subprocess.PIPE
 
-    return subprocess.run(cmd, **kwargs)
+    # Phase 8A.1 Part 1 post-audit: track PID for SIGINT cascade.
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+    subprocess_pid_tracker.track(proc.pid)
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            raise
+    finally:
+        subprocess_pid_tracker.untrack(proc.pid)
+
+    return subprocess.CompletedProcess(
+        args=cmd,
+        returncode=proc.returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
 
 
 def _tail(text: str, max_lines: int = _MAX_CAPTURED_LINES) -> str:

@@ -520,6 +520,36 @@ class TestIndexSchemaNeedsRebuildHelper:
 
         assert _index_schema_needs_rebuild("2.0.0")
 
+    def test_load_index_robust_against_non_dict_schema_field(
+        self, tmp_path: Path
+    ) -> None:
+        """Post-audit agent-A HIGH-1: if on-disk index.json has a
+        ``schema`` field that is NOT a dict (e.g., user hand-edit to
+        ``{"schema": "1.0.0", "entries": []}``), the previous
+        ``data.get("schema", {}).get("version")`` would raise
+        AttributeError — uncaught, crashing __init__ with a raw
+        traceback, bypassing both auto-rebuild and strict-mode.
+        Fix: defensive ``isinstance(schema_field, dict)`` check.
+        """
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        records_dir = ledger_dir / "records"
+        records_dir.mkdir()
+        # Write malformed schema-as-string envelope
+        idx_path = ledger_dir / "index.json"
+        idx_path.write_text('{"schema": "1.0.0", "entries": []}')
+
+        # Must NOT raise AttributeError; must gracefully route to
+        # rebuild path (or strict-mode StaleLedgerIndexError).
+        import json as _json
+        from hft_ops.ledger.ledger import ExperimentLedger
+        ledger = ExperimentLedger(ledger_dir)  # non-strict → rebuild
+        # After rebuild the envelope now has a proper dict schema
+        data = _json.loads((ledger_dir / "index.json").read_text())
+        assert isinstance(data.get("schema"), dict), (
+            "Rebuild must produce a proper dict schema envelope"
+        )
+
     def test_unparseable_version_triggers_rebuild(self) -> None:
         """Fail-safe: unrecognised / missing version forces rebuild."""
         from hft_ops.ledger.ledger import _index_schema_needs_rebuild

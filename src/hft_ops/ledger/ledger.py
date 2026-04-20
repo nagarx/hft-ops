@@ -181,7 +181,20 @@ class ExperimentLedger:
         if isinstance(data, dict) and "entries" in data and isinstance(
             data["entries"], list
         ):
-            on_disk_version = data.get("schema", {}).get("version")
+            # Agent-A HIGH-1 fix (post-audit 2026-04-20): the previous
+            # implementation did ``data.get("schema", {}).get("version")``
+            # which crashes with AttributeError if ``data["schema"]`` is
+            # not a dict (e.g., ``{"schema": "1.0.0", "entries": []}`` —
+            # schema as string from a manual hand-edit / corrupt write).
+            # The AttributeError would propagate to ``__init__`` as a
+            # raw traceback, bypassing both the auto-rebuild and strict-
+            # mode paths — defeating the 4-branch detection contract.
+            # Now: coerce defensively.
+            schema_field = data.get("schema")
+            if isinstance(schema_field, dict):
+                on_disk_version = schema_field.get("version")
+            else:
+                on_disk_version = None
             if isinstance(on_disk_version, str) and not _index_schema_needs_rebuild(
                 on_disk_version
             ):
@@ -189,17 +202,19 @@ class ExperimentLedger:
                 self._index = data["entries"]
                 # Preserve the prior rebuild source for forensics (don't
                 # overwrite with "initial" just because load succeeded).
-                self._last_rebuild_source = data.get("schema", {}).get(
-                    "last_rebuild_source", self._last_rebuild_source
-                )
+                if isinstance(schema_field, dict):
+                    self._last_rebuild_source = schema_field.get(
+                        "last_rebuild_source", self._last_rebuild_source
+                    )
                 return
-            # Version mismatch (or missing version field) — rebuild or
-            # fail-fast under strict mode.
+            # Version mismatch (or missing/malformed version field) — rebuild
+            # or fail-fast under strict mode.
             self._handle_stale_index_or_rebuild(
                 source=f"auto_version_mismatch_{on_disk_version}",
                 detail=(
-                    f"on-disk schema version {on_disk_version!r} differs "
-                    f"from code INDEX_SCHEMA_VERSION={INDEX_SCHEMA_VERSION!r}"
+                    f"on-disk schema version {on_disk_version!r} (raw schema="
+                    f"{schema_field!r}) differs from code "
+                    f"INDEX_SCHEMA_VERSION={INDEX_SCHEMA_VERSION!r}"
                 ),
             )
             return

@@ -108,7 +108,21 @@ class GPUSemaphore:
         self._lock: Optional[filelock.FileLock] = None
 
     def acquire(self) -> None:
-        """Acquire the GPU lock or raise filelock.Timeout."""
+        """Acquire the GPU lock or raise filelock.Timeout.
+
+        Post-audit (agent-C M5): fail-loud on double-acquire. Previously,
+        calling acquire twice silently reassigned ``self._lock``,
+        dropping the first lock reference — the first lock would be
+        garbage-collected (releasing its fcntl.flock) while the caller
+        still thought it held exclusive access. Now: double-acquire
+        raises ``RuntimeError``.
+        """
+        if self._lock is not None:
+            raise RuntimeError(
+                f"GPUSemaphore(gpu_id={self.gpu_id}) already held; "
+                f"release before re-acquiring. Re-entrant acquire is "
+                f"not supported."
+            )
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         self._lock = filelock.FileLock(str(self.lock_path))
         self._lock.acquire(timeout=self.timeout_seconds)

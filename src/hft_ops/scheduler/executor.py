@@ -324,6 +324,25 @@ class WorkerPoolExecutor:
                             stderr_tail=str(exc)[:4096],
                         )
 
+                    # Agent-C M3 fix: `_run_task_safely` sets grid_index=-1
+                    # on uncaught exceptions to avoid referencing an unknown
+                    # task. The caller knows the actual task_idx; patch it
+                    # up here so downstream sweep_failure records carry the
+                    # real grid_index for diagnosis.
+                    if result.grid_index == -1:
+                        result.grid_index = task_idx
+
+                    # Agent-C H3 fix: propagate retry-attempt count into
+                    # the collected result. Was: the retry path logged the
+                    # computed ``attempt`` but never wrote it to the
+                    # re-submitted task's WorkerResult, so every retried
+                    # task reported attempt=1. Now: we stamp attempt=
+                    # prior_retries + 1 onto BOTH the in-retry-flight
+                    # result (never collected) AND the final collected
+                    # result (post-all-retries-exhausted path).
+                    if task_idx in retry_counts:
+                        result.attempt = retry_counts[task_idx] + 1
+
                     # Retry logic (transient failures only)
                     if (
                         result.status == WorkerStatus.FAILED

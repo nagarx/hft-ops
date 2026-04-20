@@ -463,6 +463,116 @@ class TestSkipIfExistsCollision:
         assert not (legacy_output / CACHE_SIDECAR_NAME).exists()
 
 
+class TestPostAuditFixes:
+    """Post-audit regression guards for the 4-agent validation pass
+    (2026-04-20). Each test locks one CRITICAL/HIGH finding's fix.
+    """
+
+    def test_symlinks_in_extractor_output_are_rejected(
+        self, tmp_path: Path, cache_root: Path, cache_key_inputs: CacheKeyInputs
+    ):
+        """Agent-B C2: ``shutil.copytree`` default follows symlinks →
+        populate would silently cache whatever the symlink pointed to.
+        Fix: copytree with ``symlinks=True`` (preserves symlinks) THEN
+        ``_reject_symlinks_in_tree`` hard-fails. This test locks the
+        fail-loud behavior.
+        """
+        # Create synthetic export with a symlink
+        export_dir = tmp_path / "malicious_export"
+        export_dir.mkdir()
+        (export_dir / "real_file.txt").write_text("ok")
+        (export_dir / "symlink.txt").symlink_to(export_dir / "real_file.txt")
+
+        from hft_ops.scheduler.extraction_cache import CacheError
+
+        key = compute_cache_key(cache_key_inputs)
+        with pytest.raises(CacheError, match="Symlink rejected"):
+            populate(
+                key, export_dir, cache_root,
+                extractor_duration_seconds=1.0,
+                cache_key_inputs=cache_key_inputs,
+            )
+        # Staging dir must be cleaned up — no orphan `<key>.tmp-<pid>/`
+        tmp_candidates = list(cache_root.glob(f"{key}.tmp*"))
+        assert not tmp_candidates, (
+            f"Symlink rejection must clean up staging; found: {tmp_candidates}"
+        )
+        # Final dir must NOT exist (populate aborted before rename)
+        assert not (cache_root / key).exists()
+
+    def test_sha_memo_invalidated_on_poisoning(
+        self,
+        tmp_path: Path,
+        cache_root: Path,
+        synthetic_export: Path,
+        cache_key_inputs: CacheKeyInputs,
+    ):
+        """Agent-B C3: without memo invalidation, a cache entry that
+        successfully validated (memo=True) and then was corrupted in the
+        same process would still report ``status=hit`` because the memo
+        says "already valid". Fix: ``_flip_status_poisoned`` drops the
+        memo entry for that cache_dir.
+        """
+        from hft_ops.scheduler.extraction_cache import (
+            _SHA_VALIDATION_MEMO,
+            _flip_status_poisoned,
+        )
+
+        key = compute_cache_key(cache_key_inputs)
+        populate(
+            key, synthetic_export, cache_root,
+            extractor_duration_seconds=10.0,
+            cache_key_inputs=cache_key_inputs,
+        )
+        cache_dir = cache_root / key
+
+        # First resolve → memo records True
+        output_dir = tmp_path / "first"
+        outcome = resolve_or_link(key, output_dir, cache_root)
+        assert outcome.status == "hit"
+
+        memo_key = (str(cache_dir), key, os.getpid())
+        assert _SHA_VALIDATION_MEMO.get(memo_key) is True
+
+        # Flip to poisoned — memo must be cleared
+        manifest_path = cache_dir / "CACHE_MANIFEST.json"
+        manifest = json.loads(manifest_path.read_text())
+        _flip_status_poisoned(cache_dir, manifest)
+        assert memo_key not in _SHA_VALIDATION_MEMO, (
+            "Memo must be invalidated on poisoning — otherwise a "
+            "stale True memo causes _validate_cache_entry to skip "
+            "re-validation on subsequent resolves in the same process."
+        )
+
+    def test_raw_input_manifest_missing_returns_none_no_fallback(
+        self, tmp_path: Path
+    ):
+        """Agent-B C1: previously had a basename-only fallback that
+        collapsed different input_dirs with the same basename to the
+        SAME fallback manifest path → cache-key collision. Fix: no
+        fallback. Fail-closed when primary path is missing.
+        """
+        from hft_ops.scheduler.extraction_cache import (
+            _compute_raw_input_manifest_hash,
+        )
+
+        extractor_dir = tmp_path / "feature-extractor-MBO-LOB"
+        extractor_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        # Neither the primary (input_dir) nor the would-be fallback exists
+        resolved_config = {"data": {"input_dir": "../data/raw/nonexistent"}}
+
+        result = _compute_raw_input_manifest_hash(
+            resolved_config, data_dir=data_dir, extractor_dir=extractor_dir
+        )
+        assert result is None, (
+            "Must return None when manifest.json cannot be found at the "
+            "primary input_dir path — NO basename-only fallback (that "
+            "caused cache-key collision across different raw data dirs)."
+        )
+
+
 class TestGarbageCollectionLRU:
     def test_gc_lru_by_last_hit_with_size_budget(
         self,
