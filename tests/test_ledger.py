@@ -496,13 +496,13 @@ class TestIndexSchemaNeedsRebuildHelper:
     def test_patch_diff_no_rebuild(self) -> None:
         """PATCH-only diff is reserved for docstring changes; no rebuild.
 
-        Phase 8A.1 (2026-04-20) bumped code-side to "1.2.0", so this
-        test now uses "1.2.99" (same MAJOR.MINOR, differing PATCH) to
+        Phase 8C-α Stage C.2 (2026-04-20) bumped code-side to "1.3.0", so
+        this test uses "1.3.99" (same MAJOR.MINOR, differing PATCH) to
         preserve the PATCH-invariance contract.
         """
         from hft_ops.ledger.ledger import _index_schema_needs_rebuild
 
-        assert not _index_schema_needs_rebuild("1.2.99")
+        assert not _index_schema_needs_rebuild("1.3.99")
 
     def test_minor_diff_triggers_rebuild(self) -> None:
         """MINOR diff is the default whitelist-extension trigger.

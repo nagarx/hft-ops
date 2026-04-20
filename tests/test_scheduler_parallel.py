@@ -215,15 +215,19 @@ class TestSweepFailureRecordShape:
         assert projection["sweep_failure_info"]["attempt"] == 2
         assert projection["sweep_failure_info"]["transient"] is True
 
-    def test_index_schema_version_bumped_to_1_2(self) -> None:
-        """INDEX_SCHEMA_VERSION must be 1.2.0 after Phase 8A.1 ships.
-        Phase 8A.0 left it at 1.1.0; this phase bumps MINOR for the
-        additive sweep_failure_info projection.
+    def test_index_schema_version_bumped_to_1_2_or_later(self) -> None:
+        """Phase 8A.1 bumped INDEX_SCHEMA_VERSION to 1.2.0 (sweep_failure_info).
+        Phase 8C-α C.2 bumped to 1.3.0 (artifacts[] / artifact_kinds).
+
+        This test accepts any ≥ 1.2.0 version so additive bumps don't
+        retro-break it. The golden-key-set test in
+        ``hft-contracts/tests/test_experiment_record.py`` is the
+        precise-version gate.
         """
-        assert INDEX_SCHEMA_VERSION == "1.2.0", (
-            f"Phase 8A.1 must bump INDEX_SCHEMA_VERSION to 1.2.0 "
-            f"(was {INDEX_SCHEMA_VERSION}). MINOR bump for additive "
-            f"sweep_failure_info field in index_entry() projection."
+        from packaging.version import Version
+        assert Version(INDEX_SCHEMA_VERSION) >= Version("1.2.0"), (
+            f"Phase 8A.1 required ≥ 1.2.0 for sweep_failure_info. "
+            f"Got {INDEX_SCHEMA_VERSION}."
         )
 
 
