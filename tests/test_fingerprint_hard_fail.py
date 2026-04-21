@@ -20,10 +20,16 @@ from hft_ops.ledger.dedup import (
     _cached_resolve_feature_set_indices,
     FingerprintNormalizationError,
 )
+from hft_contracts._testing import require_monorepo_root
 from hft_ops.manifest.loader import load_manifest
 from hft_ops.paths import PipelinePaths
 
-_REAL_PIPELINE_ROOT = Path(__file__).resolve().parents[2]
+# Monorepo root via SSoT helper (Phase V.A.0). Resolution to trainer
+# merge.py is required because fingerprint hard-fail tests invoke
+# resolve_inheritance through PipelinePaths.
+_REAL_PIPELINE_ROOT = require_monorepo_root(
+    "lob-model-trainer/src/lobtrainer/config/merge.py",
+)
 
 
 @pytest.fixture(autouse=True)

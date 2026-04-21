@@ -25,16 +25,19 @@ from typing import Any, Dict
 import pytest
 import yaml
 
+from hft_contracts._testing import require_monorepo_root
 from hft_ops.ledger.dedup import compute_fingerprint
 from hft_ops.manifest.loader import load_manifest
 from hft_ops.paths import PipelinePaths
 
 
-# The REAL pipeline root — same machine, real trainer merge.py available.
-_REAL_PIPELINE_ROOT = Path(__file__).resolve().parents[2]
-
-assert (_REAL_PIPELINE_ROOT / "lob-model-trainer" / "src" / "lobtrainer" / "config" / "merge.py").exists(), (
-    "This test requires the real trainer merge.py to exist; run from the monorepo root."
+# Monorepo root resolved via the SSoT helper. Skips the entire test file
+# cleanly (module-level) when the monorepo layout is absent — i.e., when
+# hft-ops is checked out standalone on CI without the `lob-model-trainer`
+# sibling. Phase V.A.0 replaced the prior `parents[2]` + bare `assert`
+# pattern that produced collection ERRORs under standalone checkout.
+_REAL_PIPELINE_ROOT = require_monorepo_root(
+    "lob-model-trainer/src/lobtrainer/config/merge.py",
 )
 
 

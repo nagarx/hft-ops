@@ -94,7 +94,15 @@ jobs:
         # Phase 8C-α Integration Close-Out stamp. With hft-feature-evaluator
         # sibling-installed, the previously 5 env-dependent test_validation_stage
         # failures should now pass (fast_gate imports resolve).
-        run: pytest -q --tb=short
+        #
+        # `--ignore=_deps` prevents pytest from recursing into sibling-repo
+        # checkouts (hft-contracts has its own `tests/test_provenance.py`
+        # which would basename-collide with `hft-ops/tests/test_provenance.py`
+        # during pytest's rootdir discovery, producing an `import file
+        # mismatch` error. Sibling checkouts are installed via `pip install
+        # -e _deps/...` above so Python imports work; their test files are
+        # not ours to run.
+        run: pytest -q --tb=short --ignore=_deps
 
       - name: Lint (non-blocking)
         continue-on-error: true

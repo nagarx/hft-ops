@@ -22,12 +22,18 @@ from typing import Any, Dict
 import pytest
 import yaml
 
+from hft_contracts._testing import require_monorepo_root
 from hft_ops.ledger.dedup import compute_fingerprint, compute_fingerprint_explain
 from hft_ops.manifest.loader import load_manifest
 from hft_ops.paths import PipelinePaths
 
 
-_REAL_PIPELINE_ROOT = Path(__file__).resolve().parents[2]
+# Monorepo root via SSoT helper (Phase V.A.0). Signal-export/backtest
+# fingerprint tests drive resolve_inheritance via PipelinePaths — skip
+# cleanly on standalone checkouts where trainer sibling is absent.
+_REAL_PIPELINE_ROOT = require_monorepo_root(
+    "lob-model-trainer/src/lobtrainer/config/merge.py",
+)
 
 
 # -----------------------------------------------------------------------------

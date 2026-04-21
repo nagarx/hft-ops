@@ -26,12 +26,20 @@ from hft_ops.ledger.dedup import (
     _cached_resolve_feature_set_indices,
     compute_fingerprint,
 )
+from hft_contracts._testing import require_monorepo_root
 from hft_ops.manifest.loader import load_manifest
 from hft_ops.manifest.sweep import expand_sweep, expand_sweep_with_axis_values
 from hft_ops.paths import PipelinePaths
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+# Monorepo root via SSoT helper (Phase V.A.0). The sweep fingerprint
+# integration tests exercise real production sweep templates shipped
+# under hft-ops/experiments/sweeps/ — skip cleanly in standalone
+# checkouts where the sweep template file or trainer sibling is absent.
+_REPO_ROOT = require_monorepo_root(
+    "lob-model-trainer/src/lobtrainer/config/merge.py",
+    "hft-ops/experiments/sweeps/e5_phase2_sweep.yaml",
+)
 _SWEEP_PATH = (
     _REPO_ROOT / "hft-ops" / "experiments" / "sweeps" / "e5_phase2_sweep.yaml"
 )

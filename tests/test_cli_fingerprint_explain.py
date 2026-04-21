@@ -20,11 +20,18 @@ from click.testing import CliRunner
 from hft_ops.cli import main
 from hft_ops.feature_sets.schema import FeatureSet, FeatureSetAppliesTo, FeatureSetProducedBy
 from hft_ops.feature_sets.writer import write_feature_set
+from hft_contracts._testing import require_monorepo_root
 from hft_ops.ledger.dedup import _cached_resolve_feature_set_indices
 from hft_ops.paths import PipelinePaths
 
 
-_REAL_PIPELINE_ROOT = Path(__file__).resolve().parents[2]
+# Monorepo root via SSoT helper (Phase V.A.0). CLI fingerprint-explain
+# tests pass `--pipeline-root <root>` to hft-ops subcommands, which in
+# turn resolve trainer config inheritance — skip cleanly in standalone
+# checkouts where the trainer sibling is absent.
+_REAL_PIPELINE_ROOT = require_monorepo_root(
+    "lob-model-trainer/src/lobtrainer/config/merge.py",
+)
 
 
 @pytest.fixture(autouse=True)

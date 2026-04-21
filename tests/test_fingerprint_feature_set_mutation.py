@@ -32,15 +32,16 @@ from hft_ops.ledger.dedup import (
     _TRAINER_FEATURE_PRESETS_MODULE_CACHE,
 )
 from hft_ops.feature_sets.schema import FeatureSet, FeatureSetAppliesTo, FeatureSetProducedBy
+from hft_contracts._testing import require_monorepo_root
 from hft_ops.feature_sets.writer import write_feature_set
 from hft_ops.manifest.loader import load_manifest
 from hft_ops.paths import PipelinePaths
 
 
-_REAL_PIPELINE_ROOT = Path(__file__).resolve().parents[2]
-
-assert (_REAL_PIPELINE_ROOT / "lob-model-trainer" / "src" / "lobtrainer" / "config" / "merge.py").exists(), (
-    "Tests require the real trainer merge.py — run from the monorepo root."
+# Monorepo root via SSoT helper (Phase V.A.0). Skips module-level on
+# standalone-clone environments where the trainer sibling is absent.
+_REAL_PIPELINE_ROOT = require_monorepo_root(
+    "lob-model-trainer/src/lobtrainer/config/merge.py",
 )
 
 
