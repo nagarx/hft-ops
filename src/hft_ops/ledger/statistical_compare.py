@@ -142,7 +142,17 @@ def _resolve_signal_dir(
     stored_sig_dir = getattr(full_record, "signal_export_output_dir", None)
     if isinstance(stored_sig_dir, str) and stored_sig_dir:
         candidate = Path(stored_sig_dir)
-        if candidate.exists():
+        # V.1 Phase-V.2 audit Agent 3 Q5 defensive fix (2026-04-21): use
+        # `is_dir()` not `exists()` — `exists()` returns True for regular
+        # files too, which would make a mis-written `signal_export_output_dir`
+        # pointing to a FILE (not a directory) pass through. Downstream
+        # `_load_record_signals` would then try `sig_dir / "regression_labels.npy"`
+        # producing an opaque nested-path FileNotFoundError rather than the
+        # actionable resolver error. `is_dir()` is stricter: only a real
+        # directory (or a symlink that resolves to a directory) passes.
+        # Cheap hardening against manual-edit / future-refactor regression,
+        # per hft-rules §8 "validate inputs at system boundaries."
+        if candidate.is_dir():
             return candidate
         # Captured path exists on record but directory was removed — fall
         # through to manifest re-resolution in case the manifest points

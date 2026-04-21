@@ -1794,6 +1794,19 @@ def sweep_results(
     show_default=True,
     help="Random seed for bootstrap reproducibility.",
 )
+@click.option(
+    "--max-drop-frac",
+    type=float,
+    default=None,
+    help=(
+        "V.1 L1.3 (Phase V.1 post-audit 2026-04-21) NaN-row drop threshold. "
+        "Default (None) uses module DEFAULT_MAX_DROP_FRAC=0.05 (5%%) — "
+        "aborts with per-record breakdown when non-finite rows in x/Y "
+        "exceed 5%% of total. Pass 1.0 to disable the guard (not "
+        "recommended; bypasses hft-rules §8 silent-drop guard). "
+        "Pass 0.0 to abort on ANY non-finite row (strict mode)."
+    ),
+)
 @click.pass_context
 def sweep_compare(
     ctx: click.Context,
@@ -1803,6 +1816,7 @@ def sweep_compare(
     n_bootstraps: int,
     block_length: Optional[int],
     seed: int,
+    max_drop_frac: Optional[float],
 ) -> None:
     """Paired pairwise-bootstrap significance table for a sweep's child records.
 
@@ -1837,6 +1851,15 @@ def sweep_compare(
         )
         sys.exit(1)
 
+    # V.1 Phase-V.2 audit C4 (2026-04-21): surface `max_drop_frac` as a
+    # CLI flag. Default None → forward the module-level
+    # `DEFAULT_MAX_DROP_FRAC=0.05` to the adapter. Explicit values pass
+    # through. Per hft-rules §5 "full override capability" + §11
+    # "documented parameter ranges."
+    from hft_ops.ledger.statistical_compare import DEFAULT_MAX_DROP_FRAC
+    effective_max_drop_frac = (
+        max_drop_frac if max_drop_frac is not None else DEFAULT_MAX_DROP_FRAC
+    )
     try:
         results, labels, diag = compare_sweep_statistical(
             entries,
@@ -1847,6 +1870,7 @@ def sweep_compare(
             n_bootstraps=n_bootstraps,
             block_length=block_length,
             seed=seed,
+            max_drop_frac=effective_max_drop_frac,
         )
     except ValueError as err:
         console.print(f"[red]sweep compare failed:[/red] {err}")

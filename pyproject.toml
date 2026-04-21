@@ -25,12 +25,15 @@ dependencies = [
     # `pairwise_paired_bootstrap_compare` + `benjamini_hochberg_qvalues`,
     # consumed by `hft_ops.ledger.statistical_compare.compare_sweep_statistical`
     # (the backing function for `hft-ops sweep compare`). Pin bumped to
-    # >=0.1.6 after v0.1.5 post-audit surfaced a tail-padding bias + weak
-    # degenerate-null guard in `pairwise_paired_bootstrap_compare`; v0.1.6
-    # patch fixes both (see hft-metrics CHANGELOG [0.1.6] entry). numpy
-    # pulled in transitively through hft-metrics (leaf package with
-    # numpy>=1.24).
-    "hft-metrics>=0.1.6",
+    # >=0.1.7 after Phase V.1 post-audit (Agent 2 H1 + Agent 4 H2 + Agent 5
+    # MED): the CLI `sweep_compare` at cli.py renders the per-pair
+    # `r.n_nonfinite_replaced` column (v0.1.7 L3.1 observability field).
+    # An operator on a v0.1.6-only install would hit AttributeError at
+    # CLI render time. The previous `>=0.1.6` pin closed the v0.1.5 CRITICAL
+    # tail-padding bug-fix gap but left this v0.1.7 consumer-contract gap
+    # open; tightening to `>=0.1.7` closes both. numpy pulled in
+    # transitively through hft-metrics (leaf package with numpy>=1.24).
+    "hft-metrics>=0.1.7",
 ]
 
 [project.optional-dependencies]
