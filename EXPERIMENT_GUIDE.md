@@ -101,6 +101,116 @@ python3 scripts/validate_manifest.py experiments/nvda_hmhp_40feat_xnas_h10.yaml
 
 ---
 
+## Sweep Compare — Pairwise-Bootstrap Significance (Phase V.B.4b, 2026-04-21)
+
+Answer the research question **"is treatment A significantly better than
+treatment B?"** for any sweep whose child records share test-split labels.
+
+### When to use
+
+Every multi-treatment sweep run (e.g., `seed_stability.yaml`,
+`loss_ablation.yaml`, any `model_family_*.yaml` template). The tool
+consumes each child record's paired `(regression_labels.npy,
+predicted_returns.npy)` signal files, verifies byte-identical paired
+structure via SHA-256, and invokes the hft-metrics paired
+moving-block-bootstrap primitive (v0.1.7) for `K*(K-1)/2` pairwise
+comparisons.
+
+Output columns: observed statistics + delta + percentile CI +
+two-sided ASL p-value + BH-corrected q-value + `n_nonfinite_replaced`
+diagnostic. Rows sorted by BH q-value ascending (most-significant first).
+
+### Basic invocation
+
+```bash
+hft-ops sweep compare <sweep_id> --metric val_ic --alpha 0.05
+```
+
+Example for a 5-seed stability sweep:
+```bash
+hft-ops sweep compare seed_stability_20260421 --metric val_ic --alpha 0.05
+```
+
+### CLI options
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--metric` | `val_ic` | Statistic to compare. MVP supports `val_ic` (Spearman IC). Classification metrics + additional statistics land in a follow-up. |
+| `--alpha` | `0.05` | Significance level for CI + BH FDR correction. 0.05 = 95% CI. |
+| `--n-bootstraps` | `10000` | Bootstrap iterations. Lower = faster + wider CI. |
+| `--block-length` | auto | Moving-block bootstrap block length. Default: `ceil(n^(1/3))` per Politis-Romano 1994. |
+| `--seed` | `42` | Random seed for reproducibility. Same seed → bit-identical output. |
+
+### When `sweep compare` FAILS LOUD (per hft-rules §8)
+
+- **Unpaired labels**: child records have byte-different `regression_labels.npy`
+  (e.g., `feature_set_ablation` sweeps where FeatureSet changes →
+  sample set differs). Error cites which two records diverged. Phase VI
+  unpaired (Welch-style) tooling deferred.
+- **NaN-row drop > 5%** (V.1 L1.3): above the `max_drop_frac`
+  threshold, abort with per-record breakdown (`exp_id` +
+  `x_nonfinite` + `y_nonfinite` counts). Operator can override with
+  the caller-side `max_drop_frac=1.0` (documented as "bypasses
+  hft-rules §8").
+- **Duplicate treatment labels** (V.1 L3.2): two records produce the
+  same axis_values label — ambiguous output rows. Sweep manifest has
+  a collision; fix the YAML.
+- **Primary_horizon mismatch**: records use different horizons (a
+  horizon-sensitivity sweep is implicitly unpaired).
+- **Non-finite observed statistic** (v0.1.7 L2.7): `statistic_fn`
+  returns NaN on original data — upstream data-quality issue.
+
+### Interpretation guide
+
+- **BH q-value ≤ alpha AND CI excludes 0**: green ★ marker — pair is
+  significant after FDR correction.
+- **`n_nonfinite_replaced` high** (yellow column): substantial
+  bootstrap-iter × treatment samples hit the conservative fallback to
+  the observed statistic. Large values (> 10% of `2 × n_bootstraps`)
+  mean the CI is substantially point-mass from fallback, NOT real
+  bootstrap variance — treat p-values with skepticism.
+- **NaN-dropped > 0 in summary**: some rows of paired (x, Y) had
+  non-finite values and were dropped preserving pairing. Under 5% is
+  the default tolerance; the summary panel reports the exact count
+  and fraction.
+
+### Research basis
+
+- Paired bootstrap p-value: Efron & Tibshirani (1993), *An Introduction
+  to the Bootstrap*, Ch 15 eq 15.22.
+- Moving-block bootstrap: Künsch (1989), *Annals of Statistics*
+  17(3):1217-1241.
+- Default block_length: Politis & Romano (1994), *JASA* 89(428):1303-1313.
+- FDR correction: Benjamini & Hochberg (1995), *JRSS-B* 57(1):289-300 §3.
+
+See `hft-metrics/CODEBASE.md` §14c for the primitive-level reference.
+
+---
+
+## CompatibilityContract Fingerprint Filter (Phase V.A.4, 2026-04-21)
+
+Every experiment run through `hft-ops run` post-V.A.4 carries a
+64-hex SHA-256 `compatibility_fingerprint` computed over 11
+shape-determining signal-boundary fields (`contract_version`,
+`feature_count`, `window_size`, `feature_layout`, `data_source`,
+`label_strategy_hash`, `calibration_method`, `primary_horizon_idx`,
+`horizons`, `normalization_strategy`, `schema_version`). Query:
+
+```bash
+# Surface every experiment produced against a specific contract version
+hft-ops ledger list --compatibility-fp <64-hex>
+
+# Pre-V.A.4 records project empty string; to find those:
+hft-ops ledger list --compatibility-fp ""
+```
+
+The fingerprint is **NOT** a fingerprint for dedup (treatments only go
+into `compute_fingerprint`). It's an OBSERVATION surfaced as a
+ledger-query trust column. See root CLAUDE.md §"Module Technical Map"
+for the V.A.4 design rationale.
+
+---
+
 ## Feature Importance (Phase 8C-α Stage C.1, 2026-04-20)
 
 Post-training permutation importance quantifies each feature's contribution
