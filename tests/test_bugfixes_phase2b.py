@@ -35,26 +35,57 @@ import pytest
 
 
 def _load_compat_module():
-    """Load the trainer-side compat helper without installing the trainer.
+    """Load the trainer-side compat helper via ``spec_from_file_location``.
 
     Uses the SSoT ``require_monorepo_root`` helper (Phase V.A.0) to resolve
-    the monorepo layout. Skips cleanly on standalone-clone environments
-    (e.g., fresh CI without the lob-model-trainer sibling) rather than
-    raising ``ModuleNotFoundError`` at import time.
+    the monorepo layout, then loads the compat module directly via
+    ``importlib.util.spec_from_file_location`` — matches the precedent set
+    by ``hft_ops.ledger.dedup._load_trainer_merge_module``.
+
+    V.A.0 audit C3 fix: the prior implementation did
+    ``sys.path.insert(0, str(trainer_scripts))`` + ``importlib.import_module``
+    but NEVER popped the inserted path. sys.path is process-global; any
+    subsequent test importing a module name that happened to exist under
+    ``lob-model-trainer/scripts/`` (e.g., ``train.py``, ``export_signals.py``)
+    would silently misresolve to the trainer script. Switching to
+    ``spec_from_file_location`` avoids sys.path mutation entirely —
+    clean test isolation.
+
+    Skips cleanly on standalone-clone environments (e.g., fresh CI
+    without the lob-model-trainer sibling) rather than raising
+    ``ModuleNotFoundError`` at import time.
     """
     from hft_contracts._testing import require_monorepo_root
+    import importlib.util
 
     monorepo_root = require_monorepo_root(
         "lob-model-trainer/scripts/_hft_ops_compat.py",
     )
-    trainer_scripts = monorepo_root / "lob-model-trainer" / "scripts"
-    if str(trainer_scripts) not in sys.path:
-        sys.path.insert(0, str(trainer_scripts))
-    import importlib
+    compat_path = (
+        monorepo_root / "lob-model-trainer" / "scripts" / "_hft_ops_compat.py"
+    )
 
-    if "_hft_ops_compat" in sys.modules:
-        del sys.modules["_hft_ops_compat"]
-    return importlib.import_module("_hft_ops_compat")
+    # Drop any previously-imported version so the module is re-exec'd on
+    # each test (idempotent load across test order permutations).
+    sys.modules.pop("_hft_ops_compat", None)
+
+    spec = importlib.util.spec_from_file_location(
+        "_hft_ops_compat", compat_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"Failed to load spec from {compat_path} — file exists "
+            f"(require_monorepo_root verified) but cannot be loaded as "
+            f"a Python module. Likely indicates a syntax error in the "
+            f"compat module; run `python {compat_path}` to diagnose."
+        )
+    module = importlib.util.module_from_spec(spec)
+    # Register in sys.modules BEFORE exec so relative imports within
+    # the module resolve correctly (standard spec-from-file-location
+    # idiom per the Python 3.12 importlib docs).
+    sys.modules["_hft_ops_compat"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 class TestCompatBanner:
