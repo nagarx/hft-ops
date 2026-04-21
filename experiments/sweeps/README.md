@@ -40,19 +40,18 @@ hft-ops sweep results experiments/sweeps/<name>.yaml     # compare records
 | `loss_ablation.yaml` | `loss_type × delta` | 6 | Huber vs MSE × δ ∈ {12.6, 15.1, 20.0} on E5 60s training. Single-stage (training). Phase 5 FULL-A. |
 | `horizon_sensitivity.yaml` | `bin_size × horizon_value` | 9 | 30s/60s/120s extraction bins × H10/H60/H300 horizons. **CROSS-STAGE** — primary validator of Block 1 routing + Block 4 variable rebinding. Phase 5 FULL-A. |
 | `backtest_cost_sensitivity.yaml` | `spread × threshold` | 9 | Fixed training + signal export; backtest cost parameters vary via nested-dataclass `backtesting.params.*` axes. **NESTED-DATACLASS** routing validator. Phase 5 FULL-A. |
+| `seed_stability.yaml` | `train.seed` ∈ 5 values | 5 | 5-seed variance probe on E5 60s Huber δ=12.6 H10. Single axis; training-only. Aggregate surfaces mean ± std — prerequisite for Phase V.B.4 paired-bootstrap CI tooling. Phase V.B.1. |
 
 ## Backlog (additive — author as needed)
 
-Templates documented but not yet shipped in Phase 5 FULL-A. Author additively in
-Tier 2 (researcher demand-driven). Note: `seed_stability` is specifically
-flagged by `feedback_oos_validation_first.md` as important — prioritize this
-one for early authoring.
+Templates documented but not yet shipped. Author additively in Tier 2
+(researcher demand-driven).
 
 | File (proposed) | Axes | Rationale |
 |---|---|---|
-| `seed_stability.yaml` | `train.seed` ∈ 5 values | Surfaces per-seed variance; counter to the one-seed-result anti-pattern. |
-| `feature_set_ablation.yaml` | `data.feature_set × validation.min_ic` | Cross-stage. Compare Phase-4 registry FeatureSet choices + gate threshold sensitivity. |
-| `model_family.yaml` | `model.model_type × data.feature_set` | Replaces hand-rolled `e4_baselines.py` / `e5_baselines.py` loops. |
+| `feature_set_ablation.yaml` | `data.feature_set` ∈ 3 registry entries | Single-axis cross-FeatureSet comparison. Deferred to Phase VI per v3.0 audit (IC-gate cross-axis produced 3 distinct fingerprints × 2 gate values = 3 unique fps under dedup; redesign pending). |
+| `model_family_classification.yaml` | `model.model_type` ∈ 6 classification models | Replaces hand-rolled `e4_baselines.py` / `e5_baselines.py` loops. Deferred to Phase VI. |
+| `model_family_regression.yaml` | `model.model_type` ∈ regression models | Companion to classification family. Deferred to Phase VI. |
 
 ## What Sweeps Replace
 

@@ -1,0 +1,180 @@
+# =============================================================================
+# Sweep: Seed stability — 5-seed variance characterization
+# =============================================================================
+#
+# Purpose: surface per-seed variance on E5 60s-binned TLOB training. Single
+# E5 config, 5 distinct seeds → the aggregate record exposes mean ± std on
+# the primary metric (val_ic / val_directional_accuracy). Direct antidote
+# to the one-seed-result anti-pattern flagged in
+# `feedback_oos_validation_first.md` / `feedback_metric_consistency.md`.
+#
+# Without this infrastructure, a researcher's claim of "IC = X" for any
+# single config is uncalibrated — cross-seed variance is the floor below
+# which differences between configs are statistical noise. Phase V.B.4
+# (statistical-significance tooling) requires per-config seed replicates
+# to compute meaningful paired-bootstrap CIs.
+#
+# Grid:
+#   +-------------+
+#   | seed = 42   |
+#   | seed = 43   |
+#   | seed = 44   |
+#   | seed = 45   |
+#   | seed = 46   |
+#   +-------------+
+#
+# Cardinality: 5 grid points (single axis). Training only — signal export
+# + backtesting disabled to keep per-point compute to the training-only
+# cost (~1 GPU-hour × 5 on H10 60s-binned E5).
+#
+# Fingerprint discipline (verified against
+# `hft-ops/src/hft_ops/ledger/dedup.py::_extract_fingerprint_fields`):
+#   `train.seed` is NOT in the strip-set — it IS a treatment. 5 distinct
+#   seeds produce 5 distinct fingerprints. Locked by
+#   `test_sweep_fingerprint_integration.py::TestPhase5FullATemplates`.
+#
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/seed_stability.yaml
+#   hft-ops sweep run     experiments/sweeps/seed_stability.yaml
+#   hft-ops sweep results experiments/sweeps/seed_stability.yaml
+# =============================================================================
+
+experiment:
+  name: "seed_stability"
+  description: >
+    5-seed variance probe on E5 60s-binned TLOB (Huber δ=12.6, H10). Single
+    axis `train.seed ∈ {42, 43, 44, 45, 46}`; all other dimensions fixed.
+    Aggregate record surfaces mean ± std on primary metric — the floor
+    below which per-config differences are statistical noise.
+  hypothesis: >
+    Per-seed val_ic std is small relative to cross-config deltas we care
+    about (∆IC ≥ 0.02 is a typical ablation effect size). If std_seed(IC) ≥
+    0.01 on this config, V.B.4 paired-bootstrap CIs are the only
+    trustworthy comparison tool; if std_seed(IC) << 0.01, single-seed
+    comparisons are defensible for coarse direction-of-effect calls.
+  contract_version: "2.2"
+  tags:
+    - nvda
+    - e5
+    - regression
+    - h10
+    - 60s
+    - seed_stability
+    - sweep
+    - phase5-full-a
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    trainer_config:
+      name: seed_stability_base
+      description: "E5 60s training base; axis overrides train.seed only."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s"
+        feature_count: 98
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 0
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42                 # <- overridden by axis `seed`
+        mixed_precision: false
+
+      output_dir: outputs/experiments/seed_stability_base
+      log_level: INFO
+      tags: [e5, nvda, regression, h10, 60s, seed_stability, sweep]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    horizon_value: 10
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: false
+
+  backtesting:
+    enabled: false
+
+# =============================================================================
+# Sweep definition — single axis, training-only, 5-point Cartesian.
+# `train.seed` is a treatment (enters fingerprint via
+# `_extract_fingerprint_fields` — the strip-set excludes only metadata +
+# observations, and `train.*` is neither). 5 distinct seed values →
+# 5 distinct fingerprints, verified by
+# `TestPhase5FullATemplates::test_template_fingerprints_all_distinct`.
+# =============================================================================
+
+sweep:
+  name: "seed_stability"
+  strategy: "grid"
+  axes:
+    - name: "seed"
+      values:
+        - label: "seed_42"
+          overrides:
+            train.seed: 42
+        - label: "seed_43"
+          overrides:
+            train.seed: 43
+        - label: "seed_44"
+          overrides:
+            train.seed: 44
+        - label: "seed_45"
+          overrides:
+            train.seed: 45
+        - label: "seed_46"
+          overrides:
+            train.seed: 46

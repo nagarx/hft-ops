@@ -47,17 +47,25 @@ _REPO_ROOT = require_monorepo_root(
     "hft-ops/experiments/sweeps/loss_ablation.yaml",
     "hft-ops/experiments/sweeps/horizon_sensitivity.yaml",
     "hft-ops/experiments/sweeps/backtest_cost_sensitivity.yaml",
+    "hft-ops/experiments/sweeps/seed_stability.yaml",
 )
 _SWEEP_PATH = (
     _REPO_ROOT / "hft-ops" / "experiments" / "sweeps" / "e5_phase2_sweep.yaml"
 )
 
-# Phase 5 FULL-A Block 5: MVP templates shipped in this phase.
+# Phase 5 FULL-A Block 5 + Phase V.B.1: shipped MVP templates.
+# Each entry asserts (template_name, expected_grid_count); the 3 parametrized
+# tests in TestPhase5FullATemplates verify cardinality, fingerprint
+# uniqueness, and axis-value piping for every template here.
 _PHASE5_FULL_A_TEMPLATES = [
     # (template_name, expected_grid_count)
     ("loss_ablation.yaml", 6),
     ("horizon_sensitivity.yaml", 9),
     ("backtest_cost_sensitivity.yaml", 9),
+    # Phase V.B.1 (2026-04-21): single-axis `train.seed` — 5 seeds produce
+    # 5 distinct fingerprints because `train.*` is not in
+    # `_extract_fingerprint_fields` strip-set.
+    ("seed_stability.yaml", 5),
 ]
 
 
