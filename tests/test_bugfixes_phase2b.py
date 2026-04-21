@@ -35,12 +35,19 @@ import pytest
 
 
 def _load_compat_module():
-    """Load the trainer-side compat helper without installing the trainer."""
-    trainer_scripts = (
-        Path(__file__).resolve().parents[2]
-        / "lob-model-trainer"
-        / "scripts"
+    """Load the trainer-side compat helper without installing the trainer.
+
+    Uses the SSoT ``require_monorepo_root`` helper (Phase V.A.0) to resolve
+    the monorepo layout. Skips cleanly on standalone-clone environments
+    (e.g., fresh CI without the lob-model-trainer sibling) rather than
+    raising ``ModuleNotFoundError`` at import time.
+    """
+    from hft_contracts._testing import require_monorepo_root
+
+    monorepo_root = require_monorepo_root(
+        "lob-model-trainer/scripts/_hft_ops_compat.py",
     )
+    trainer_scripts = monorepo_root / "lob-model-trainer" / "scripts"
     if str(trainer_scripts) not in sys.path:
         sys.path.insert(0, str(trainer_scripts))
     import importlib
