@@ -313,6 +313,36 @@ class TrainingRunner:
         # Store effective config path for _record_experiment to load
         result.captured_metrics["_effective_config_path"] = str(effective_config)
 
+        # Phase V.A.8 MVP (2026-04-21): InputContract pre-flight.
+        # Catch misconfigured YAMLs BEFORE the GPU subprocess launches —
+        # save GPU-hours for misconfigurations like TLOB with window_size=1
+        # or DeepLOB with feature_count=128. Hardcoded per-model constraint
+        # table synced from lob-models ModelRegistry (see
+        # `contract_preflight._INPUT_CONTRACTS` for drift-risk note and
+        # Phase VI replacement path).
+        #
+        # Fail-loud convention per Agent 2 M1 fix: ValueError wrapped to
+        # StageResult(FAILED) with gate_report conforming to
+        # hft_contracts.gate_report.GateReportDict (status="fail"). The
+        # generic captured_metrics["gate_report"] harvest in
+        # cli.py::_record_experiment surfaces this into
+        # ExperimentRecord.gate_reports["training_preflight"] for fast
+        # `ledger list --gate-status fail` filtering.
+        from hft_ops.stages.contract_preflight import preflight_trainer_config
+        preflight_start = time.monotonic()
+        try:
+            preflight_trainer_config(Path(effective_config))
+        except ValueError as exc:
+            result.duration_seconds = time.monotonic() - preflight_start
+            result.status = StageStatus.FAILED
+            result.error_message = f"Input contract pre-flight failed: {exc}"
+            result.captured_metrics["gate_report"] = {
+                "status": "fail",
+                "reason": "input_contract_violation",
+                "summary": str(exc)[:256],
+            }
+            return result
+
         script = config.paths.trainer_dir / "scripts" / "train.py"
         cmd = [
             sys.executable, str(script),
