@@ -21,6 +21,12 @@ dependencies = [
     # Phase 8B (2026-04-20): SemVer MAJOR.MINOR parsing for
     # `hft_ops.ledger.ledger._index_schema_needs_rebuild`. Pure-Python.
     "packaging>=23.0",
+    # Phase V.B.4b (2026-04-21): hft-metrics v0.1.5 ships
+    # `pairwise_paired_bootstrap_compare` + `benjamini_hochberg_qvalues`,
+    # consumed by `hft_ops.ledger.statistical_compare.compare_sweep_statistical`
+    # (the backing function for `hft-ops sweep compare`). numpy pulled in
+    # transitively through hft-metrics (leaf package with numpy>=1.24).
+    "hft-metrics>=0.1.5",
 ]
 
 [project.optional-dependencies]

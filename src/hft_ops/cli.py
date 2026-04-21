@@ -1739,6 +1739,159 @@ def sweep_results(
     console.print(table)
 
 
+# =============================================================================
+# Phase V.B.4b (2026-04-21): Pairwise statistical comparison of sweep child
+# records via moving-block paired bootstrap + BH FDR. Complements
+# `sweep results` (descriptive ranking) with hypothesis-testing tooling —
+# answers the question "is model A significantly better than model B?"
+# rather than "what is A's value and what is B's?".
+# =============================================================================
+
+
+@sweep.command(name="compare")
+@click.argument("sweep_id")
+@click.option(
+    "--metric", "-m",
+    type=str,
+    default="val_ic",
+    show_default=True,
+    help="Metric for pairwise comparison. MVP supports: val_ic (Spearman IC).",
+)
+@click.option(
+    "--alpha", "-a",
+    type=float,
+    default=0.05,
+    show_default=True,
+    help="Significance level for CI + Benjamini-Hochberg FDR correction.",
+)
+@click.option(
+    "--n-bootstraps",
+    type=int,
+    default=10_000,
+    show_default=True,
+    help="Bootstrap iterations. Lower values trade CI precision for speed.",
+)
+@click.option(
+    "--block-length",
+    type=int,
+    default=None,
+    help="Block length for moving-block bootstrap. Default: ceil(n^(1/3)) "
+         "per Politis-Romano 1994. Use 1 for i.i.d. bootstrap.",
+)
+@click.option(
+    "--seed",
+    type=int,
+    default=42,
+    show_default=True,
+    help="Random seed for bootstrap reproducibility.",
+)
+@click.pass_context
+def sweep_compare(
+    ctx: click.Context,
+    sweep_id: str,
+    metric: str,
+    alpha: float,
+    n_bootstraps: int,
+    block_length: Optional[int],
+    seed: int,
+) -> None:
+    """Paired pairwise-bootstrap significance table for a sweep's child records.
+
+    Loads each child's paired signal files (regression_labels.npy,
+    predicted_returns.npy), verifies they share byte-identical labels (paired
+    structure), then invokes the hft-metrics
+    ``pairwise_paired_bootstrap_compare`` primitive to produce K*(K-1)/2
+    pairwise deltas with bootstrap CI, ASL p-values, and BH-corrected
+    q-values.
+
+    Requires:
+        * Every child record has completed signal_export (regression only
+          for MVP).
+        * All children share the same test-split labels (same FeatureSet,
+          same extraction). Sweeps that vary EXTRACTION or FeatureSet
+          (horizon_sensitivity, feature_set_ablation) will fail-loud.
+    """
+    from hft_ops.ledger.statistical_compare import compare_sweep_statistical
+
+    pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    paths = PipelinePaths(pipeline_root=pipeline_root)
+    ledger = _construct_ledger_or_exit(paths.ledger_dir)
+
+    entries = ledger.filter(sweep_id=sweep_id)
+    # Exclude sweep_aggregate parent (child-record-only comparison).
+    entries = [e for e in entries if e.get("record_type") != "sweep_aggregate"]
+
+    if len(entries) < 2:
+        console.print(
+            f"[red]sweep compare: need >= 2 child records for sweep_id "
+            f"'{sweep_id}'; found {len(entries)}. Nothing to compare.[/red]"
+        )
+        sys.exit(1)
+
+    try:
+        results, labels = compare_sweep_statistical(
+            entries,
+            ledger=ledger,
+            paths=paths,
+            metric=metric,
+            alpha=alpha,
+            n_bootstraps=n_bootstraps,
+            block_length=block_length,
+            seed=seed,
+        )
+    except ValueError as err:
+        console.print(f"[red]sweep compare failed:[/red] {err}")
+        sys.exit(1)
+
+    # Render table — one row per pair, sorted by BH-corrected q-value ascending
+    # (most-significant first).
+    sorted_results = sorted(results, key=lambda r: r.p_value_bh)
+
+    title = (
+        f"Pairwise Comparison: {sweep_id} ({len(labels)} treatments, "
+        f"{len(results)} pairs, metric={metric}, alpha={alpha}, "
+        f"n_bootstraps={n_bootstraps})"
+    )
+    table = Table(title=title)
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Treatment i", style="cyan")
+    table.add_column("Treatment j", style="cyan")
+    table.add_column("stat_i", justify="right")
+    table.add_column("stat_j", justify="right")
+    table.add_column("Δ", justify="right")
+    table.add_column(f"CI ({100*(1-alpha):.0f}%)", justify="right")
+    table.add_column("p_raw", justify="right")
+    table.add_column("q_bh", justify="right")
+    table.add_column("Sig", justify="center")
+
+    for rank, r in enumerate(sorted_results, 1):
+        ci_str = f"[{r.ci_lower:+.4f}, {r.ci_upper:+.4f}]"
+        # Two-sided-CI-excludes-zero is the "significant" criterion.
+        ci_excludes_zero = (r.ci_lower > 0.0) or (r.ci_upper < 0.0)
+        sig_marker = (
+            "[green]★[/green]" if (r.p_value_bh <= alpha and ci_excludes_zero)
+            else "[dim]·[/dim]"
+        )
+        table.add_row(
+            str(rank),
+            labels[r.i],
+            labels[r.j],
+            f"{r.statistic_i:+.4f}",
+            f"{r.statistic_j:+.4f}",
+            f"{r.delta:+.4f}",
+            ci_str,
+            f"{r.p_value_raw:.3f}",
+            f"{r.p_value_bh:.3f}",
+            sig_marker,
+        )
+
+    console.print(table)
+    console.print(
+        f"[dim]Rows sorted by BH-corrected q-value ascending. "
+        f"★ = q_bh <= alpha AND CI excludes 0.[/dim]"
+    )
+
+
 @main.command(name="check-dup")
 @click.argument("manifest_path", type=click.Path(exists=True))
 @click.pass_context
