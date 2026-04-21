@@ -1,0 +1,103 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs on the same ref when a new commit lands. Saves
+# runner minutes when a developer force-pushes a fix over a failing run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimum GITHUB_TOKEN permissions — OpenSSF least-privilege. This workflow
+# reads repo contents (this repo + two public siblings) and writes no
+# artifacts, so `contents: read` is sufficient.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout (hft-ops)
+        uses: actions/checkout@v4
+
+      # hft-ops src/ imports from hft_contracts directly (confirmed via grep:
+      # ledger/experiment_record.py shim, provenance/lineage.py, cli.py,
+      # feature_sets/schema.py, ...). Declared as bare-name dep in
+      # pyproject.toml:11. Sibling checkout keeps CI deterministic regardless
+      # of whether hft-contracts is published on PyPI.
+      - name: Checkout hft-contracts
+        uses: actions/checkout@v4
+        with:
+          repository: nagarx/hft-contracts
+          path: _deps/hft-contracts
+          ref: main
+
+      # hft-feature-evaluator is optional per hft-ops pyproject.toml (NOT
+      # declared as a runtime dep), but 5 tests in test_validation_stage.py
+      # invoke `from hft_evaluator.fast_gate import ...` via
+      # `hft_ops.stages.validation.ValidationRunner._run_fast_gate` (line 157).
+      # Without the sibling installed, those 5 tests fail with ImportError
+      # (pre-existing env-dependent failure class flagged in root CLAUDE.md
+      # §Module Technical Map hft-ops row). Sibling-installing keeps the
+      # full suite green — preferable to `pytest --deselect` obfuscation
+      # (hft-rules §6: tests document behavior; hiding them creates a blind
+      # spot on the fast_gate → ledger integration).
+      - name: Checkout hft-feature-evaluator
+        uses: actions/checkout@v4
+        with:
+          repository: nagarx/hft-feature-evaluator
+          path: _deps/hft-feature-evaluator
+          ref: main
+
+      # hft-feature-evaluator depends on hft-metrics transitively (IC,
+      # bootstrap CI, Newey-West corrections). Pull it in the chain.
+      - name: Checkout hft-metrics
+        uses: actions/checkout@v4
+        with:
+          repository: nagarx/hft-metrics
+          path: _deps/hft-metrics
+          ref: main
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (siblings first, then hft-ops with dev extras)
+        # Install order: hft-contracts → hft-metrics → hft-feature-evaluator
+        # → hft-ops. Matches the upstream-before-downstream dep DAG.
+        # hft-ops' own deps (click, pyyaml, rich, filelock, packaging) are
+        # pure-Python — installation is fast (~30s per matrix cell).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e _deps/hft-contracts
+          pip install -e _deps/hft-metrics
+          pip install -e _deps/hft-feature-evaluator
+          pip install -e '.[dev]'
+          python -c "import hft_contracts, hft_metrics, hft_evaluator, hft_ops, sys; print(f'Python {sys.version.split()[0]}  |  hft_contracts {hft_contracts.__version__}  |  hft_metrics {hft_metrics.__version__}')"
+
+      - name: Run tests
+        # Expected on fresh CI (2026-04-21): 500 pass per root CLAUDE.md
+        # Phase 8C-α Integration Close-Out stamp. With hft-feature-evaluator
+        # sibling-installed, the previously 5 env-dependent test_validation_stage
+        # failures should now pass (fast_gate imports resolve).
+        run: pytest -q --tb=short
+
+      - name: Lint (non-blocking)
+        continue-on-error: true
+        run: |
+          pip install ruff
+          ruff check src tests
