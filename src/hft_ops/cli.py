@@ -512,6 +512,7 @@ def _record_experiment(
     # None iff signal_export stage was skipped/failed OR the trainer did not
     # use DataConfig.feature_set. ExperimentRecord stores None gracefully.
     feature_set_ref: Optional[Dict[str, str]] = None
+    compatibility_fingerprint: Optional[str] = None  # Phase V.A.4 (2026-04-21)
     if "signal_export" in results:
         raw_ref = results["signal_export"].captured_metrics.get("feature_set_ref")
         if isinstance(raw_ref, dict):
@@ -519,6 +520,13 @@ def _record_experiment(
             content_hash = raw_ref.get("content_hash")
             if isinstance(name, str) and isinstance(content_hash, str):
                 feature_set_ref = {"name": name, "content_hash": content_hash}
+        # Phase V.A.4: attach compatibility_fingerprint harvested by
+        # SignalExportRunner._harvest_compatibility_fingerprint. Validated
+        # 64-hex at the harvester boundary (CONTENT_HASH_RE gate); trust
+        # the string here without re-validating.
+        raw_fp = results["signal_export"].captured_metrics.get("compatibility_fingerprint")
+        if isinstance(raw_fp, str):
+            compatibility_fingerprint = raw_fp
 
     record = ExperimentRecord(
         experiment_id=experiment_id,
@@ -526,6 +534,7 @@ def _record_experiment(
         manifest_path=manifest.manifest_path,
         fingerprint=fingerprint,
         feature_set_ref=feature_set_ref,
+        compatibility_fingerprint=compatibility_fingerprint,
         provenance=provenance,
         contract_version=manifest.experiment.contract_version,
         training_config=training_config,
@@ -862,18 +871,40 @@ def ledger_fingerprint_explain(
 @ledger.command(name="list")
 @click.option("--status", type=str, default=None, help="Filter by status.")
 @click.option("--model-type", type=str, default=None, help="Filter by model type.")
+@click.option(
+    "--compatibility-fp",
+    type=str,
+    default=None,
+    help=(
+        "Filter by exact CompatibilityContract fingerprint match "
+        "(64-hex SHA-256). Phase V.A.4: surfaces every experiment "
+        "produced against a specific contract version."
+    ),
+)
 @click.pass_context
 def ledger_list(
     ctx: click.Context,
     status: Optional[str],
     model_type: Optional[str],
+    compatibility_fp: Optional[str],
 ) -> None:
-    """List all experiments in the ledger."""
+    """List all experiments in the ledger.
+
+    Phase V.A.4 adds ``--compatibility-fp <hex>`` for fast filtering by
+    the signal-boundary CompatibilityContract fingerprint (the "trust
+    column"). Use to trace every experiment that was trained against a
+    specific contract version, e.g.,
+    ``hft-ops ledger list --compatibility-fp abc123...``.
+    """
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
     exp_ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
-    entries = exp_ledger.filter(status=status, model_type=model_type)
+    entries = exp_ledger.filter(
+        status=status,
+        model_type=model_type,
+        compatibility_fingerprint=compatibility_fp,
+    )
 
     if not entries:
         console.print("[yellow]No experiments found.[/yellow]")

@@ -683,10 +683,21 @@ class ExperimentLedger:
         created_after: Optional[str] = None,
         created_before: Optional[str] = None,
         sweep_id: Optional[str] = None,
+        compatibility_fingerprint: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Filter index entries by criteria.
 
         All criteria are AND-combined: an entry must match ALL specified filters.
+
+        Args:
+            compatibility_fingerprint: Phase V.A.4 (2026-04-21) — exact
+                64-hex match on the CompatibilityContract fingerprint
+                harvested from ``signal_metadata.json``. Surfaces every
+                experiment produced against a specific contract version.
+                Malformed or missing fingerprints project as empty string
+                ``""`` in the index (per ExperimentRecord.index_entry
+                graceful-degradation contract); passing ``""`` explicitly
+                matches records without a fingerprint.
         """
         results: List[Dict[str, Any]] = []
 
@@ -724,6 +735,13 @@ class ExperimentLedger:
 
             if sweep_id and entry.get("sweep_id", "") != sweep_id:
                 continue
+
+            # Phase V.A.4: exact-match filter on the trust-column.
+            # `is not None` guard distinguishes "no filter" (pass-through)
+            # from "filter for empty-string" (records without fingerprint).
+            if compatibility_fingerprint is not None:
+                if entry.get("compatibility_fingerprint", "") != compatibility_fingerprint:
+                    continue
 
             results.append(entry)
 

@@ -42,6 +42,70 @@ from hft_contracts.signal_manifest import CONTENT_HASH_RE
 logger = logging.getLogger(__name__)
 
 
+def _harvest_compatibility_fingerprint(
+    output_dir: Optional[Path],
+) -> Optional[str]:
+    """Harvest ``compatibility_fingerprint`` from signal_metadata.json
+    (Phase V.A.4, 2026-04-21).
+
+    The trainer's Phase II exporter embeds a ``CompatibilityContract``
+    block + its SHA-256 ``fingerprint`` into signal_metadata.json. This
+    helper reads that fingerprint so hft-ops can attach it to the
+    ``ExperimentRecord`` — giving the ledger a "verifiable trust column"
+    that surfaces via ``hft-ops ledger list --compatibility-fp <hex>``.
+
+    Best-effort: returns None on any failure (missing file, malformed
+    JSON, absent field, non-64-hex value) rather than raising. Mirrors
+    the contract of ``_harvest_feature_set_ref`` — the ExperimentRecord
+    stores None gracefully in that case, matching the dataclass default.
+
+    Searches for signal_metadata.json at ``<output_dir>/signal_metadata.json``
+    AND ``<output_dir>/*/signal_metadata.json`` (split subdirs) — same
+    dual-layout support as ``_harvest_feature_set_ref``.
+
+    Returns:
+        64-char lowercase hex string (SHA-256 digest) on success;
+        None otherwise. Value is validated against
+        ``hft_contracts.signal_manifest.CONTENT_HASH_RE`` before return —
+        malformed values are silently dropped (fail-loud at the harvest
+        boundary; same defense-in-depth gate as feature_set_ref harvest).
+    """
+    if output_dir is None or not output_dir.exists():
+        return None
+
+    # Direct and one-level-deep search (covers both `signals/` and
+    # `signals/<split>/` layouts). Same pattern as _harvest_feature_set_ref.
+    candidates = [output_dir / "signal_metadata.json"]
+    try:
+        for sub in output_dir.iterdir():
+            if sub.is_dir():
+                candidates.append(sub / "signal_metadata.json")
+    except OSError:
+        return None
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            with open(path) as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(meta, dict):
+            continue
+        # The Phase II exporter emits a top-level `compatibility_fingerprint`
+        # alongside the `compatibility` block. Accept both locations for
+        # forward-compat: future exporters may nest fingerprint under
+        # compatibility.{fingerprint,} — check there too.
+        raw = meta.get("compatibility_fingerprint")
+        if raw is None and isinstance(meta.get("compatibility"), dict):
+            raw = meta["compatibility"].get("fingerprint")
+        if isinstance(raw, str) and CONTENT_HASH_RE.match(raw):
+            return raw
+
+    return None
+
+
 def _harvest_feature_set_ref(
     output_dir: Optional[Path],
 ) -> Optional[Dict[str, str]]:
@@ -202,13 +266,21 @@ class SignalExportRunner:
                 # can attach it to the ExperimentRecord. Best-effort: signal
                 # metadata may be absent (e.g., first-run, non-standard
                 # export path) — treat as None.
-                ref = _harvest_feature_set_ref(
+                resolved_output_dir = (
                     config.paths.resolve(stage.output_dir)
                     if stage.output_dir
                     else None
                 )
+                ref = _harvest_feature_set_ref(resolved_output_dir)
                 if ref is not None:
                     result.captured_metrics["feature_set_ref"] = ref
+                # Phase V.A.4 (2026-04-21): harvest compatibility_fingerprint
+                # alongside feature_set_ref so cli.py::_record_experiment
+                # can attach the "trust column" to the ExperimentRecord.
+                # None on legacy signals / absent compatibility block.
+                compat_fp = _harvest_compatibility_fingerprint(resolved_output_dir)
+                if compat_fp is not None:
+                    result.captured_metrics["compatibility_fingerprint"] = compat_fp
             else:
                 result.status = StageStatus.FAILED
                 result.error_message = (
