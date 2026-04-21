@@ -22,6 +22,10 @@ jobs:
   test:
     name: pytest (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # Timeout cap (Phase V.A.0 audit Agent-2 #3). hft-ops has 3 sibling
+    # installs + 500 tests. 20 min cap = ~25× margin over observed
+    # ~47s steady-state CI duration.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

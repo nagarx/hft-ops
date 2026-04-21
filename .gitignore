@@ -30,3 +30,10 @@ htmlcov/
 # Ledger runtime data (auto-rebuilt by code)
 ledger/index.json
 ledger/records/*.json
+
+# CI sibling-checkout scaffolding (Phase V.A.2): GitHub Actions
+# workflows checkout sibling repos into _deps/<name>/. These are
+# build-time artifacts, never committed. Keeps 'git status' clean
+# if a developer mirrors CI locally via 'gh workflow run' or the
+# equivalent manual checkout. Added by Phase V.A.0 audit (Agent 2 #1).
+_deps/
