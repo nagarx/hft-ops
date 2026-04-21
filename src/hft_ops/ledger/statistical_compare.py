@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -318,6 +319,58 @@ def _assert_paired_labels(loaded: List[_RecordSignals]) -> None:
 # =============================================================================
 
 
+# Phase V.1 L1.3 (2026-04-21). Default threshold on silent NaN-row drop —
+# above this fraction, `compare_sweep_statistical` raises rather than
+# quietly computing on the surviving rows. Rationale: per hft-rules §8
+# "Never silently drop, clamp, or 'fix' data without recording
+# diagnostics", a high NaN-row fraction likely indicates upstream data
+# corruption (trainer bug, signal-export failure, etc.) and the resulting
+# bootstrap CI would be based on a biased subset. 5% is chosen to tolerate
+# real-world data-quality noise (~occasional price-spike rows flagged by
+# the feature extractor) while catching broken exports. Configurable per
+# call via the `max_drop_frac` kwarg.
+DEFAULT_MAX_DROP_FRAC: float = 0.05
+
+
+@dataclass(frozen=True)
+class CompareSweepDiagnostics:
+    """Observability payload returned alongside the pairwise results.
+
+    Phase V.1 L3.3 (2026-04-21). Closes Agent 2 H2 observability gap:
+    previously the only signal of data-quality issues was a stdlib
+    logging.warning call that the CLI never surfaced to the operator.
+    This dataclass makes the diagnostics part of the public return
+    contract so the CLI (and any future programmatic consumer) can
+    render them directly in the results table.
+
+    Attributes:
+        n_treatments: Number of treatments (K columns in Y).
+        n_samples_paired: Number of rows after NaN-drop masking.
+            (Equals the length of x + Y that the primitive sees.)
+        n_samples_raw: Total rows before NaN-drop masking.
+        n_dropped_nonfinite: Count of rows dropped because x OR any
+            Y[k] was non-finite. Drop is paired (same row mask applied
+            across all treatments) to preserve the paired-bootstrap
+            invariant.
+        drop_fraction: ``n_dropped_nonfinite / n_samples_raw``.
+        n_bootstraps: Bootstrap iterations used.
+        block_length: Auto-selected or caller-supplied block length.
+        primary_horizon_idx: Shared horizon index used for slicing
+            multi-horizon regression signals.
+        metric: Metric name (e.g. "val_ic") — verbatim from the caller.
+    """
+
+    n_treatments: int
+    n_samples_paired: int
+    n_samples_raw: int
+    n_dropped_nonfinite: int
+    drop_fraction: float
+    n_bootstraps: int
+    block_length: int
+    primary_horizon_idx: int
+    metric: str
+
+
 def compare_sweep_statistical(
     sweep_child_entries: List[Dict[str, Any]],
     ledger: Any,
@@ -328,16 +381,22 @@ def compare_sweep_statistical(
     n_bootstraps: int = 10_000,
     block_length: Optional[int] = None,
     seed: int = 42,
-) -> Tuple[List[PairwiseResult], List[str]]:
+    max_drop_frac: float = DEFAULT_MAX_DROP_FRAC,
+) -> Tuple[List[PairwiseResult], List[str], CompareSweepDiagnostics]:
     """Paired pairwise-bootstrap comparison of a sweep's child records.
 
     Pipeline:
       1. Load each child record's signal files.
       2. Assert paired structure (identical regression_labels.npy +
          primary_horizon_idx across records).
-      3. Stack ``x = regression_labels[:, h]`` (shared) and
+      3. Assert treatment-label uniqueness (L3.2 — prevents ambiguous
+         pairwise output if two grid points share axis_values).
+      4. Stack ``x = regression_labels[:, h]`` (shared) and
          ``Y[:, k] = predicted_returns_k[:, h]``.
-      4. Call ``hft_metrics.pairwise.pairwise_paired_bootstrap_compare``.
+      5. NaN-row drop (L1.3): drop paired rows where x or any Y column
+         is non-finite; if dropped fraction exceeds ``max_drop_frac``,
+         raise ValueError with per-record actionable breakdown.
+      6. Call ``hft_metrics.pairwise.pairwise_paired_bootstrap_compare``.
 
     Args:
         sweep_child_entries: Ledger index entries for the sweep's child
@@ -354,17 +413,33 @@ def compare_sweep_statistical(
         block_length: Optional block length for moving-block bootstrap.
             Default (None) → ``ceil(n^(1/3))`` per Politis-Romano 1994.
         seed: Random seed for reproducibility. Default 42.
+        max_drop_frac: (L1.3 Phase V.1, 2026-04-21). Maximum fraction of
+            rows allowed to be NaN-dropped before aborting. Default
+            ``DEFAULT_MAX_DROP_FRAC`` = 0.05 (5%). Pass ``1.0`` to
+            disable the guard (not recommended; bypasses hft-rules §8).
 
     Returns:
-        Tuple ``(pairwise_results, treatment_labels)``:
+        Tuple ``(pairwise_results, treatment_labels, diagnostics)``:
           - ``pairwise_results``: ``List[PairwiseResult]`` of length
             ``K*(K-1)/2``, ordered lexicographically (i, j) with i < j.
           - ``treatment_labels``: ``List[str]`` of length K — human-readable
             label for each column (from ``axis_values`` or record name).
+            Phase V.1 L3.2: guaranteed unique (ValueError on duplicate).
+          - ``diagnostics``: ``CompareSweepDiagnostics`` — observability
+            payload for CLI rendering. Phase V.1 L3.3.
 
     Raises:
-        ValueError: on any of: < 2 records; unknown metric; missing signal
-            files; unpaired labels; primary_horizon mismatch.
+        ValueError: on any of:
+          * ``< 2 records`` (nothing to compare)
+          * ``unknown metric`` (dispatch mismatch)
+          * missing signal files (regression MVP only)
+          * unpaired labels (SHA-256 mismatch on ``regression_labels.npy``)
+          * primary_horizon mismatch
+          * duplicate treatment labels (L3.2 — sweep produced
+            non-unique ``axis_values``)
+          * NaN-row fraction ``> max_drop_frac`` (L1.3 — hft-rules §8
+            fail-loud on silent data drops)
+          * non-finite ``observed_stats`` (via primitive L2.7 guard)
 
     Example:
         >>> from hft_ops.ledger.ledger import Ledger
@@ -373,12 +448,15 @@ def compare_sweep_statistical(
         >>> ledger = Ledger(paths.ledger_dir)
         >>> entries = ledger.filter(sweep_id="seed_stability_20260421")
         >>> entries = [e for e in entries if e.get("record_type") != "sweep_aggregate"]
-        >>> results, labels = compare_sweep_statistical(entries, ledger, paths)
+        >>> results, labels, diag = compare_sweep_statistical(entries, ledger, paths)
+        >>> print(f"K={diag.n_treatments}, paired_n={diag.n_samples_paired}, "
+        ...       f"dropped={diag.n_dropped_nonfinite} ({diag.drop_fraction:.2%})")
         >>> for r in results:
         ...     print(f"{labels[r.i]} vs {labels[r.j]}: "
         ...           f"delta={r.delta:+.4f} "
         ...           f"CI=[{r.ci_lower:+.4f},{r.ci_upper:+.4f}] "
-        ...           f"p_bh={r.p_value_bh:.3f}")
+        ...           f"p_bh={r.p_value_bh:.3f} "
+        ...           f"nonfinite={r.n_nonfinite_replaced}")
     """
     # === Input validation ===
     if metric not in _STATISTIC_FN_REGISTRY:
@@ -392,6 +470,12 @@ def compare_sweep_statistical(
             f"compare_sweep_statistical: need >= 2 child records; got "
             f"{len(sweep_child_entries)}. Nothing to compare."
         )
+    if not (0.0 <= max_drop_frac <= 1.0):
+        raise ValueError(
+            f"compare_sweep_statistical: max_drop_frac must be in [0.0, 1.0]; "
+            f"got {max_drop_frac}. Use 1.0 to disable the guard (not "
+            f"recommended — bypasses hft-rules §8)."
+        )
 
     statistic_fn = _STATISTIC_FN_REGISTRY[metric]
 
@@ -403,6 +487,28 @@ def compare_sweep_statistical(
 
     # === Paired-structure check ===
     _assert_paired_labels(loaded)
+
+    # === L3.2 Label uniqueness check ===
+    # Defensive: sweep expansion SHOULD produce unique axis_values for
+    # every grid point (Phase 5 FULL-A invariant), but a misconfigured
+    # sweep YAML (e.g., empty values list collapsing to identical labels)
+    # could produce duplicates — in which case the pairwise output table
+    # would show ambiguous "A vs B" rows where A and B have the same
+    # rendered label. Fail-loud per hft-rules §5 / §8.
+    labels_for_check = [r.label for r in loaded]
+    if len(set(labels_for_check)) != len(labels_for_check):
+        from collections import Counter
+        counts = Counter(labels_for_check)
+        duplicates = {lbl: c for lbl, c in counts.items() if c > 1}
+        raise ValueError(
+            f"compare_sweep_statistical: duplicate treatment labels "
+            f"detected: {duplicates}. Every grid point's axis_values "
+            f"(or experiment name when axis_values is empty) must "
+            f"produce a UNIQUE label — otherwise the pairwise output "
+            f"table has ambiguous rows. Check the sweep manifest for "
+            f"axis-values collisions (e.g., empty values list, or "
+            f"duplicate labels)."
+        )
 
     # === Stack x + Y at the shared primary horizon ===
     h = loaded[0].primary_horizon_idx
@@ -419,25 +525,69 @@ def compare_sweep_statistical(
             for r in loaded
         ])
 
+    # === L1.3 NaN-row drop with threshold ===
     # Defense-in-depth: paired bootstrap requires clean paired arrays.
-    # The primitive ALSO checks this but we want a more specific error.
-    # Filter rows with any NaN/Inf in either x or Y, logging the count.
+    # Drop rows where x or any Y column is non-finite (preserves pairing
+    # by using the same mask across all treatments). Pre-V.1.L1.3 behavior
+    # silently WARN'd via stdlib logging (invisible to CLI) + proceeded
+    # regardless of drop fraction. Post-L1.3 behavior: raise when
+    # `dropped / total > max_drop_frac` — the threshold distinguishes
+    # real-world data-quality noise (< 5% typical) from broken upstream
+    # (trainer bug, signal-export failure).
+    n_samples_raw = int(len(x))
     mask = np.isfinite(x) & np.all(np.isfinite(Y), axis=1)
-    if not mask.all():
-        dropped = int((~mask).sum())
-        total = int(len(x))
-        # Drop non-finite rows preserving pairing (same mask across x + every Y col).
+    n_dropped = int((~mask).sum())
+    drop_fraction = n_dropped / n_samples_raw if n_samples_raw > 0 else 0.0
+
+    if drop_fraction > max_drop_frac:
+        # Per-record breakdown to help operator diagnose.
+        per_record_drops = []
+        for k, r in enumerate(loaded):
+            if r.regression_labels_full.ndim == 1:
+                bad_x = (~np.isfinite(r.regression_labels_full)).sum()
+                bad_y = (~np.isfinite(r.predicted_returns_full)).sum()
+            else:
+                bad_x = (~np.isfinite(r.regression_labels_full[:, h])).sum()
+                bad_y = (~np.isfinite(r.predicted_returns_full[:, h])).sum()
+            per_record_drops.append(
+                f"{r.label} (exp_id={r.experiment_id}): "
+                f"x_nonfinite={int(bad_x)}, y_nonfinite={int(bad_y)}"
+            )
+        raise ValueError(
+            f"compare_sweep_statistical: NaN-row drop fraction "
+            f"{drop_fraction:.2%} exceeds max_drop_frac={max_drop_frac:.2%} "
+            f"(dropped {n_dropped}/{n_samples_raw} rows). Likely an "
+            f"upstream issue (trainer bug, signal-export corruption, "
+            f"feature-extractor flagging). Per-record counts:\n  "
+            + "\n  ".join(per_record_drops)
+            + f"\n\nTo override (not recommended), pass "
+            f"max_drop_frac=1.0. This bypasses the hft-rules §8 "
+            f"fail-loud guard."
+        )
+
+    if n_dropped > 0:
+        # Under threshold — drop rows + log. Also surfaced via
+        # CompareSweepDiagnostics for CLI rendering.
         x = x[mask]
         Y = Y[mask]
-        # Log via standard library — caller can pick this up or re-display via rich.
         import logging
         logging.getLogger(__name__).warning(
-            "compare_sweep_statistical: dropped %d/%d rows with non-finite "
-            "values (NaN/Inf) — preserves pairing across all treatments.",
-            dropped, total,
+            "compare_sweep_statistical: dropped %d/%d rows (%.2f%%) with "
+            "non-finite values (NaN/Inf) — within max_drop_frac=%.2f%% "
+            "threshold; preserves pairing across all treatments.",
+            n_dropped, n_samples_raw, 100 * drop_fraction,
+            100 * max_drop_frac,
         )
 
     # === Delegate to hft-metrics primitive ===
+    # Resolve block_length for the diagnostics payload (primitive uses
+    # the same default if None; we echo for observability).
+    effective_block_length = (
+        block_length
+        if block_length is not None
+        else max(1, math.ceil(len(x) ** (1.0 / 3.0)))
+    )
+
     results = pairwise_paired_bootstrap_compare(
         x=x,
         Y=Y,
@@ -449,4 +599,17 @@ def compare_sweep_statistical(
     )
 
     treatment_labels = [r.label for r in loaded]
-    return results, treatment_labels
+
+    diagnostics = CompareSweepDiagnostics(
+        n_treatments=len(loaded),
+        n_samples_paired=int(len(x)),
+        n_samples_raw=n_samples_raw,
+        n_dropped_nonfinite=n_dropped,
+        drop_fraction=drop_fraction,
+        n_bootstraps=n_bootstraps,
+        block_length=effective_block_length,
+        primary_horizon_idx=h,
+        metric=metric,
+    )
+
+    return results, treatment_labels, diagnostics

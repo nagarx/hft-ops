@@ -102,7 +102,7 @@ class TestHappyPath:
             "hft_ops.ledger.statistical_compare._resolve_signal_dir",
             side_effect=fake_resolve,
         ):
-            results, labels = compare_sweep_statistical(
+            results, labels, diag = compare_sweep_statistical(
                 entries,
                 ledger=None,   # mock bypasses ledger usage
                 paths=None,    # mock bypasses paths usage
@@ -130,6 +130,14 @@ class TestHappyPath:
         assert labels[0] == "seed=42"
         assert labels[1] == "seed=43"
         assert labels[2] == "seed=44"
+
+        # V.1 L3.3: diagnostics payload surfaces observability
+        assert diag.n_treatments == 3
+        assert diag.n_bootstraps == 200
+        assert diag.metric == "val_ic"
+        assert diag.n_samples_paired == diag.n_samples_raw  # clean input
+        assert diag.n_dropped_nonfinite == 0
+        assert diag.drop_fraction == 0.0
 
 
 # =============================================================================
@@ -292,3 +300,179 @@ class TestMissingSignalFile:
                     entries, ledger=None, paths=None,
                     metric="val_ic", n_bootstraps=100,
                 )
+
+
+# =============================================================================
+# Phase V.1 L1.3: NaN-row drop threshold (Agent 2 H2 closure)
+# =============================================================================
+
+
+class TestNaNDropThreshold:
+    """L1.3 (2026-04-21): silent NaN-row drop pre-V.1 was a §8 rule
+    violation. Now: drop only when under threshold; raise with per-record
+    breakdown when over."""
+
+    def _fresh_signals(self, tmp_path: Path, n: int, nan_rows: int = 0):
+        """Helper: build 2 records with `nan_rows` rows poisoned in preds."""
+        rng = np.random.default_rng(321)
+        labels = rng.standard_normal((n, 3))
+        preds_a = rng.standard_normal((n, 3)) + 0.2 * labels
+        preds_b = rng.standard_normal((n, 3)) + 0.1 * labels
+        if nan_rows > 0:
+            # Poison the FIRST nan_rows rows of preds_a
+            preds_a[:nan_rows, :] = np.nan
+        sig_a = _write_record_signals(
+            tmp_path, record_id="rec_a",
+            regression_labels=labels, predicted_returns=preds_a,
+        )
+        sig_b = _write_record_signals(
+            tmp_path, record_id="rec_b",
+            regression_labels=labels, predicted_returns=preds_b,
+        )
+        return sig_a, sig_b
+
+    def test_under_threshold_drops_and_proceeds(self, tmp_path: Path):
+        """3% NaN rows → below default 5% threshold → drop + proceed."""
+        n = 200
+        sig_a, sig_b = self._fresh_signals(tmp_path, n, nan_rows=6)  # 3%
+        entries = _make_entries(["rec_a", "rec_b"])
+        signal_dirs = {"rec_a": sig_a, "rec_b": sig_b}
+
+        def fake_resolve(record_entry, ledger, paths):
+            return signal_dirs[record_entry["experiment_id"]]
+
+        with patch(
+            "hft_ops.ledger.statistical_compare._resolve_signal_dir",
+            side_effect=fake_resolve,
+        ):
+            results, labels, diag = compare_sweep_statistical(
+                entries, ledger=None, paths=None,
+                metric="val_ic", n_bootstraps=100, seed=42,
+            )
+        assert len(results) == 1
+        assert diag.n_dropped_nonfinite == 6
+        assert diag.n_samples_raw == n
+        assert diag.n_samples_paired == n - 6
+        assert diag.drop_fraction == 0.03
+
+    def test_over_threshold_raises_with_breakdown(self, tmp_path: Path):
+        """10% NaN rows → above default 5% threshold → raise with per-record breakdown."""
+        n = 200
+        sig_a, sig_b = self._fresh_signals(tmp_path, n, nan_rows=20)  # 10%
+        entries = _make_entries(["rec_a", "rec_b"])
+        signal_dirs = {"rec_a": sig_a, "rec_b": sig_b}
+
+        def fake_resolve(record_entry, ledger, paths):
+            return signal_dirs[record_entry["experiment_id"]]
+
+        with patch(
+            "hft_ops.ledger.statistical_compare._resolve_signal_dir",
+            side_effect=fake_resolve,
+        ):
+            with pytest.raises(
+                ValueError, match=r"NaN-row drop fraction 10\.00% exceeds max_drop_frac"
+            ) as exc_info:
+                compare_sweep_statistical(
+                    entries, ledger=None, paths=None,
+                    metric="val_ic", n_bootstraps=100, seed=42,
+                )
+        # Per-record breakdown present in error message
+        assert "rec_a" in str(exc_info.value)
+        assert "y_nonfinite=" in str(exc_info.value)
+
+    def test_max_drop_frac_override_allows_proceed(self, tmp_path: Path):
+        """max_drop_frac=1.0 disables the guard — for pathological cases
+        where operator knows what they're doing. Locks that the override
+        is HONORED (not silently re-enforced)."""
+        n = 200
+        sig_a, sig_b = self._fresh_signals(tmp_path, n, nan_rows=100)  # 50%
+        entries = _make_entries(["rec_a", "rec_b"])
+        signal_dirs = {"rec_a": sig_a, "rec_b": sig_b}
+
+        def fake_resolve(record_entry, ledger, paths):
+            return signal_dirs[record_entry["experiment_id"]]
+
+        with patch(
+            "hft_ops.ledger.statistical_compare._resolve_signal_dir",
+            side_effect=fake_resolve,
+        ):
+            results, labels, diag = compare_sweep_statistical(
+                entries, ledger=None, paths=None,
+                metric="val_ic", n_bootstraps=100, seed=42,
+                max_drop_frac=1.0,
+            )
+        assert diag.drop_fraction == 0.5
+
+    def test_invalid_max_drop_frac_raises(self):
+        """max_drop_frac outside [0, 1] → ValueError."""
+        entries = _make_entries(["a", "b"])
+        with pytest.raises(ValueError, match=r"max_drop_frac must be in"):
+            compare_sweep_statistical(
+                entries, ledger=None, paths=None,
+                metric="val_ic", max_drop_frac=1.5,
+            )
+        with pytest.raises(ValueError, match=r"max_drop_frac must be in"):
+            compare_sweep_statistical(
+                entries, ledger=None, paths=None,
+                metric="val_ic", max_drop_frac=-0.1,
+            )
+
+
+# =============================================================================
+# Phase V.1 L3.2: Label uniqueness check
+# =============================================================================
+
+
+class TestLabelUniqueness:
+    """L3.2 (2026-04-21): sweep grid-points with COLLIDING axis_values
+    would produce ambiguous pairwise output rows. Fail-loud per §5 + §8."""
+
+    def test_duplicate_labels_raise(self, tmp_path: Path):
+        """Two records with identical axis_values → ambiguous labels → raise."""
+        rng = np.random.default_rng(99)
+        n = 100
+        shared_labels = rng.standard_normal((n, 3))
+        preds_a = rng.standard_normal((n, 3))
+        preds_b = rng.standard_normal((n, 3))
+
+        sig_a = _write_record_signals(
+            tmp_path, record_id="rec_a",
+            regression_labels=shared_labels, predicted_returns=preds_a,
+        )
+        sig_b = _write_record_signals(
+            tmp_path, record_id="rec_b",
+            regression_labels=shared_labels, predicted_returns=preds_b,
+        )
+
+        # Make both entries carry the SAME axis_values → labels collide
+        entries = [
+            {
+                "experiment_id": "rec_a",
+                "name": "exp_rec_a",
+                "record_type": "experiment",
+                "axis_values": {"seed": "42"},  # identical
+            },
+            {
+                "experiment_id": "rec_b",
+                "name": "exp_rec_b",
+                "record_type": "experiment",
+                "axis_values": {"seed": "42"},  # identical
+            },
+        ]
+        signal_dirs = {"rec_a": sig_a, "rec_b": sig_b}
+
+        def fake_resolve(record_entry, ledger, paths):
+            return signal_dirs[record_entry["experiment_id"]]
+
+        with patch(
+            "hft_ops.ledger.statistical_compare._resolve_signal_dir",
+            side_effect=fake_resolve,
+        ):
+            with pytest.raises(
+                ValueError, match=r"duplicate treatment labels"
+            ) as exc_info:
+                compare_sweep_statistical(
+                    entries, ledger=None, paths=None,
+                    metric="val_ic", n_bootstraps=10,
+                )
+        assert "seed=42" in str(exc_info.value)

@@ -1838,7 +1838,7 @@ def sweep_compare(
         sys.exit(1)
 
     try:
-        results, labels = compare_sweep_statistical(
+        results, labels, diag = compare_sweep_statistical(
             entries,
             ledger=ledger,
             paths=paths,
@@ -1852,9 +1852,54 @@ def sweep_compare(
         console.print(f"[red]sweep compare failed:[/red] {err}")
         sys.exit(1)
 
+    # === L3.3 Diagnostics summary panel (Phase V.1, 2026-04-21) ===
+    # Surfaces run-time observability that previously lived only in
+    # stdlib logging.warning (invisible to CLI operators). Per hft-rules
+    # §8 "prefer structured metrics/counters over hot-loop logging" —
+    # the structured CompareSweepDiagnostics payload lets us render
+    # counts + fractions directly in the results table.
+    summary_lines = [
+        f"[bold]sweep_id:[/bold] {sweep_id}",
+        f"[bold]treatments (K):[/bold] {diag.n_treatments}    "
+        f"[bold]pairs:[/bold] {len(results)}",
+        f"[bold]paired samples (n):[/bold] {diag.n_samples_paired:,}"
+        + (
+            f"    [yellow]NaN-dropped:[/yellow] "
+            f"{diag.n_dropped_nonfinite:,}/{diag.n_samples_raw:,} "
+            f"({diag.drop_fraction:.2%})"
+            if diag.n_dropped_nonfinite > 0
+            else ""
+        ),
+        f"[bold]metric:[/bold] {diag.metric}    "
+        f"[bold]primary_horizon_idx:[/bold] {diag.primary_horizon_idx}",
+        f"[bold]n_bootstraps:[/bold] {diag.n_bootstraps:,}    "
+        f"[bold]block_length:[/bold] {diag.block_length}    "
+        f"[bold]alpha:[/bold] {alpha}",
+    ]
+    console.print(
+        "\n".join(summary_lines),
+        style="dim" if diag.n_dropped_nonfinite == 0 else "",
+    )
+
     # Render table — one row per pair, sorted by BH-corrected q-value ascending
     # (most-significant first).
     sorted_results = sorted(results, key=lambda r: r.p_value_bh)
+
+    # Surface total n_nonfinite_replaced across pairs — high value = CI
+    # collapse via observed-stat fallback; warn operator.
+    total_nonfinite = sum(r.n_nonfinite_replaced for r in results)
+    if total_nonfinite > 0:
+        # threshold: average > 10% of n_bootstraps per pair → yellow warning
+        avg_per_pair = total_nonfinite / max(len(results), 1)
+        warn_threshold = 0.1 * diag.n_bootstraps
+        if avg_per_pair > warn_threshold:
+            console.print(
+                f"[yellow]⚠ Warning:[/yellow] avg {avg_per_pair:.0f} "
+                f"non-finite replacements/pair (>{warn_threshold:.0f} = "
+                f"10% of n_bootstraps). CI may be substantially point-mass "
+                f"from observed-stat fallback — treat p-values with "
+                f"skepticism."
+            )
 
     title = (
         f"Pairwise Comparison: {sweep_id} ({len(labels)} treatments, "
@@ -1871,6 +1916,9 @@ def sweep_compare(
     table.add_column(f"CI ({100*(1-alpha):.0f}%)", justify="right")
     table.add_column("p_raw", justify="right")
     table.add_column("q_bh", justify="right")
+    # L3.3: surface per-pair nonfinite-replacement count; upper bound
+    # 2*n_bootstraps. Low count = healthy; high = CI suspect.
+    table.add_column("nf_repl", justify="right", style="dim")
     table.add_column("Sig", justify="center")
 
     for rank, r in enumerate(sorted_results, 1):
@@ -1881,6 +1929,16 @@ def sweep_compare(
             "[green]★[/green]" if (r.p_value_bh <= alpha and ci_excludes_zero)
             else "[dim]·[/dim]"
         )
+        # Color nonfinite count: yellow if > 10% of n_bootstraps, red if > 50%
+        nf = r.n_nonfinite_replaced
+        nf_threshold_yellow = 0.1 * 2 * r.n_bootstraps  # per-pair cap is 2× n_bootstraps
+        nf_threshold_red = 0.5 * 2 * r.n_bootstraps
+        if nf > nf_threshold_red:
+            nf_str = f"[red]{nf}[/red]"
+        elif nf > nf_threshold_yellow:
+            nf_str = f"[yellow]{nf}[/yellow]"
+        else:
+            nf_str = str(nf)
         table.add_row(
             str(rank),
             labels[r.i],
@@ -1891,6 +1949,7 @@ def sweep_compare(
             ci_str,
             f"{r.p_value_raw:.3f}",
             f"{r.p_value_bh:.3f}",
+            nf_str,
             sig_marker,
         )
 
