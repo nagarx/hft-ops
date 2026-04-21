@@ -35,10 +35,18 @@ from hft_ops.paths import PipelinePaths
 # Monorepo root via SSoT helper (Phase V.A.0). The sweep fingerprint
 # integration tests exercise real production sweep templates shipped
 # under hft-ops/experiments/sweeps/ — skip cleanly in standalone
-# checkouts where the sweep template file or trainer sibling is absent.
+# checkouts where ANY of the required templates or the trainer sibling
+# is absent. Subpaths flagged by V.A.0 audit (Agent 1 finding #2): the
+# Phase 5 FULL-A template tests at lines 207/221/233 assert template
+# existence with bare `assert` — moving those asserts to the module-
+# level `require_monorepo_root` gate converts ERROR → clean SKIP on
+# partial checkouts.
 _REPO_ROOT = require_monorepo_root(
     "lob-model-trainer/src/lobtrainer/config/merge.py",
     "hft-ops/experiments/sweeps/e5_phase2_sweep.yaml",
+    "hft-ops/experiments/sweeps/loss_ablation.yaml",
+    "hft-ops/experiments/sweeps/horizon_sensitivity.yaml",
+    "hft-ops/experiments/sweeps/backtest_cost_sensitivity.yaml",
 )
 _SWEEP_PATH = (
     _REPO_ROOT / "hft-ops" / "experiments" / "sweeps" / "e5_phase2_sweep.yaml"
