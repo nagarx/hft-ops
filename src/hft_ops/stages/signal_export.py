@@ -281,6 +281,17 @@ class SignalExportRunner:
                 compat_fp = _harvest_compatibility_fingerprint(resolved_output_dir)
                 if compat_fp is not None:
                     result.captured_metrics["compatibility_fingerprint"] = compat_fp
+                # Phase V.1 L1.2 (2026-04-21): persist the resolved absolute
+                # signal-export output_dir into captured_metrics so
+                # cli.py::_record_experiment can attach it to the
+                # ExperimentRecord. Closes Agent 2 H1 (manifest-move
+                # resilience): future consumers (`hft-ops sweep compare`,
+                # `hft-ops ledger show`) read this field directly instead of
+                # re-resolving the manifest at query time.
+                if resolved_output_dir is not None:
+                    result.captured_metrics["signal_export_output_dir"] = str(
+                        resolved_output_dir
+                    )
             else:
                 result.status = StageStatus.FAILED
                 result.error_message = (

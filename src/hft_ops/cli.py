@@ -513,6 +513,7 @@ def _record_experiment(
     # use DataConfig.feature_set. ExperimentRecord stores None gracefully.
     feature_set_ref: Optional[Dict[str, str]] = None
     compatibility_fingerprint: Optional[str] = None  # Phase V.A.4 (2026-04-21)
+    signal_export_output_dir: Optional[str] = None   # Phase V.1 L1.2 (2026-04-21)
     if "signal_export" in results:
         raw_ref = results["signal_export"].captured_metrics.get("feature_set_ref")
         if isinstance(raw_ref, dict):
@@ -527,6 +528,13 @@ def _record_experiment(
         raw_fp = results["signal_export"].captured_metrics.get("compatibility_fingerprint")
         if isinstance(raw_fp, str):
             compatibility_fingerprint = raw_fp
+        # Phase V.1 L1.2: attach resolved signal_export.output_dir captured
+        # at RUN TIME (not re-resolved from manifest post-hoc). Closes
+        # Agent 2 H1 manifest-move-resilience gap. Downstream tooling
+        # (statistical_compare adapter, ledger show) reads this directly.
+        raw_sig_dir = results["signal_export"].captured_metrics.get("signal_export_output_dir")
+        if isinstance(raw_sig_dir, str) and raw_sig_dir:
+            signal_export_output_dir = raw_sig_dir
 
     record = ExperimentRecord(
         experiment_id=experiment_id,
@@ -535,6 +543,7 @@ def _record_experiment(
         fingerprint=fingerprint,
         feature_set_ref=feature_set_ref,
         compatibility_fingerprint=compatibility_fingerprint,
+        signal_export_output_dir=signal_export_output_dir,
         provenance=provenance,
         contract_version=manifest.experiment.contract_version,
         training_config=training_config,

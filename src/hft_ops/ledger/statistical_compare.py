@@ -98,10 +98,20 @@ def _resolve_signal_dir(
 ) -> Path:
     """Resolve a record's signal-export output directory.
 
-    The index entry (lightweight) does NOT carry ``manifest_path``, so we
-    load the full ``ExperimentRecord`` via ``ledger.get(experiment_id)``
-    and then re-parse the manifest to get the signal-export output_dir
-    (which may reference pipeline variables).
+    Resolution precedence (Phase V.1 L1.2 2026-04-21 — closes Agent 2 H1
+    manifest-move-resilience gap):
+
+    1. PREFERRED: ``record.signal_export_output_dir`` — absolute path
+       captured at RUN TIME by ``SignalExportRunner.run`` + attached by
+       ``cli.py::_record_experiment``. Available for all Phase-V.1-and-later
+       runs. If the path still exists, use it directly — no manifest
+       re-parse, no variable substitution, no fragility against monorepo
+       moves or post-run manifest edits.
+
+    2. FALLBACK: re-parse manifest via ``record.manifest_path`` and
+       re-resolve ``stages.signal_export.output_dir`` through
+       ``paths.resolve(...)``. Used only for pre-V.1.L1.2 records
+       (``signal_export_output_dir=None``) — graceful back-compat.
 
     Args:
         record_entry: ledger index entry (from ``ledger.filter(...)``).
@@ -114,7 +124,9 @@ def _resolve_signal_dir(
         ``signal_metadata.json``.
 
     Raises:
-        ValueError: if the record or manifest cannot be located.
+        ValueError: if the record cannot be located, or if BOTH the
+            preferred and fallback paths fail to resolve (manifest missing
+            AND signal_export_output_dir absent/non-existent).
     """
     exp_id = record_entry.get("experiment_id")
     full_record = ledger.get(exp_id)
@@ -125,13 +137,25 @@ def _resolve_signal_dir(
             f"index? run `hft-ops ledger rebuild-index`)."
         )
 
+    # PREFERRED: run-time-captured signal_export_output_dir (V.1.L1.2+)
+    stored_sig_dir = getattr(full_record, "signal_export_output_dir", None)
+    if isinstance(stored_sig_dir, str) and stored_sig_dir:
+        candidate = Path(stored_sig_dir)
+        if candidate.exists():
+            return candidate
+        # Captured path exists on record but directory was removed — fall
+        # through to manifest re-resolution in case the manifest points
+        # somewhere else (e.g., operator moved outputs).
+
+    # FALLBACK: re-parse manifest (pre-V.1.L1.2 records, or when the
+    # captured path has been moved/deleted).
     manifest_path = full_record.manifest_path
     if not manifest_path or not Path(manifest_path).exists():
         raise ValueError(
-            f"compare_sweep_statistical: manifest for '{exp_id}' not at "
-            f"{manifest_path!r}. Signal-dir cannot be resolved without the "
-            f"manifest (post-Phase-8A sweep runs materialize manifests under "
-            f"hft-ops/ledger/runs/<exp>_<ts>/; check that path still exists)."
+            f"compare_sweep_statistical: record '{exp_id}' has no resolvable "
+            f"signal directory. signal_export_output_dir={stored_sig_dir!r} "
+            f"(unset or path missing); manifest_path={manifest_path!r} (also "
+            f"missing). Re-run the experiment or restore the output tree."
         )
 
     manifest = load_manifest(manifest_path)
