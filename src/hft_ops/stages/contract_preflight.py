@@ -45,7 +45,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from types import MappingProxyType
+from typing import Any, Dict, Mapping, Optional
 
 import yaml
 
@@ -74,7 +75,14 @@ logger = logging.getLogger(__name__)
 # Absent models fall through to the "unknown" WARN path (no constraint
 # applied; trainer surfaces its own error downstream).
 
-_INPUT_CONTRACTS: Dict[str, Dict[str, Any]] = {
+# Phase V.1 L2.4 (2026-04-21): the dict is frozen via `MappingProxyType` at
+# module load time (see `_INPUT_CONTRACTS` assignment below). The raw dict
+# is retained as `_INPUT_CONTRACTS_RAW` for test-suite introspection only
+# (no production code should mutate it). Per hft-rules §4 "No magic
+# numbers; use named constants with source citations" + §1 SSoT — the
+# table is the single source of truth for model constraints in hft-ops
+# until Phase VI replaces it with the snapshot-file architecture.
+_INPUT_CONTRACTS_RAW: Dict[str, Dict[str, Any]] = {
     "deeplob": {
         "min_features": 40,
         "max_features": 98,
@@ -136,6 +144,17 @@ _INPUT_CONTRACTS: Dict[str, Dict[str, Any]] = {
         "compatible_sources": ["any"],
     },
 }
+
+# Phase V.1 L2.4 public-facing frozen view. `MappingProxyType` creates a
+# read-only wrapper: callers (validate_input_contract, tests) can read
+# values but any mutation attempt (e.g., `_INPUT_CONTRACTS["tlob"]["min_features"] = 99`
+# or `_INPUT_CONTRACTS["new_model"] = {...}`) raises TypeError. Prevents
+# accidental runtime mutation at import-time (e.g., a test that monkeypatches
+# constraints without cleanup, poisoning subsequent tests). The inner
+# per-model dicts are NOT frozen — wrapping those recursively would require
+# a custom immutable dict type and isn't warranted for the MVP; the top-level
+# "can't add/remove models" guarantee is the load-bearing one.
+_INPUT_CONTRACTS: Mapping[str, Dict[str, Any]] = MappingProxyType(_INPUT_CONTRACTS_RAW)
 
 
 # =============================================================================

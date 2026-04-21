@@ -258,7 +258,8 @@ class TestConstraintTableSanity:
     by asserting the live registry is a subset of our table."""
 
     def test_table_covers_live_registry(self):
-        """Skip when lob-models not importable (standalone hft-ops checkout)."""
+        """Forward drift: lob-models adds a model, hft-ops table missing it.
+        Skip when lob-models not importable (standalone hft-ops checkout)."""
         pytest.importorskip("lobmodels")
         import lobmodels.models  # trigger @register side-effects
         from lobmodels.registry.core import ModelRegistry
@@ -271,6 +272,95 @@ class TestConstraintTableSanity:
             f"Models registered in lob-models but missing from hft-ops "
             f"_INPUT_CONTRACTS: {missing_from_table}. Update the table in "
             f"hft_ops.stages.contract_preflight (MVP drift-maintenance path)."
+        )
+
+    def test_table_does_not_contain_deleted_models(self):
+        """Reverse drift (Phase V.1 L2.5 2026-04-21): lob-models DELETES a
+        model but hft-ops table still has it. Non-critical (the dead entry
+        applies constraints that can never trigger) but symptomatic of a
+        forgotten sync step. Surfaces the drift at test time so future
+        Phase VI snapshot migration catches all cases — forward AND
+        reverse. Skip when lob-models not importable."""
+        pytest.importorskip("lobmodels")
+        import lobmodels.models  # trigger @register side-effects
+        from lobmodels.registry.core import ModelRegistry
+
+        registry_names = set(ModelRegistry.list_models())
+        table_names = set(_INPUT_CONTRACTS.keys())
+
+        missing_from_registry = table_names - registry_names
+        assert not missing_from_registry, (
+            f"Models in hft-ops _INPUT_CONTRACTS but MISSING from live "
+            f"lobmodels.ModelRegistry: {missing_from_registry}. Either a "
+            f"model was deleted upstream (remove the dead entry here) or "
+            f"the name changed (rename here). MVP drift-maintenance path."
+        )
+
+    def test_input_contracts_is_frozen_via_mapping_proxy(self):
+        """Phase V.1 L2.4 (2026-04-21): _INPUT_CONTRACTS is exposed as a
+        read-only MappingProxyType wrapper — runtime mutation
+        (monkeypatching, accidental assignment in a test that forgets
+        cleanup) must raise TypeError instead of silently poisoning
+        subsequent tests."""
+        from types import MappingProxyType
+        from hft_ops.stages.contract_preflight import _INPUT_CONTRACTS
+
+        assert isinstance(_INPUT_CONTRACTS, MappingProxyType), (
+            f"Expected _INPUT_CONTRACTS to be MappingProxyType; got "
+            f"{type(_INPUT_CONTRACTS).__name__}. The frozen wrapper "
+            f"prevents accidental runtime mutation — removing it opens "
+            f"the door to test-pollution / import-order-dependent bugs."
+        )
+        # Attempting to add a new top-level key must raise TypeError
+        with pytest.raises(TypeError):
+            _INPUT_CONTRACTS["phantom_model"] = {
+                "min_features": 1,
+                "max_features": None,
+                "min_sequence_length": 1,
+                "compatible_sources": ["any"],
+            }
+        # Attempting to delete an existing key must raise TypeError
+        with pytest.raises(TypeError):
+            del _INPUT_CONTRACTS["tlob"]
+
+    def test_contract_preflight_module_imports_are_torch_free(self):
+        """Phase V.1 L2.6 (2026-04-21): static AST analysis to lock the
+        architectural invariant that `hft_ops.stages.contract_preflight`
+        NEVER imports torch or lobmodels at module scope. hft-ops is
+        torch-free by design (root CLAUDE.md §Module Technical Map);
+        Phase VI snapshot-file migration must preserve this invariant.
+
+        This test catches an accidental `import lobmodels` at module
+        scope — which would (via lobmodels.__init__.py) pull 726 torch
+        modules into sys.modules and break the invariant silently.
+        """
+        import ast
+        import hft_ops.stages.contract_preflight as _module_under_test
+
+        src_path = Path(_module_under_test.__file__)
+        assert src_path.exists(), f"Module source not found: {src_path}"
+        tree = ast.parse(src_path.read_text())
+
+        module_scope_imports = []
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    module_scope_imports.append(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                module_scope_imports.append(node.module or "")
+
+        forbidden_prefixes = ("torch", "lobmodels", "lob_models", "lobtrainer")
+        offenders = [
+            imp for imp in module_scope_imports
+            if imp and any(imp.startswith(prefix) for prefix in forbidden_prefixes)
+        ]
+        assert not offenders, (
+            f"hft_ops.stages.contract_preflight must NOT import torch or "
+            f"lobmodels at module scope (hft-ops torch-free invariant — "
+            f"root CLAUDE.md §Module Technical Map). Offending imports: "
+            f"{offenders}. If a lazy import inside a function is needed, "
+            f"gate it with `if TYPE_CHECKING:` or an inline `import X` "
+            f"inside the function body."
         )
 
     def test_table_entries_have_required_fields(self):
