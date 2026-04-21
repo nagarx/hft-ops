@@ -102,14 +102,30 @@ def diff_experiments(
     Returns a dict with:
     - config_diffs: list of (key, value_a, value_b) for differing config values
     - metric_diffs: list of (metric, value_a, value_b, delta) for metric differences
-    - common: shared config values that are identical
+    - compatibility_fingerprint: Phase V.1 L2.2 (2026-04-21) — surfaces the
+      CompatibilityContract fingerprint divergence as a first-class diff field.
+      Values: ``None`` when the fingerprints AGREE (or both are None);
+      a ``Tuple[Optional[str], Optional[str]]`` (fp_a, fp_b) when they
+      DIFFER. A differing fingerprint means the two records were produced
+      against different signal-boundary contract versions — config diffs
+      alone may not surface this (e.g., same training_config but different
+      extraction provenance). The fingerprint is the authoritative
+      cross-experiment-comparability flag per the V.A.4 trust-column
+      design. If one side has the fingerprint and the other doesn't,
+      the diff still surfaces — the caller can decide whether that's a
+      meaningful provenance asymmetry (legacy record without harvest vs
+      post-V.A.4 record with harvest).
 
     Args:
         record_a: First experiment record.
         record_b: Second experiment record.
 
     Returns:
-        Structured diff dict.
+        Structured diff dict with keys:
+          - experiment_a (str), experiment_b (str)
+          - config_diffs (list)
+          - metric_diffs (list)
+          - compatibility_fingerprint (None | Tuple[Optional[str], Optional[str]])
     """
     config_diffs: List[Tuple[str, Any, Any]] = []
     metric_diffs: List[Tuple[str, Any, Any, Any]] = []
@@ -153,11 +169,22 @@ def diff_experiments(
                 delta = vb - va
             metric_diffs.append((f"backtest.{key}", va, vb, delta))
 
+    # Phase V.1 L2.2 (2026-04-21): surface CompatibilityContract fingerprint
+    # divergence as a first-class diff field. None when they match; tuple
+    # when they differ. Pre-V.A.4 records carry None — (None, None) → agree;
+    # (None, "abc...") → asymmetric provenance.
+    fp_a = getattr(record_a, "compatibility_fingerprint", None)
+    fp_b = getattr(record_b, "compatibility_fingerprint", None)
+    compatibility_fp_diff: Optional[Tuple[Optional[str], Optional[str]]] = (
+        (fp_a, fp_b) if fp_a != fp_b else None
+    )
+
     return {
         "experiment_a": record_a.experiment_id,
         "experiment_b": record_b.experiment_id,
         "config_diffs": config_diffs,
         "metric_diffs": metric_diffs,
+        "compatibility_fingerprint": compatibility_fp_diff,
     }
 
 
