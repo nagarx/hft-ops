@@ -68,7 +68,10 @@ stages:
 
   signal_export:
     enabled: true
-    script: "lob-model-trainer/scripts/export_hmhp_signals.py"
+    # Phase 6 6D (2026-04-17) archived `export_hmhp_signals.py`; the canonical
+    # replacement is `export_signals.py` (unified classification + regression
+    # exporter). Per EXPERIMENT_GUIDE.md Step 7. Fixed 2026-04-23 Frame 5 Task 1a.
+    script: "lob-model-trainer/scripts/export_signals.py"
     checkpoint: "${stages.training.output_dir}/checkpoints/best.pt"
     split: test
     output_dir: "${stages.training.output_dir}/signals/test"
