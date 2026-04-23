@@ -213,8 +213,18 @@ class SignalExportRunner:
             errors.append(f"Trainer directory not found: {trainer_dir}")
             return errors
 
-        # Validate the configured script exists
-        script_path = trainer_dir / stage.script
+        # Validate the configured script exists.
+        #
+        # V.1.5 Frame-5 Task-1c fix (2026-04-23): script path is PIPELINE-ROOT-
+        # RELATIVE by convention (matches `extraction.config`, `data.data_dir`,
+        # `stage.checkpoint` — all resolved via `config.paths.resolve()`).
+        # Previous `trainer_dir / stage.script` produced DOUBLED prefix
+        # (`/...lob-model-trainer/lob-model-trainer/scripts/...`) when manifests
+        # used the canonical pipeline-root-relative `lob-model-trainer/scripts/...`
+        # path. Bug had never surfaced because signal_export stage had never
+        # been exercised live. Unified with `config.paths.resolve(stage.script)`
+        # to match the pipeline-wide convention.
+        script_path = config.paths.resolve(stage.script)
         if not script_path.exists():
             errors.append(
                 f"Signal export script not found: {script_path} "
@@ -255,7 +265,8 @@ class SignalExportRunner:
             )
             return result
 
-        script = config.paths.trainer_dir / stage.script
+        # V.1.5 Frame-5 Task-1c fix: see matching comment at validate-site above.
+        script = config.paths.resolve(stage.script)
 
         cmd = [sys.executable, str(script)]
 

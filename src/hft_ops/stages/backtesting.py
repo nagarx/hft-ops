@@ -48,8 +48,18 @@ class BacktestRunner:
         if not backtester_dir.exists():
             errors.append(f"Backtester directory not found: {backtester_dir}")
 
-        # Validate the configured script exists
-        script_path = backtester_dir / stage.script
+        # Validate the configured script exists.
+        #
+        # V.1.5 Frame-5 Task-1c fix (2026-04-23): script path is PIPELINE-ROOT-
+        # RELATIVE by convention (matches `extraction.config`, `data.data_dir`,
+        # `stage.checkpoint` — all resolved via `config.paths.resolve()`).
+        # Previous `backtester_dir / stage.script` produced DOUBLED prefix
+        # (`/...lob-backtester/lob-backtester/scripts/...`) when manifests used
+        # the canonical pipeline-root-relative `lob-backtester/scripts/...`
+        # path. Bug had never surfaced because backtesting stage had never been
+        # exercised live via orchestrator. Unified with
+        # `config.paths.resolve(stage.script)` to match pipeline-wide convention.
+        script_path = config.paths.resolve(stage.script)
         if not script_path.exists():
             errors.append(
                 f"Backtest script not found: {script_path} "
@@ -83,7 +93,8 @@ class BacktestRunner:
             )
             return result
 
-        script = config.paths.backtester_dir / stage.script
+        # V.1.5 Frame-5 Task-1c fix: see matching comment at validate-site above.
+        script = config.paths.resolve(stage.script)
 
         cmd = [sys.executable, str(script)]
 
