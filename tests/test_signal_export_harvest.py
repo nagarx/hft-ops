@@ -182,3 +182,112 @@ class TestHarvestCompatFpBestEffortNone:
             meta = {"compatibility_fingerprint": bad}
             (tmp_path / "signal_metadata.json").write_text(json.dumps(meta))
             assert _harvest_compatibility_fingerprint(tmp_path) is None
+
+
+class TestHarvestCompatFpWarningEmission:
+    """V.1.5 follow-up (2026-04-23) — SDR-2 observability lock.
+
+    hft-rules §8 says "Never silently drop, clamp, or 'fix' data without
+    recording diagnostics." Harvester must emit a `RuntimeWarning` when a
+    fingerprint FIELD IS PRESENT but malformed — distinguishing producer
+    drift (bad) from legacy-record (expected).
+
+    Absent field → silent (no warning): legitimate pre-V.A.4 manifest, not
+    a drift signal.
+
+    Malformed field → warning: the trainer's exporter wrote something that
+    doesn't pass validation. Surfaces the producer/consumer contract skew
+    without failing the entire signal_export stage.
+    """
+
+    def test_absent_field_emits_no_warning(self, tmp_path: Path):
+        """Legacy manifest without the field → no WARN (expected path)."""
+        import warnings
+        (tmp_path / "signal_metadata.json").write_text(
+            json.dumps({"signal_type": "regression"})
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert _harvest_compatibility_fingerprint(tmp_path) is None
+        # Filter to ONLY our module's warnings (ignore deprecation noise
+        # from re-export shims)
+        ours = [
+            w for w in caught
+            if "harvest_compatibility_fingerprint" in str(w.message)
+        ]
+        assert ours == [], (
+            f"Absent field should not warn (legacy manifests are expected); "
+            f"got {[str(w.message) for w in ours]}"
+        )
+
+    def test_malformed_uppercase_emits_warning(self, tmp_path: Path):
+        """Field present but uppercase hex → RuntimeWarning citing the value."""
+        import warnings
+        (tmp_path / "signal_metadata.json").write_text(
+            json.dumps({"compatibility_fingerprint": "A" * 64})
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        assert result is None
+        ours = [
+            w for w in caught
+            if "harvest_compatibility_fingerprint" in str(w.message)
+        ]
+        assert len(ours) == 1, (
+            f"Expected exactly 1 warning for malformed value; "
+            f"got {len(ours)}: {[str(w.message) for w in ours]}"
+        )
+        msg = str(ours[0].message)
+        assert "malformed" in msg.lower() or "expected 64" in msg.lower()
+        assert "AAAA" in msg  # value surfaced in the warning
+        assert ours[0].category is RuntimeWarning
+
+    def test_malformed_non_string_emits_warning(self, tmp_path: Path):
+        """Non-string (int, list, dict) value → RuntimeWarning."""
+        import warnings
+        (tmp_path / "signal_metadata.json").write_text(
+            json.dumps({"compatibility_fingerprint": 42})
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        assert result is None
+        ours = [
+            w for w in caught
+            if "harvest_compatibility_fingerprint" in str(w.message)
+        ]
+        assert len(ours) == 1
+
+    def test_truncated_hex_emits_warning(self, tmp_path: Path):
+        """63-char hex → RuntimeWarning (too-short is a drift signal)."""
+        import warnings
+        (tmp_path / "signal_metadata.json").write_text(
+            json.dumps({"compatibility_fingerprint": "a" * 63})
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        assert result is None
+        ours = [
+            w for w in caught
+            if "harvest_compatibility_fingerprint" in str(w.message)
+        ]
+        assert len(ours) == 1
+
+    def test_valid_fingerprint_emits_no_warning(self, tmp_path: Path):
+        """Happy path — 64-lowercase-hex → no warning, fingerprint returned."""
+        import warnings
+        valid = "abc123" + "d" * 58  # 64 chars, lowercase hex
+        (tmp_path / "signal_metadata.json").write_text(
+            json.dumps({"compatibility_fingerprint": valid})
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        assert result == valid
+        ours = [
+            w for w in caught
+            if "harvest_compatibility_fingerprint" in str(w.message)
+        ]
+        assert ours == []

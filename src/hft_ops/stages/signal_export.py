@@ -46,7 +46,7 @@ def _harvest_compatibility_fingerprint(
     output_dir: Optional[Path],
 ) -> Optional[str]:
     """Harvest ``compatibility_fingerprint`` from signal_metadata.json
-    (Phase V.A.4, 2026-04-21).
+    (Phase V.A.4, 2026-04-21; V.1.5 follow-up WARN-log, 2026-04-23).
 
     The trainer's Phase II exporter embeds a ``CompatibilityContract``
     block + its SHA-256 ``fingerprint`` into signal_metadata.json. This
@@ -59,16 +59,27 @@ def _harvest_compatibility_fingerprint(
     the contract of ``_harvest_feature_set_ref`` — the ExperimentRecord
     stores None gracefully in that case, matching the dataclass default.
 
+    Observability (V.1.5 follow-up, closes SDR-2 from the 3rd-round data-flow
+    audit — hft-rules §8 "Never silently drop, clamp, or fix data without
+    recording diagnostics"):
+
+      * ABSENT field (legacy pre-V.A.4 exporter — no ``compatibility_fingerprint``
+        key anywhere in signal_metadata.json) → silent None (expected; not a
+        drift signal, just pre-Phase-V records).
+      * MALFORMED field (key present but value fails ``CONTENT_HASH_RE``
+        — e.g. uppercase hex, wrong length, non-hex chars) → ``warnings.warn``
+        citing the path + value, then silent None. This is a real drift signal:
+        the producer wrote something, but we can't validate it.
+      * Single WARN per unique (path, value) via stdlib default dedup —
+        no spam on 100-record sweep scans.
+
     Searches for signal_metadata.json at ``<output_dir>/signal_metadata.json``
     AND ``<output_dir>/*/signal_metadata.json`` (split subdirs) — same
     dual-layout support as ``_harvest_feature_set_ref``.
 
     Returns:
         64-char lowercase hex string (SHA-256 digest) on success;
-        None otherwise. Value is validated against
-        ``hft_contracts.signal_manifest.CONTENT_HASH_RE`` before return —
-        malformed values are silently dropped (fail-loud at the harvest
-        boundary; same defense-in-depth gate as feature_set_ref harvest).
+        None otherwise.
     """
     if output_dir is None or not output_dir.exists():
         return None
@@ -100,8 +111,26 @@ def _harvest_compatibility_fingerprint(
         raw = meta.get("compatibility_fingerprint")
         if raw is None and isinstance(meta.get("compatibility"), dict):
             raw = meta["compatibility"].get("fingerprint")
+        if raw is None:
+            # Field absent — legacy manifest. Not a drift signal.
+            continue
         if isinstance(raw, str) and CONTENT_HASH_RE.match(raw):
             return raw
+        # Field present but malformed — V.1.5 SDR-2 WARN path (hft-rules §8).
+        import warnings
+        display = repr(raw) if not isinstance(raw, str) else repr(raw[:80])
+        warnings.warn(
+            f"harvest_compatibility_fingerprint: rejected malformed value "
+            f"at {path} — expected 64-lowercase-hex SHA-256, got {display}. "
+            f"Record will be stored with compatibility_fingerprint=None. "
+            f"Inspect the trainer's signal-export step for producer drift.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        # Do not try other candidates once we saw a malformed value —
+        # more likely than not all candidates share the same producer bug,
+        # and further WARNs would be duplicates.
+        return None
 
     return None
 

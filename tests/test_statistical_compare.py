@@ -476,3 +476,239 @@ class TestLabelUniqueness:
                     metric="val_ic", n_bootstraps=10,
                 )
         assert "seed=42" in str(exc_info.value)
+
+
+# =============================================================================
+# V.1.5 SDR-8: axis-semantic cross-check against metadata horizons
+# =============================================================================
+
+
+class TestAxisSemanticCheck:
+    """V.1.5 follow-up (2026-04-23) — SDR-8 closure.
+
+    `_load_record_signals` previously accepted any (N, H) or (N,) labels
+    array with ``ndim in (1, 2)`` without validating which axis is which.
+    A transposed (H, N) array would silently pass (shape_0 == N, ndim==2)
+    and downstream ``arr[:, primary_horizon_idx]`` would read the wrong
+    axis — producing numerically valid but semantically nonsense results.
+
+    V.1.5 adds: when `meta["horizons"]` is a non-empty list, cross-check
+    `labels_arr.shape[1] == len(horizons)`. Mismatch raises fail-loud with
+    transpose vs genuine-skew diagnostic.
+
+    Absent `horizons` field (pre-Phase-II legacy manifests) → silent pass
+    for back-compat.
+    """
+
+    def _write_bad_shape_signals(
+        self, base_dir: Path, record_id: str,
+        *, labels_shape: tuple, horizons_meta: list,
+    ) -> Path:
+        """Write a bad-shape record fixture. labels_shape can be anything;
+        preds_shape always matches (to isolate the axis-mismatch, not the
+        shape-mismatch assertion which is covered elsewhere)."""
+        rng = np.random.default_rng(42)
+        labels = rng.standard_normal(labels_shape)
+        preds = rng.standard_normal(labels_shape)
+        sig_dir = base_dir / record_id
+        sig_dir.mkdir(parents=True, exist_ok=True)
+        np.save(sig_dir / "regression_labels.npy", labels)
+        np.save(sig_dir / "predicted_returns.npy", preds)
+        (sig_dir / "signal_metadata.json").write_text(json.dumps({
+            "signal_type": "regression",
+            "primary_horizon_idx": 0,
+            "horizons": horizons_meta,
+        }))
+        return sig_dir
+
+    def test_transposed_array_raises_with_transpose_hint(self, tmp_path: Path):
+        """labels shape (3, N) but horizons=[10,60,300] → 'TRANSPOSED' hint."""
+        sig = self._write_bad_shape_signals(
+            tmp_path, "rec_bad",
+            labels_shape=(3, 200),   # transposed (H, N) — matches shape[0]
+            horizons_meta=[10, 60, 300],
+        )
+        entries = _make_entries(["rec_bad"]) + _make_entries(["rec_bad2"])
+        # Second record also written so the adapter passes the < 2 check
+        sig2 = self._write_bad_shape_signals(
+            tmp_path, "rec_bad2",
+            labels_shape=(3, 200), horizons_meta=[10, 60, 300],
+        )
+        signal_dirs = {"rec_bad": sig, "rec_bad2": sig2}
+
+        def fake_resolve(e, l, p):
+            return signal_dirs[e["experiment_id"]]
+
+        with patch(
+            "hft_ops.ledger.statistical_compare._resolve_signal_dir",
+            side_effect=fake_resolve,
+        ):
+            with pytest.raises(ValueError) as exc_info:
+                compare_sweep_statistical(
+                    entries, ledger=None, paths=None,
+                    metric="val_ic", n_bootstraps=10,
+                )
+        assert "TRANSPOSED" in str(exc_info.value)
+        assert "(3, 200)" in str(exc_info.value)
+        assert "(N, 3)" in str(exc_info.value)
+
+    def test_genuine_shape_mismatch_raises_with_schema_hint(self, tmp_path: Path):
+        """labels shape (N, 2) with horizons=[10,60,300] → 'Signal-export
+        schema mismatch' (neither axis matches 3 horizons)."""
+        sig = self._write_bad_shape_signals(
+            tmp_path, "rec_skew",
+            labels_shape=(200, 2),   # ndim=2 but shape[1]=2 != 3
+            horizons_meta=[10, 60, 300],
+        )
+        sig2 = self._write_bad_shape_signals(
+            tmp_path, "rec_skew2",
+            labels_shape=(200, 2), horizons_meta=[10, 60, 300],
+        )
+        entries = _make_entries(["rec_skew"]) + _make_entries(["rec_skew2"])
+        signal_dirs = {"rec_skew": sig, "rec_skew2": sig2}
+
+        def fake_resolve(e, l, p):
+            return signal_dirs[e["experiment_id"]]
+
+        with patch(
+            "hft_ops.ledger.statistical_compare._resolve_signal_dir",
+            side_effect=fake_resolve,
+        ):
+            with pytest.raises(ValueError) as exc_info:
+                compare_sweep_statistical(
+                    entries, ledger=None, paths=None,
+                    metric="val_ic", n_bootstraps=10,
+                )
+        assert "schema mismatch" in str(exc_info.value)
+        assert "neither axis" in str(exc_info.value)
+
+    def test_happy_path_shape_matches_horizons_passes(self, tmp_path: Path):
+        """labels shape (N, 3) with horizons=[10,60,300] → passes silently."""
+        sig = self._write_bad_shape_signals(
+            tmp_path, "rec_good",
+            labels_shape=(200, 3),
+            horizons_meta=[10, 60, 300],
+        )
+        sig2 = self._write_bad_shape_signals(
+            tmp_path, "rec_good2",
+            labels_shape=(200, 3),
+            horizons_meta=[10, 60, 300],
+        )
+        entries = _make_entries(["rec_good"]) + _make_entries(["rec_good2"])
+        signal_dirs = {"rec_good": sig, "rec_good2": sig2}
+
+        def fake_resolve(e, l, p):
+            return signal_dirs[e["experiment_id"]]
+
+        with patch(
+            "hft_ops.ledger.statistical_compare._resolve_signal_dir",
+            side_effect=fake_resolve,
+        ):
+            # Must NOT raise the axis-mismatch error.
+            # (May still raise other errors — e.g., SHA paired check — because
+            # we generated random arrays with different seeds per call.
+            # We only assert the axis check did NOT fire.)
+            try:
+                compare_sweep_statistical(
+                    entries, ledger=None, paths=None,
+                    metric="val_ic", n_bootstraps=10,
+                )
+            except ValueError as e:
+                assert "TRANSPOSED" not in str(e), (
+                    f"Valid (N, H=3) should not trigger axis-mismatch; got: {e}"
+                )
+                assert "schema mismatch" not in str(e), (
+                    f"Valid (N, H=3) should not trigger schema-mismatch; got: {e}"
+                )
+                # SHA-paired-labels error is separate + expected here.
+
+    def test_legacy_manifest_without_horizons_passes(self, tmp_path: Path):
+        """Pre-Phase-II manifest (no 'horizons' key) → no axis check runs
+        (graceful back-compat; labels shape can be anything ndim-valid)."""
+        # Write a fixture with labels (200, 2) but NO horizons in metadata
+        rng = np.random.default_rng(42)
+        labels = rng.standard_normal((200, 2))
+        preds = rng.standard_normal((200, 2))
+        sig_dir = tmp_path / "rec_legacy"
+        sig_dir.mkdir(parents=True, exist_ok=True)
+        np.save(sig_dir / "regression_labels.npy", labels)
+        np.save(sig_dir / "predicted_returns.npy", preds)
+        (sig_dir / "signal_metadata.json").write_text(json.dumps({
+            "signal_type": "regression",
+            "primary_horizon_idx": 0,
+            # horizons intentionally absent — legacy manifest
+        }))
+        sig_dir2 = tmp_path / "rec_legacy2"
+        sig_dir2.mkdir(parents=True, exist_ok=True)
+        np.save(sig_dir2 / "regression_labels.npy", labels)
+        np.save(sig_dir2 / "predicted_returns.npy", preds)
+        (sig_dir2 / "signal_metadata.json").write_text(json.dumps({
+            "signal_type": "regression",
+            "primary_horizon_idx": 0,
+        }))
+        entries = _make_entries(["rec_legacy", "rec_legacy2"])
+        signal_dirs = {"rec_legacy": sig_dir, "rec_legacy2": sig_dir2}
+
+        def fake_resolve(e, l, p):
+            return signal_dirs[e["experiment_id"]]
+
+        with patch(
+            "hft_ops.ledger.statistical_compare._resolve_signal_dir",
+            side_effect=fake_resolve,
+        ):
+            # Legacy manifest: axis check MUST NOT fire (no 'horizons' key)
+            # Other errors may still occur but not the new axis check.
+            try:
+                compare_sweep_statistical(
+                    entries, ledger=None, paths=None,
+                    metric="val_ic", n_bootstraps=10,
+                )
+            except ValueError as e:
+                assert "TRANSPOSED" not in str(e)
+                assert "horizon-axis mismatch" not in str(e)
+
+    def test_empty_horizons_list_is_treated_as_legacy(self, tmp_path: Path):
+        """`horizons: []` (empty list) is NOT a drift signal — skip check.
+        Possible in incomplete Phase-II manifests; graceful handling."""
+        rng = np.random.default_rng(42)
+        labels = rng.standard_normal((200, 3))
+        preds = rng.standard_normal((200, 3))
+        sig_dir = tmp_path / "rec_empty_horizons"
+        sig_dir.mkdir(parents=True, exist_ok=True)
+        np.save(sig_dir / "regression_labels.npy", labels)
+        np.save(sig_dir / "predicted_returns.npy", preds)
+        (sig_dir / "signal_metadata.json").write_text(json.dumps({
+            "signal_type": "regression",
+            "primary_horizon_idx": 0,
+            "horizons": [],   # empty — treated as legacy
+        }))
+        sig_dir2 = tmp_path / "rec_empty_horizons2"
+        sig_dir2.mkdir(parents=True, exist_ok=True)
+        np.save(sig_dir2 / "regression_labels.npy", labels)
+        np.save(sig_dir2 / "predicted_returns.npy", preds)
+        (sig_dir2 / "signal_metadata.json").write_text(json.dumps({
+            "signal_type": "regression",
+            "primary_horizon_idx": 0,
+            "horizons": [],
+        }))
+        entries = _make_entries(["rec_empty_horizons", "rec_empty_horizons2"])
+        signal_dirs = {
+            "rec_empty_horizons": sig_dir,
+            "rec_empty_horizons2": sig_dir2,
+        }
+
+        def fake_resolve(e, l, p):
+            return signal_dirs[e["experiment_id"]]
+
+        with patch(
+            "hft_ops.ledger.statistical_compare._resolve_signal_dir",
+            side_effect=fake_resolve,
+        ):
+            try:
+                compare_sweep_statistical(
+                    entries, ledger=None, paths=None,
+                    metric="val_ic", n_bootstraps=10,
+                )
+            except ValueError as e:
+                assert "TRANSPOSED" not in str(e)
+                assert "schema mismatch" not in str(e)

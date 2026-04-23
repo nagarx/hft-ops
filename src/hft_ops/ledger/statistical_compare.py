@@ -154,9 +154,30 @@ def _resolve_signal_dir(
         # per hft-rules §8 "validate inputs at system boundaries."
         if candidate.is_dir():
             return candidate
-        # Captured path exists on record but directory was removed — fall
-        # through to manifest re-resolution in case the manifest points
-        # somewhere else (e.g., operator moved outputs).
+        # Captured path exists on record but directory was removed (or is
+        # a file, not a directory) — fall through to manifest re-resolution
+        # in case the manifest points somewhere else (e.g., operator moved
+        # outputs to archival storage).
+        #
+        # V.1.5 follow-up WARN (2026-04-23) — SDR-6 closure per hft-rules §8
+        # "Never silently drop ... without recording diagnostics." Emit a
+        # single RuntimeWarning per unique stored_sig_dir (Python's stdlib
+        # warning filters dedup by (category, module, lineno) by default so
+        # sweep compare over 100 records sharing the same moved-dir scenario
+        # emits ONE warning, not 100). Helps the operator notice when the
+        # monorepo output tree was moved, so they can decide whether to
+        # restore, re-run, or update the manifest.
+        import warnings
+        reason = "is a file, not a directory" if candidate.exists() else "no longer exists"
+        warnings.warn(
+            f"resolve_signal_dir: record '{exp_id}' stored "
+            f"signal_export_output_dir={stored_sig_dir!r} {reason}. "
+            f"Falling back to manifest re-resolution. "
+            f"If output tree was moved intentionally, this warning is safe; "
+            f"otherwise restore the directory or re-run the experiment.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     # FALLBACK: re-parse manifest (pre-V.1.L1.2 records, or when the
     # captured path has been moved/deleted).
@@ -252,6 +273,41 @@ def _load_record_signals(
 
     with open(meta_path) as f:
         meta = json.load(f)
+
+    # V.1.5 follow-up (2026-04-23) — SDR-8 axis-semantic check closure.
+    # Cross-check labels_arr.shape[1] against metadata horizons list to
+    # catch transposed (H, N) arrays that would silently pass the
+    # `ndim in (1, 2)` gate but read the WRONG axis as the primary horizon.
+    # Fail-loud per hft-rules §8 + §5 with an actionable hint distinguishing
+    # transpose (shape[0] matches horizons count) from genuine schema skew.
+    if labels_arr.ndim == 2:
+        meta_horizons = meta.get("horizons")
+        # `horizons` is a Phase II manifest field. Legacy pre-Phase-II
+        # manifests lack it — skip silently (graceful back-compat; not a
+        # drift signal). Only cross-check when the field is a non-empty list.
+        if isinstance(meta_horizons, list) and len(meta_horizons) > 0:
+            expected_H = len(meta_horizons)
+            if labels_arr.shape[1] != expected_H:
+                if labels_arr.shape[0] == expected_H:
+                    hint = (
+                        f" Axis order appears TRANSPOSED: array is "
+                        f"{labels_arr.shape} but horizons list has "
+                        f"{expected_H} entries — expected shape "
+                        f"(N, {expected_H}). Re-export signals with a "
+                        f"trainer that respects the (N, H) layout contract."
+                    )
+                else:
+                    hint = (
+                        f" Signal-export schema mismatch: neither axis of "
+                        f"{labels_arr.shape} matches len(horizons)="
+                        f"{expected_H}. Signal export is broken."
+                    )
+                raise ValueError(
+                    f"compare_sweep_statistical: record '{exp_id}' "
+                    f"horizon-axis mismatch — regression_labels shape "
+                    f"{labels_arr.shape} incompatible with metadata "
+                    f"horizons={meta_horizons}.{hint}"
+                )
 
     # Primary horizon resolution (precedence per SignalManifest contract)
     primary_h = meta.get("primary_horizon_idx")
