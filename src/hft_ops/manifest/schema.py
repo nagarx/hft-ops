@@ -166,15 +166,46 @@ class TrainingStage:
 class BacktestParams:
     """Backtest parameter set.
 
+    Only ``initial_capital``, ``position_size``, and ``spread_bps`` are passed
+    to the current backtester scripts (readability / regression / spread_signal).
+    All other fields are DEPRECATED — see per-field notes. Removal deadline
+    for deprecated fields: 2026-10-31.
+
     All values have sensible defaults that can be overridden per-experiment.
+
+    Args:
+        initial_capital: Starting capital for backtest (USD). Passed as
+            ``--initial-capital``.
+        position_size: Position size as fraction of capital (0.0-1.0).
+            Passed as ``--position-size``.
+        spread_bps: Maximum bid-ask spread in basis points for entry. Passed
+            as ``--max-spread-bps`` (Phase 7.5-B.1 renamed from `--spread-bps`
+            to match current backtester script argparse).
+        slippage_bps: DEPRECATED (Phase 7.5-B.1, 2026-04-23) — no current
+            backtester script accepts ``--slippage-bps``. Field retained for
+            back-compat with 2 existing manifests (`nvda_hmhp_tb_volscaled.yaml`,
+            `e5_60s_importance_audit.yaml`). Runner no longer passes this flag.
+            Removal: 2026-10-31. Migration: slippage is now built into the
+            IBKR-calibrated cost model inside scripts.
+        threshold: DEPRECATED — master-backtester-era field. No current
+            script accepts ``--threshold``. Removal: 2026-10-31.
+        no_short: DEPRECATED — master-backtester-era field. No current
+            script accepts ``--no-short``. Removal: 2026-10-31.
+        device: DEPRECATED — master-backtester-era field. Backtester scripts
+            run CPU-only (numpy-vectorized). No ``--device`` flag.
+            Removal: 2026-10-31.
     """
 
     initial_capital: float = 100_000.0
     position_size: float = 0.1
     spread_bps: float = 1.0
+    # DEPRECATED as of Phase 7.5-B.1 (2026-04-23); removal 2026-10-31
     slippage_bps: float = 0.5
+    # DEPRECATED — no backtester script accepts --threshold; removal 2026-10-31
     threshold: float = 0.0
+    # DEPRECATED — no backtester script accepts --no-short; removal 2026-10-31
     no_short: bool = False
+    # DEPRECATED — backtester scripts run CPU-only; removal 2026-10-31
     device: str = "cpu"
 
 
@@ -182,32 +213,72 @@ class BacktestParams:
 class BacktestingStage:
     """Backtest stage configuration.
 
+    Phase V.1.5 Frame-5 Task-1c Bug #5 closure (Phase 7.5-B.1, 2026-04-23):
+    BacktestRunner previously constructed a cmd with many flags that NO
+    current backtester script accepts. The runner was designed against a
+    pre-existing "master backtester" that was refactored into 3 specialized
+    scripts (readability / regression / spread_signal) without updating the
+    runner's arg protocol. Several fields on this dataclass are now
+    OPERATIONALLY DEAD (runner no longer passes them to subprocess) and
+    marked DEPRECATED for removal 2026-10-31. See per-field notes.
+
+    For script-specific flags (`--min-agreement` readability, `--zero-dte`
+    regression, `--exchange ARCX`, `--commission`, `--hold-events`, etc.),
+    use the ``extra_args`` field — that is the documented escape hatch for
+    passing any flag the shared cmd construction doesn't surface.
+
     Args:
         enabled: Whether to run this stage.
-        script: Backtest script to invoke, relative to backtester_dir.
-            Defaults to ``scripts/backtest_deeplob.py``. Other supported scripts:
-            ``scripts/run_readability_backtest.py``, ``scripts/run_regression_backtest.py``,
-            ``scripts/run_spread_signal_backtest.py``. Script-specific args are
-            passed via ``extra_args`` or ``params_file``.
-        model_checkpoint: Path to the model checkpoint file.
-        data_dir: Path to feature exports for backtesting.
+        script: Backtest script path, RELATIVE TO PIPELINE ROOT (not
+            backtester_dir — Phase V.1.5 Frame-5 Task-1c unified the
+            script-path convention). Defaults to
+            ``scripts/backtest_deeplob.py`` for back-compat; production
+            manifests should use one of:
+            ``lob-backtester/scripts/run_readability_backtest.py`` (HMHP
+            classification + confirmation gate),
+            ``lob-backtester/scripts/run_regression_backtest.py`` (TLOB /
+            HMHP-R regression), or
+            ``lob-backtester/scripts/run_spread_signal_backtest.py``
+            (spread-based signals, NON-ORCHESTRATABLE — see docstring).
         signals_dir: Path to signals output from SignalExportStage (for
-            signal-based backtests like readability / regression).
-        horizon_idx: Horizon index for backtesting. Use "${resolved.horizon_idx}"
-            to auto-resolve from the training stage.
-        params: Backtest parameters (for backtest_deeplob.py compatibility).
-        params_file: Optional path to a script-specific YAML config (passed
-            via ``--params-file`` to scripts that support it).
-        extra_args: Additional CLI arguments to pass to backtest script.
+            signal-based backtests). Runner passes this as ``--signals``
+            (renamed from ``--signals-dir`` in Phase 7.5-B.1).
+        params: Backtest parameters (initial_capital, position_size,
+            spread_bps). See `BacktestParams` for per-field notes.
+        extra_args: Additional CLI arguments to pass to backtest script
+            (e.g., `["--min-agreement", "1.0"]` for readability-specific
+            flags). THIS IS THE DOCUMENTED ESCAPE HATCH for flags not
+            surfaced by the shared cmd construction.
+
+        model_checkpoint: DEPRECATED (Phase 7.5-B.1, 2026-04-23) — no
+            current backtester script accepts ``--model-checkpoint``.
+            Signal-based backtests read from `signals_dir` (trainer
+            already ran inference into the signal files during
+            SignalExportStage). Field retained for back-compat; removal
+            2026-10-31.
+        data_dir: DEPRECATED — no current script accepts ``--data-dir``.
+            Legacy master-backtester artifact. Removal 2026-10-31.
+        horizon_idx: DEPRECATED — no current script accepts
+            ``--horizon-idx``. Use ``extra_args: ["--primary-horizon-idx", "0"]``
+            if a script supports horizon selection (readability accepts
+            ``--primary-horizon-idx``). Removal 2026-10-31.
+        params_file: DEPRECATED — no current script accepts
+            ``--params-file``. YAML params should be embedded in manifest
+            or passed explicitly via ``extra_args``. Removal 2026-10-31.
     """
 
     enabled: bool = True
     script: str = "scripts/backtest_deeplob.py"
+    # DEPRECATED as of Phase 7.5-B.1 (2026-04-23); removal 2026-10-31
     model_checkpoint: str = ""
+    # DEPRECATED — no backtester script accepts --data-dir; removal 2026-10-31
     data_dir: str = ""
     signals_dir: str = ""
+    # DEPRECATED — use extra_args=["--primary-horizon-idx",...] instead
+    # Removal 2026-10-31
     horizon_idx: Optional[int] = None
     params: BacktestParams = field(default_factory=BacktestParams)
+    # DEPRECATED — no backtester script accepts --params-file; removal 2026-10-31
     params_file: str = ""
     extra_args: List[str] = field(default_factory=list)
 
