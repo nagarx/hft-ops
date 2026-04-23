@@ -36,7 +36,6 @@ Module placement:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -45,6 +44,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from hft_contracts.provenance import hash_file
 from hft_metrics.ic import spearman_ic
 from hft_metrics.pairwise import (
     PairwiseResult,
@@ -206,13 +206,16 @@ def _resolve_signal_dir(
     return paths.resolve(signal_stage.output_dir)
 
 
-def _sha256_file(path: Path) -> str:
-    """Streaming SHA-256 (8KB chunks) — used for the paired-labels check."""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
+# V.1.5 A1 (2026-04-23): SSoT consolidation — retired the local
+# `_sha256_file` helper. Previously this module inlined a 3rd divergent
+# copy of SHA-256 file hashing (alongside hft_contracts.provenance.hash_file
+# and hft_evaluator.fast_gate._hash_file) with semantics that raised on
+# missing file. Now delegates to the canonical
+# `hft_contracts.provenance.hash_file(..., missing_ok=False)` — preserves
+# the raise-on-missing contract this module needs (callers already assert
+# file existence via `_load_record_signals`'s required-file gate at line
+# 226-235) while collapsing the duplication identified by Agent 3's
+# Phase V 3rd-round architecture audit.
 
 
 def _load_record_signals(
@@ -342,7 +345,7 @@ def _load_record_signals(
         primary_horizon_idx=primary_h,
         regression_labels_full=labels_arr,
         predicted_returns_full=preds_arr,
-        regression_labels_sha256=_sha256_file(labels_path),
+        regression_labels_sha256=hash_file(labels_path, missing_ok=False),
     )
 
 
