@@ -186,7 +186,58 @@ def _build_training(raw: Dict[str, Any]) -> TrainingStage:
     )
 
 
+_KNOWN_BACKTESTING_KEYS = frozenset({
+    "enabled",
+    "script",
+    "model_checkpoint",
+    "data_dir",
+    "signals_dir",
+    "horizon_idx",
+    "params",
+    "params_file",
+    "extra_args",
+})
+
+
 def _build_backtesting(raw: Dict[str, Any]) -> BacktestingStage:
+    # Phase 7.5-B.3 (2026-04-23) — Final-validation-round closure per
+    # hft-rules §8 "Never silently drop, clamp, or 'fix' data without
+    # recording diagnostics." 5-agent adversarial audit of the Phase 7.5
+    # cycle (5th agent's Chain B SDR-1/SDR-2) surfaced live-fs evidence
+    # that 3 production HMHP manifests declare `readability:` / `holding:` /
+    # `costs:` BLOCKS at the `backtesting:` top-level that BacktestingStage
+    # does NOT declare. Loader silently dropped these.
+    #
+    # Operator-facing impact: `nvda_hmhp_128feat_arcx_h10.yaml` declares
+    # `costs: {exchange: ARCX}` but runner never sees it → subprocess
+    # defaults to `--exchange XNAS` → ARCX experiment runs on XNAS cost
+    # model → silent-wrong-result. Same risk class for `readability.min_agreement`,
+    # `holding.hold_events`, etc. — coincidentally aligned with defaults
+    # TODAY but silently breaks whenever operator wants non-default values.
+    #
+    # This fix: emit WARN on unknown top-level keys. Converts silent-drop
+    # to operator-visible diagnostic. Full typed-dataclass migration (adding
+    # `ReadabilityConfig` / `HoldingConfig` / `CostsConfig` sub-fields +
+    # runner-side flag emission) is Phase 8+ scope; this surgical fix is
+    # sufficient to UNBLOCK Task 1d first-live-run without silent-wrong
+    # results.
+    import warnings
+    unknown_keys = set(raw.keys()) - _KNOWN_BACKTESTING_KEYS
+    if unknown_keys:
+        warnings.warn(
+            f"BacktestingStage loader: silently dropping unknown top-level "
+            f"keys {sorted(unknown_keys)!r} (not declared on BacktestingStage "
+            f"schema). If you intended these as backtester-script flags, "
+            f"move the values into `stages.backtesting.extra_args:` list "
+            f"(e.g., `extra_args: [\"--exchange\", \"ARCX\", "
+            f"\"--min-agreement\", \"1.0\"]`). Current schema declares: "
+            f"{sorted(_KNOWN_BACKTESTING_KEYS)!r}. Phase 8+ will add "
+            f"typed sub-dataclasses for `readability`/`holding`/`costs` "
+            f"blocks with structured cmd-flag routing.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
     params_raw = raw.get("params", {})
     horizon_idx = raw.get("horizon_idx")
     if isinstance(horizon_idx, str) and "${" in horizon_idx:
