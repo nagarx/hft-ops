@@ -98,38 +98,56 @@ class BacktestRunner:
 
         cmd = [sys.executable, str(script)]
 
-        cmd.extend(["--experiment", manifest.experiment.name])
+        # Phase 7.5-B.1 (2026-04-23) — closes Bug #5 of the Frame 5 Task 1 audit.
+        # Runner previously passed `--experiment`, `--data-dir`, `--signals-dir`,
+        # `--horizon-idx`, `--params-file`, `--spread-bps`, `--slippage-bps`,
+        # `--threshold`, `--no-short`, `--device` — ALL rejected by argparse
+        # on the current backtester scripts (`run_readability_backtest.py`,
+        # `run_regression_backtest.py`, `run_spread_signal_backtest.py`) which
+        # expect `--signals`, `--max-spread-bps`, `--commission`, `--name`,
+        # `--exchange`, `--manifest`, `--output-dir`, plus script-specific flags.
+        #
+        # Bug had never surfaced because the backtesting stage had never been
+        # exercised live via the orchestrator (Frame 5 Task 1 discovery: 0/34
+        # ledger records are live). The legacy dead fields (`data_dir`,
+        # `horizon_idx`, `params_file`, `model_checkpoint`, `slippage_bps`,
+        # `threshold`, `no_short`, `device`) are KEPT in the schema for
+        # back-compat (2 existing manifests reference them) but STRIPPED from
+        # the cmd construction here — marked deprecated in schema docstrings
+        # with 2026-10-31 removal deadline (Phase 7.5-B.2 follow-up).
+        #
+        # Script-specific flags (readability `--min-agreement`, regression
+        # `--zero-dte`, exchange `--exchange=ARCX`, etc.) MUST be passed via
+        # manifest's `stage.extra_args` list. The runner passes a minimal
+        # common-denominator set of flags; extra_args is the documented escape
+        # hatch.
 
-        if stage.data_dir:
-            data_dir = str(config.paths.resolve(stage.data_dir))
-            cmd.extend(["--data-dir", data_dir])
-
+        # REQUIRED args (accepted by ALL 3 backtester scripts)
         if stage.signals_dir:
-            signals_dir = str(config.paths.resolve(stage.signals_dir))
-            cmd.extend(["--signals-dir", signals_dir])
+            signals = str(config.paths.resolve(stage.signals_dir))
+            cmd.extend(["--signals", signals])
 
-        if stage.horizon_idx is not None:
-            cmd.extend(["--horizon-idx", str(stage.horizon_idx)])
+        # Script name — maps to backtester argparse `--name` (for output-dir
+        # naming + gate report identification).
+        cmd.extend(["--name", manifest.experiment.name])
 
-        if stage.params_file:
-            params_file = str(config.paths.resolve(stage.params_file))
-            cmd.extend(["--params-file", params_file])
+        # Ledger linkage — backtester scripts accept `--manifest` to record
+        # the authoring manifest path in their output for cross-tool traceability.
+        if manifest.manifest_path:
+            cmd.extend(["--manifest", manifest.manifest_path])
 
+        # Numeric params with CORRECT flag names (scripts use `--max-spread-bps`,
+        # NOT `--spread-bps`; scripts have NO `--slippage-bps` or `--device` —
+        # drop those entirely).
         params = stage.params
         cmd.extend(["--initial-capital", str(params.initial_capital)])
         cmd.extend(["--position-size", str(params.position_size)])
-        cmd.extend(["--spread-bps", str(params.spread_bps)])
-        cmd.extend(["--slippage-bps", str(params.slippage_bps)])
+        cmd.extend(["--max-spread-bps", str(params.spread_bps)])
 
-        if params.threshold > 0:
-            cmd.extend(["--threshold", str(params.threshold)])
-
-        if params.no_short:
-            cmd.append("--no-short")
-
-        if params.device != "cpu":
-            cmd.extend(["--device", params.device])
-
+        # Pass-through for script-specific args (readability `--min-agreement`
+        # / `--min-confidence`, regression `--zero-dte` / `--commission`, all
+        # exchange overrides, etc.). Operators set these explicitly in
+        # manifest YAML's `stages.backtesting.extra_args`.
         cmd.extend(stage.extra_args)
 
         script_basename = Path(stage.script).name
