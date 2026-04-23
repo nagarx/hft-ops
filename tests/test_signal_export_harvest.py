@@ -291,3 +291,84 @@ class TestHarvestCompatFpWarningEmission:
             if "harvest_compatibility_fingerprint" in str(w.message)
         ]
         assert ours == []
+
+
+class TestHarvestCompatFpPhaseACutoff:
+    """Phase A (2026-04-23) follow-up observability — post-Phase-A manifests
+    without a fingerprint trigger a WARN log (operator-facing signal of
+    producer-path regressions). Pre-cutoff manifests remain silent (legacy
+    behavior preserved).
+
+    Complements the V.1.5 malformed-field WARN path (
+    :class:`TestHarvestCompatFpWarningEmission`): that class locks "field
+    present but wrong", this class locks "field absent post-cutoff".
+
+    See ``FINGERPRINT_REQUIRED_AFTER_ISO`` in signal_export.py for the
+    cutoff constant definition.
+    """
+
+    def test_pre_cutoff_manifest_without_fingerprint_emits_no_warn(
+        self, tmp_path: Path, caplog,
+    ):
+        """Manifest with ``exported_at`` pre-cutoff OR missing → silent (legacy).
+
+        Before the Phase A cutoff date, absent fingerprint is EXPECTED
+        (Phase II shipped 2026-04-20, Phase A fix shipped 2026-04-23). We
+        MUST NOT WARN on legacy data — that would spam logs on every
+        historical record.
+        """
+        import logging as _logging
+        meta = {
+            "signal_type": "regression",
+            "exported_at": "2026-03-19T12:00:00+00:00",  # pre-cutoff
+            # No ``compatibility_fingerprint`` key.
+        }
+        (tmp_path / "signal_metadata.json").write_text(json.dumps(meta))
+        with caplog.at_level(_logging.WARNING, logger="hft_ops.stages.signal_export"):
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        assert result is None
+        # No WARN about post-Phase-A — legacy manifest is silent.
+        phase_a_warnings = [
+            rec for rec in caplog.records
+            if "post-Phase-A" in rec.getMessage()
+        ]
+        assert phase_a_warnings == [], (
+            "Pre-cutoff manifest should NOT emit a post-Phase-A WARN. "
+            "Absent fingerprint on legacy records is expected — any log spam "
+            "here would fire on every historical ledger record."
+        )
+
+    def test_post_cutoff_manifest_without_fingerprint_emits_warn(
+        self, tmp_path: Path, caplog,
+    ):
+        """Post-cutoff manifest missing fingerprint → WARN log with diagnostic.
+
+        This is the operator-facing signal that a trainer venv or producer
+        path has regressed — the trainer shipped a post-Phase-A signal
+        directory but the fingerprint was dropped. Harvester still returns
+        None gracefully; the WARN surfaces the regression without blocking
+        ledger ingestion.
+        """
+        import logging as _logging
+        meta = {
+            "signal_type": "regression",
+            "exported_at": "2026-05-01T12:00:00+00:00",  # post-cutoff
+            # No ``compatibility_fingerprint`` key.
+        }
+        (tmp_path / "signal_metadata.json").write_text(json.dumps(meta))
+        with caplog.at_level(_logging.WARNING, logger="hft_ops.stages.signal_export"):
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        assert result is None
+        # WARN should cite both the manifest path AND the exported_at stamp
+        # so operators can trace back to the producer invocation.
+        phase_a_warnings = [
+            rec for rec in caplog.records
+            if "post-Phase-A manifest" in rec.getMessage()
+        ]
+        assert len(phase_a_warnings) == 1, (
+            f"Expected exactly 1 post-Phase-A WARN for missing fingerprint "
+            f"on post-cutoff manifest; got {len(phase_a_warnings)}"
+        )
+        msg = phase_a_warnings[0].getMessage()
+        assert "2026-05-01" in msg, "WARN should cite the exported_at stamp"
+        assert "signal_metadata.json" in msg, "WARN should cite the manifest path"

@@ -42,6 +42,16 @@ from hft_contracts.signal_manifest import CONTENT_HASH_RE
 logger = logging.getLogger(__name__)
 
 
+# Phase A cutoff (2026-04-23): the date lob-model-trainer's Phase A producer-path
+# fix shipped. After this cutoff, EVERY ``signal_metadata.json`` exported by a
+# healthy trainer venv should carry a non-null ``compatibility_fingerprint``.
+# Absence post-cutoff is a real regression signal (producer-path bug, trainer
+# venv missing hft_contracts, or similar). The harvester emits a WARN log so
+# operators can detect silent regressions via log monitoring, without
+# disrupting ledger ingestion (the harvested value is still None, graceful).
+FINGERPRINT_REQUIRED_AFTER_ISO = "2026-04-23"
+
+
 def _harvest_compatibility_fingerprint(
     output_dir: Optional[Path],
 ) -> Optional[str]:
@@ -112,7 +122,26 @@ def _harvest_compatibility_fingerprint(
         if raw is None and isinstance(meta.get("compatibility"), dict):
             raw = meta["compatibility"].get("fingerprint")
         if raw is None:
-            # Field absent — legacy manifest. Not a drift signal.
+            # Phase A (2026-04-23): distinguish pre-cutoff manifests (legacy,
+            # silent) from post-cutoff manifests (drift signal, WARN). The
+            # ``exported_at`` field on signal_metadata.json is an ISO-8601
+            # UTC timestamp; string comparison against the cutoff date works
+            # because ISO-8601 strings sort lexicographically. A missing
+            # ``exported_at`` is treated as pre-cutoff — conservative: we
+            # don't warn on ambiguous data.
+            exported_at = meta.get("exported_at", "")
+            if isinstance(exported_at, str) and exported_at >= FINGERPRINT_REQUIRED_AFTER_ISO:
+                logger.warning(
+                    "harvest_compatibility_fingerprint: post-Phase-A manifest at "
+                    "%s has no compatibility_fingerprint (exported_at=%s). "
+                    "Possible producer-path regression — check trainer venv for "
+                    "hft_contracts availability + "
+                    "SignalExporter._build_compatibility_contract. Record will "
+                    "be stored with compatibility_fingerprint=None.",
+                    path, exported_at,
+                )
+            # Field absent — legacy manifest (pre-cutoff) or post-cutoff with
+            # diagnostic WARN above. Either way, continue to the next candidate.
             continue
         if isinstance(raw, str) and CONTENT_HASH_RE.match(raw):
             return raw
