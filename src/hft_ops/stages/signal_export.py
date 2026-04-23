@@ -193,6 +193,75 @@ def _harvest_feature_set_ref(
     return None
 
 
+def _resolve_signal_export_config(
+    stage: "SignalExportStage",  # forward ref to avoid TYPE_CHECKING churn
+    manifest: "ExperimentManifest",
+    config: "OpsConfig",
+) -> Optional[Path]:
+    """Resolve the trainer YAML path passed as `--config` to export_signals.py.
+
+    Phase 7.5-A (2026-04-23) — closes Bug #2 of the Frame 5 Task 1 audit.
+    The canonical `lob-model-trainer/scripts/export_signals.py` REQUIRES
+    `--config <trainer_yaml_path>` to reconstruct the Trainer pipeline
+    (normalization, feature selection, model instantiation, checkpoint
+    loading). Prior SignalExportRunner passed `--experiment <name>` which
+    `export_signals.py` rejects (argparse error).
+
+    3-tier resolution cascade (see `SignalExportStage` docstring):
+
+      **Priority 1**: ``stages.signal_export.config`` (explicit escape
+      hatch). If set, take precedence over auto-resolved paths. Use case:
+      operator wants signal_export to run against a DIFFERENT trainer
+      config than training (e.g., different split, different calibration).
+
+      **Priority 2**: ``<training.output_dir>/config.yaml`` (Phase 7.5-A+
+      auto-persisted by train.py after training). Handles BOTH legacy
+      wrapper manifests (`stages.training.config:`) AND Phase 1 wrapper-
+      less manifests (`stages.training.trainer_config:` inline dict) —
+      because train.py persists the effective config regardless of source
+      shape.
+
+      **Priority 3**: ``manifest.stages.training.config`` (legacy wrapper
+      fallback). Used when Priority 2 file isn't present yet (e.g.,
+      stages ran out of order, or training stage disabled + operator
+      re-using an old checkpoint without persisted config).
+
+    Returns:
+        Absolute `Path` to the resolved trainer YAML when one of the 3
+        tiers succeeds; ``None`` when ALL fail (caller MUST fail-loud
+        with a StageResult(FAILED) + actionable error message).
+
+    Rationale for returning None vs raising: consistent with
+    ``SignalExportRunner.run()`` error-handling contract — all failures
+    are surfaced as StageResult(FAILED) with structured messages, not
+    as exceptions out of the stage subsystem.
+    """
+    # Priority 1 — explicit escape hatch
+    if stage.config:
+        resolved = config.paths.resolve(stage.config)
+        if resolved.exists():
+            return resolved
+        # If operator explicitly set a path that doesn't exist, fail-loud:
+        # returning None triggers caller's actionable error message which
+        # cites all 3 tiers.
+        return None
+
+    # Priority 2 — auto-persisted by train.py after training
+    training = manifest.stages.training
+    if training.output_dir:
+        candidate = config.paths.resolve(training.output_dir) / "config.yaml"
+        if candidate.exists():
+            return candidate
+
+    # Priority 3 — legacy wrapper manifest path
+    if training.config:
+        resolved = config.paths.resolve(training.config)
+        if resolved.exists():
+            return resolved
+
+    return None
+
+
 class SignalExportRunner:
     """Runs trainer-side signal export before backtesting."""
 
@@ -242,11 +311,50 @@ class SignalExportRunner:
                         f"Signal export checkpoint not found: {checkpoint}"
                     )
 
-        if stage.split not in ("train", "val", "test"):
+        # Phase 7.5-A (2026-04-23) — restrict to splits export_signals.py accepts.
+        # The canonical `lob-model-trainer/scripts/export_signals.py` argparse
+        # declares `--split choices=["val", "test"]` — "train" is NOT accepted.
+        # Runner previously accepted "train" at manifest-validate time but the
+        # subprocess would crash; now fail-loud at validate time.
+        if stage.split not in ("val", "test"):
             errors.append(
                 f"Invalid signal_export.split: {stage.split!r} "
-                f"(expected 'train' | 'val' | 'test')"
+                f"(expected 'val' | 'test'; export_signals.py does not "
+                f"accept 'train' — signal export is a post-training artifact)"
             )
+
+        # Phase 7.5-A — cross-check the 3-tier config resolver can succeed.
+        # This is the manifest-load-time gate that fails BEFORE stage execution
+        # when the operator has not configured a resolvable trainer config.
+        # See `_resolve_signal_export_config` docstring for the cascade.
+        #
+        # Gated on `stage.enabled` so a disabled signal_export doesn't force
+        # operators to populate an unused config slot (e.g., training-only
+        # manifests should not require a signal_export config).
+        #
+        # Note: Priority 2 (`<training.output_dir>/config.yaml`) is checked
+        # conditionally — if the training stage is ENABLED in the same manifest,
+        # the file will be auto-persisted at run time by train.py even though
+        # it doesn't exist yet. We only fail-loud when BOTH Priorities 1 and 3
+        # are absent AND training stage is disabled (meaning Priority 2 will
+        # not be auto-populated).
+        if stage.enabled:
+            has_priority_1 = bool(stage.config)
+            has_priority_3 = bool(manifest.stages.training.config)
+            training_will_populate_priority_2 = manifest.stages.training.enabled
+            if not (
+                has_priority_1
+                or has_priority_3
+                or training_will_populate_priority_2
+            ):
+                errors.append(
+                    "signal_export stage cannot resolve trainer config: set one of "
+                    "(a) stages.signal_export.config (explicit escape hatch), "
+                    "(b) stages.training.config (legacy wrapper manifest path), "
+                    "OR (c) enable stages.training (auto-persists config.yaml to "
+                    "<training.output_dir>/config.yaml). All three are UNSET/disabled. "
+                    "See SignalExportStage docstring (§Config resolution) for details."
+                )
 
         return errors
 
@@ -268,9 +376,32 @@ class SignalExportRunner:
         # V.1.5 Frame-5 Task-1c fix: see matching comment at validate-site above.
         script = config.paths.resolve(stage.script)
 
-        cmd = [sys.executable, str(script)]
+        # Phase 7.5-A (2026-04-23) — resolve trainer config for `--config` arg.
+        # Prior runner passed `--experiment <name>` which is NOT accepted by
+        # the canonical `export_signals.py` (argparse requires `--config <path>`).
+        # Bug existed since Phase 6 6D archived the per-model export scripts
+        # (`export_hmhp_signals.py` accepted `--experiment`); `export_signals.py`
+        # was the unified replacement but the runner was never migrated.
+        # 3-tier resolver (see `SignalExportStage` docstring for full details):
+        resolved_config = _resolve_signal_export_config(stage, manifest, config)
+        if resolved_config is None:
+            result.status = StageStatus.FAILED
+            result.error_message = (
+                "SignalExportRunner cannot resolve trainer config path required "
+                "by `export_signals.py --config <path>`. Tried (in order): "
+                "(1) stages.signal_export.config (explicit escape hatch, UNSET); "
+                f"(2) <training.output_dir>/config.yaml (auto-persisted by "
+                f"train.py after Phase 7.5-A+; file not present); "
+                "(3) stages.training.config (legacy wrapper manifest path; UNSET). "
+                "Fix: set `stages.signal_export.config:` in the manifest OR set "
+                "`stages.training.config:` (legacy wrapper pattern) OR ensure the "
+                "training stage ran successfully to persist "
+                "<training.output_dir>/config.yaml."
+            )
+            return result
 
-        cmd.extend(["--experiment", manifest.experiment.name])
+        cmd = [sys.executable, str(script)]
+        cmd.extend(["--config", str(resolved_config)])
 
         if stage.checkpoint:
             checkpoint = str(config.paths.resolve(stage.checkpoint))

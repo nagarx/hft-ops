@@ -342,24 +342,62 @@ class PostTrainingGateStage:
 class SignalExportStage:
     """Signal export stage configuration.
 
-    Invokes a trainer-side signal export script (e.g., ``export_signals.py``,
-    ``export_hmhp_signals.py``) to materialize predictions from a checkpoint
-    into a ``signals/`` directory that the backtester consumes.
+    Invokes ``lob-model-trainer/scripts/export_signals.py`` to materialize
+    predictions from a trained checkpoint into a ``signals/`` directory that
+    the backtester consumes. Phase 6 6D (2026-04-17) archived the legacy per-
+    model scripts (``export_hmhp_signals.py``, ``export_regression_signals.py``,
+    ``export_tlob_regression_signals.py``) in favor of the unified
+    ``export_signals.py`` entry point.
 
     Runs BETWEEN training and backtesting. If disabled, backtesting stage
     must either reuse pre-existing signals or run its own export.
 
+    Config resolution (Phase 7.5-A, 2026-04-23): ``export_signals.py``
+    requires ``--config <trainer_yaml_path>`` to reconstruct the Trainer
+    pipeline (normalization, feature selection, model instantiation). The
+    SignalExportRunner resolves this path via a 3-tier fallback:
+
+      1. **Priority 1** (new-style wrapper-less manifest): if the trainer
+         stage ran with an inline ``trainer_config:`` dict, ``train.py``
+         persists the effective config to ``<training.output_dir>/config.yaml``
+         (Phase 7.5-A+ train.py extension). SignalExportRunner uses this path
+         by default.
+      2. **Priority 2** (legacy wrapper manifest): if the manifest declares
+         ``stages.training.config: <path>`` AND Priority 1 file does not yet
+         exist, fall back to ``manifest.stages.training.config`` (resolved
+         via ``config.paths.resolve``).
+      3. **Priority 3** (explicit escape hatch): ``SignalExportStage.config``
+         when set takes precedence over BOTH fallbacks. Use this when the
+         signal-export config must differ from training (e.g., different
+         split, different calibration settings).
+
+    Validator fails-loud if signal_export.enabled AND none of the 3
+    sources resolve to an existing file.
+
     Args:
         enabled: Whether to run this stage.
-        script: Signal export script, relative to trainer_dir.
+        script: Signal export script path, RELATIVE TO PIPELINE ROOT
+            (e.g., ``"lob-model-trainer/scripts/export_signals.py"``). Phase
+            V.1.5 Frame-5 Task-1c (2026-04-23) unified script-path resolution
+            across signal_export + backtesting stages to pipeline-root-
+            relative per the convention used by ``extraction.config`` +
+            ``data.data_dir`` + ``stage.checkpoint``.
+        config: Trainer YAML config path (Phase 7.5-A escape hatch). When
+            set, takes precedence over ``manifest.stages.training.config``
+            and the auto-persisted ``<training.output_dir>/config.yaml``.
+            Typically UNSET — operators rely on automatic resolution.
         checkpoint: Path to the trained model checkpoint.
-        split: Dataset split to export signals for (train | val | test).
+        split: Dataset split to export signals for (val | test). ``train``
+            is NOT accepted by ``export_signals.py`` (Phase 7.5-A fix).
         output_dir: Where to write signals/*.npy files.
-        extra_args: Additional CLI arguments to pass to the script.
+        extra_args: Additional CLI arguments to pass to the script (e.g.,
+            ``["--calibrate", "variance_match"]`` for regression
+            calibration, ``["--batch-size", "64"]`` for memory override).
     """
 
     enabled: bool = False
     script: str = "scripts/export_signals.py"
+    config: Optional[str] = None
     checkpoint: str = ""
     split: str = "test"
     output_dir: str = ""
