@@ -24,6 +24,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from hft_contracts.signal_manifest import CONTENT_HASH_RE
 from hft_ops.config import OpsConfig
 from hft_ops.ledger.comparator import compare_experiments, diff_experiments
 from hft_ops.ledger.dedup import check_duplicate, compute_fingerprint
@@ -48,6 +49,46 @@ from hft_ops.stages.training import TrainingRunner
 from hft_ops.stages.validation import ValidationRunner
 
 console = Console()
+
+
+def _validate_content_hash_option(
+    ctx: click.Context,
+    param: click.Parameter,
+    value: Optional[str],
+) -> Optional[str]:
+    """Click callback: fail-loud on malformed SHA-256 fingerprint inputs.
+
+    Phase V.1.5 follow-up (2026-04-23): closes SDR-3 from the Phase V
+    3rd-round data-flow audit. Previously ``--compatibility-fp UPPERCASE``
+    (or any non-64-lowercase-hex value) was passed verbatim to
+    ``ExperimentLedger.filter()`` which exact-matches — silently returning
+    zero records while giving the operator no signal that the input was
+    malformed. That's a hft-rules §5 silent-degrade violation.
+
+    Accepts None (option absent — pass through). Rejects everything else
+    that does not match ``hft_contracts.signal_manifest.CONTENT_HASH_RE``
+    (``^[a-f0-9]{64}$``) with an actionable ``click.BadParameter`` citing
+    the exact value and required form.
+
+    NOTE: does NOT silently lowercase — that would hide operator error
+    (wrong clipboard paste, truncated hex, typo). Fail-loud per hft-rules
+    §5 "fail fast with a precise error — never silently degrade."
+
+    Reused by any future command that accepts a content-hash parameter
+    (e.g., ``ledger show --compatibility-fp``, ``diff --compatibility-fp``).
+    """
+    if value is None:
+        return None
+    if not CONTENT_HASH_RE.match(value):
+        raise click.BadParameter(
+            f"expected 64 lowercase hex chars (SHA-256 fingerprint); got "
+            f"{value!r}. Fingerprints are case-sensitive (lowercase hex "
+            f"only). Check your clipboard paste; strip any surrounding "
+            f"quotes or whitespace.",
+            ctx=ctx,
+            param=param,
+        )
+    return value
 
 
 def _summarize_training_history(history: list) -> dict:
@@ -884,10 +925,13 @@ def ledger_fingerprint_explain(
     "--compatibility-fp",
     type=str,
     default=None,
+    callback=_validate_content_hash_option,
     help=(
         "Filter by exact CompatibilityContract fingerprint match "
-        "(64-hex SHA-256). Phase V.A.4: surfaces every experiment "
-        "produced against a specific contract version."
+        "(64 lowercase hex chars, SHA-256). Phase V.A.4: surfaces every "
+        "experiment produced against a specific contract version. "
+        "Malformed values (uppercase, truncated, non-hex) fail-loud at "
+        "parse time rather than silently returning zero results."
     ),
 )
 @click.pass_context
