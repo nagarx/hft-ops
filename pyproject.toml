@@ -8,7 +8,12 @@ version = "0.3.0-dev"
 description = "Central experiment orchestrator for the HFT pipeline"
 requires-python = ">=3.10"
 dependencies = [
-    "hft-contracts",
+    # Phase A.5.2 (2026-04-24) bumps the pin from bare to `>=2.3.0` —
+    # hft-ops signal_export consumes `hft_contracts.timestamp_utils.is_after_cutoff`
+    # which first shipped in hft-contracts 2.3.0 (Phase A.5.1). A pre-2.3.0
+    # install would fail at import time with ImportError. See hft-ops
+    # CHANGELOG [0.3.0-dev § A.5.2] for the migration note.
+    "hft-contracts>=2.3.0",
     "click>=8.0",
     "pyyaml>=6.0",
     "rich>=13.0",

@@ -372,3 +372,179 @@ class TestHarvestCompatFpPhaseACutoff:
         msg = phase_a_warnings[0].getMessage()
         assert "2026-05-01" in msg, "WARN should cite the exported_at stamp"
         assert "signal_metadata.json" in msg, "WARN should cite the manifest path"
+
+
+# =============================================================================
+# Phase A.5.2 (2026-04-24): timezone-aware cutoff comparison tests.
+#
+# Locks the BUG FIX for the pre-A.5.2 silent-wrong-result lexicographic
+# ``exported_at >= cutoff`` pattern. See commit A.5.2 (hft-ops) +
+# hft_contracts.timestamp_utils module docstring for the full bug-class
+# analysis.
+#
+# These tests collectively prove:
+#   1. The CORE BUG is fixed (non-UTC offset crossing cutoff midnight now
+#      correctly identifies as post-cutoff and triggers WARN). Pre-A.5.2
+#      would have silently dropped this.
+#   2. Naive timestamps (no offset) are interpreted as UTC per hft-rules §3
+#      canonical convention; inclusive `>=` semantics at exact boundary.
+#   3. Malformed ISO-8601 input does NOT crash the harvester; it emits a
+#      diagnostic WARN (hft-rules §8) + treats as pre-cutoff conservatively.
+#   4. The Z-suffix format works end-to-end (complements
+#      ``test_post_cutoff_manifest_without_fingerprint_emits_warn`` above
+#      which exercises ``+00:00`` notation).
+# =============================================================================
+
+
+class TestHarvestCompatFpTimezoneAware:
+    """A.5.2 UTC-aware cutoff comparison — locks the pre-A.5.2 bug-class fix.
+
+    Pre-A.5.2: ``exported_at >= FINGERPRINT_REQUIRED_AFTER_ISO`` was a
+    lexicographic string compare, silently returning pre-cutoff for any
+    non-UTC offset that crosses midnight (e.g. ``"2026-04-22T23:59:00-05:00"``
+    is strictly post-cutoff in UTC — ``2026-04-23T04:59:00+00:00`` — but
+    lex-compares as pre-cutoff). This silently suppressed the operator-
+    facing producer-regression WARN for every non-UTC-offset manifest.
+
+    Post-A.5.2: harvester routes through
+    ``hft_contracts.timestamp_utils.is_after_cutoff`` which normalizes both
+    sides to timezone-aware UTC datetimes before comparison.
+    """
+
+    def test_non_utc_offset_post_cutoff_triggers_warn(
+        self, tmp_path: Path, caplog,
+    ):
+        """THE A.5.2 BUG FIX. Pre-A.5.2 would NOT have fired the WARN.
+
+        ``2026-04-22T23:59:00-05:00`` is ``2026-04-23T04:59:00+00:00`` in UTC
+        — strictly after the ``2026-04-23`` cutoff. The pre-A.5.2 lex compare
+        returned False (the raw string `"2026-04-22T..."` lex-compares as
+        pre-cutoff vs `"2026-04-23"`). Under A.5.2 is_after_cutoff this
+        correctly returns True → post-Phase-A WARN fires.
+        """
+        import logging as _logging
+        meta = {
+            "signal_type": "regression",
+            "exported_at": "2026-04-22T23:59:00-05:00",  # UTC: 2026-04-23T04:59Z
+            # No ``compatibility_fingerprint`` key.
+        }
+        (tmp_path / "signal_metadata.json").write_text(json.dumps(meta))
+        with caplog.at_level(_logging.WARNING, logger="hft_ops.stages.signal_export"):
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        assert result is None
+        phase_a_warnings = [
+            rec for rec in caplog.records
+            if "post-Phase-A manifest" in rec.getMessage()
+        ]
+        assert len(phase_a_warnings) == 1, (
+            f"A.5.2 BUG FIX: non-UTC offset timestamp that crosses the "
+            f"cutoff midnight MUST trigger the post-Phase-A WARN "
+            f"(exported_at={meta['exported_at']!r} is UTC=2026-04-23T04:59Z, "
+            f"strictly post-cutoff). Pre-A.5.2 lex comparison missed this. "
+            f"Got {len(phase_a_warnings)} WARNs — if 0, the harvester has "
+            f"regressed to the pre-A.5.2 behavior."
+        )
+        # Explicitly cite the UTC conversion in the assertion so a future
+        # regression trace can reconstruct the bug class.
+        msg = phase_a_warnings[0].getMessage()
+        assert "-05:00" in msg, "WARN should cite the original exported_at stamp"
+
+    def test_naive_exact_cutoff_triggers_warn(
+        self, tmp_path: Path, caplog,
+    ):
+        """Naive timestamp at exact cutoff → WARN (inclusive `>=` semantics).
+
+        hft-rules §3 canonical convention: naive timestamps are UTC. A naive
+        ``"2026-04-23T00:00:00"`` equals the cutoff exactly in UTC. The
+        ``is_after_cutoff`` helper uses `>=`, so the boundary is inclusive
+        → post-Phase-A WARN fires.
+        """
+        import logging as _logging
+        meta = {
+            "signal_type": "regression",
+            "exported_at": "2026-04-23T00:00:00",  # Naive, exact cutoff
+        }
+        (tmp_path / "signal_metadata.json").write_text(json.dumps(meta))
+        with caplog.at_level(_logging.WARNING, logger="hft_ops.stages.signal_export"):
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        assert result is None
+        phase_a_warnings = [
+            rec for rec in caplog.records
+            if "post-Phase-A manifest" in rec.getMessage()
+        ]
+        assert len(phase_a_warnings) == 1, (
+            f"Naive exact-cutoff timestamp must trigger WARN via inclusive "
+            f"`>=` semantics. Got {len(phase_a_warnings)}."
+        )
+
+    def test_malformed_exported_at_does_not_crash(
+        self, tmp_path: Path, caplog,
+    ):
+        """Malformed ISO-8601 → diagnostic WARN + treat as pre-cutoff.
+
+        Harvester MUST NOT crash the signal-export stage on malformed
+        manifest data. The `is_after_cutoff` helper raises ValueError on
+        malformed input; the harvester catches it, emits a DIAGNOSTIC WARN
+        per hft-rules §8 ("never silently drop / clamp / 'fix' data without
+        recording diagnostics"), and treats as pre-cutoff (no post-Phase-A
+        WARN, since we cannot determine which side of the cutoff).
+        """
+        import logging as _logging
+        meta = {
+            "signal_type": "regression",
+            "exported_at": "not-a-real-timestamp",  # Malformed ISO-8601
+        }
+        (tmp_path / "signal_metadata.json").write_text(json.dumps(meta))
+        with caplog.at_level(_logging.WARNING, logger="hft_ops.stages.signal_export"):
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        # Primary invariant: no crash + None return.
+        assert result is None
+        # hft-rules §8: malformed data IS diagnostic-worthy → WARN.
+        malformed_warns = [
+            rec for rec in caplog.records
+            if "malformed exported_at" in rec.getMessage()
+        ]
+        assert len(malformed_warns) == 1, (
+            f"Malformed exported_at should emit a diagnostic WARN per "
+            f"hft-rules §8; got {len(malformed_warns)} WARNs."
+        )
+        # NO post-Phase-A WARN (we cannot determine cutoff side safely).
+        phase_a_warns = [
+            rec for rec in caplog.records
+            if "post-Phase-A manifest" in rec.getMessage()
+        ]
+        assert phase_a_warns == [], (
+            f"Malformed timestamp MUST NOT trigger the post-Phase-A WARN "
+            f"(conservative: we can't say which side of cutoff). "
+            f"Got: {[w.getMessage() for w in phase_a_warns]}"
+        )
+
+    def test_z_suffix_post_cutoff_triggers_warn(
+        self, tmp_path: Path, caplog,
+    ):
+        """Z-suffix post-cutoff → WARN.
+
+        Complements ``test_post_cutoff_manifest_without_fingerprint_emits_warn``
+        (which uses `+00:00` notation). A.5.2's ``parse_iso8601_utc``
+        normalizes `Z` → `+00:00` defensively before ``datetime.fromisoformat``
+        (Python < 3.11 compat). If the normalization is ever broken, this
+        test fires.
+        """
+        import logging as _logging
+        meta = {
+            "signal_type": "regression",
+            "exported_at": "2026-05-01T12:00:00Z",  # Z suffix, post-cutoff
+        }
+        (tmp_path / "signal_metadata.json").write_text(json.dumps(meta))
+        with caplog.at_level(_logging.WARNING, logger="hft_ops.stages.signal_export"):
+            result = _harvest_compatibility_fingerprint(tmp_path)
+        assert result is None
+        phase_a_warnings = [
+            rec for rec in caplog.records
+            if "post-Phase-A manifest" in rec.getMessage()
+        ]
+        assert len(phase_a_warnings) == 1, (
+            f"Z-suffix post-cutoff timestamp must trigger WARN (via "
+            f"is_after_cutoff Z-normalization path). Got "
+            f"{len(phase_a_warnings)}."
+        )

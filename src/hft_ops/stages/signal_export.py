@@ -39,6 +39,15 @@ from hft_ops.stages.base import (
 # hex pattern) + hft_contracts.canonical_hash.sha256_hex output format.
 from hft_contracts.signal_manifest import CONTENT_HASH_RE
 
+# Phase A.5.2 (2026-04-24): UTC-aware cutoff comparison SSoT. Replaces the
+# pre-A.5.2 silent-wrong-result lexicographic `exported_at >= cutoff` pattern
+# that silently returned pre-cutoff for non-UTC offset timestamps that cross
+# midnight (e.g. ``"2026-04-22T23:59:00-05:00"`` is strictly post-cutoff in
+# UTC — ``2026-04-23T04:59:00+00:00`` — but lex-compares as pre-cutoff).
+# See ``hft_contracts.timestamp_utils`` module docstring for the full
+# bug-class analysis.
+from hft_contracts.timestamp_utils import is_after_cutoff
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,26 +131,57 @@ def _harvest_compatibility_fingerprint(
         if raw is None and isinstance(meta.get("compatibility"), dict):
             raw = meta["compatibility"].get("fingerprint")
         if raw is None:
-            # Phase A (2026-04-23): distinguish pre-cutoff manifests (legacy,
-            # silent) from post-cutoff manifests (drift signal, WARN). The
+            # Phase A (2026-04-23), rewritten A.5.2 (2026-04-24) for UTC-aware
+            # comparison: distinguish pre-cutoff manifests (legacy, silent)
+            # from post-cutoff manifests (drift signal, WARN). The
             # ``exported_at`` field on signal_metadata.json is an ISO-8601
-            # UTC timestamp; string comparison against the cutoff date works
-            # because ISO-8601 strings sort lexicographically. A missing
-            # ``exported_at`` is treated as pre-cutoff — conservative: we
-            # don't warn on ambiguous data.
+            # timestamp (may or may not carry an explicit offset). Use the
+            # ``hft_contracts.timestamp_utils.is_after_cutoff`` SSoT helper
+            # instead of the pre-A.5.2 lexicographic `>=` pattern — the lex
+            # pattern silently returned pre-cutoff for non-UTC offsets that
+            # cross midnight (producer-side drift on a non-UTC host would
+            # have never surfaced). A missing / empty / non-string
+            # ``exported_at`` is treated as pre-cutoff — conservative, no
+            # WARN for ambiguous data.
             exported_at = meta.get("exported_at", "")
-            if isinstance(exported_at, str) and exported_at >= FINGERPRINT_REQUIRED_AFTER_ISO:
-                logger.warning(
-                    "harvest_compatibility_fingerprint: post-Phase-A manifest at "
-                    "%s has no compatibility_fingerprint (exported_at=%s). "
-                    "Possible producer-path regression — check trainer venv for "
-                    "hft_contracts availability + "
-                    "SignalExporter._build_compatibility_contract. Record will "
-                    "be stored with compatibility_fingerprint=None.",
-                    path, exported_at,
-                )
-            # Field absent — legacy manifest (pre-cutoff) or post-cutoff with
-            # diagnostic WARN above. Either way, continue to the next candidate.
+            if isinstance(exported_at, str) and exported_at:
+                try:
+                    is_post_cutoff = is_after_cutoff(
+                        exported_at, FINGERPRINT_REQUIRED_AFTER_ISO
+                    )
+                except ValueError as exc:
+                    # Malformed ISO-8601 — emit a DIAGNOSTIC WARN per hft-rules
+                    # §8 ("never silently drop / clamp / 'fix' data without
+                    # recording diagnostics"). Treat as pre-cutoff (conservative:
+                    # we cannot determine which side of the cutoff the
+                    # malformed timestamp belongs to). Deliberately DIFFERENT
+                    # message text from the post-Phase-A WARN so callers that
+                    # filter on that substring (see test_signal_export_harvest
+                    # ::TestHarvestCompatFpPhaseACutoff) aren't accidentally
+                    # double-triggered on malformed inputs.
+                    logger.warning(
+                        "harvest_compatibility_fingerprint: malformed "
+                        "exported_at in manifest at %s (%r): %s. Treating "
+                        "as pre-cutoff; no post-Phase-A WARN emitted for "
+                        "this record.",
+                        path, exported_at, exc,
+                    )
+                    is_post_cutoff = False
+                if is_post_cutoff:
+                    logger.warning(
+                        "harvest_compatibility_fingerprint: post-Phase-A "
+                        "manifest at %s has no compatibility_fingerprint "
+                        "(exported_at=%s). Possible producer-path "
+                        "regression — check trainer venv for hft_contracts "
+                        "availability + "
+                        "SignalExporter._build_compatibility_contract. "
+                        "Record will be stored with "
+                        "compatibility_fingerprint=None.",
+                        path, exported_at,
+                    )
+            # Field absent / empty / non-string / pre-cutoff / malformed —
+            # all continue to next candidate. Diagnostics already emitted
+            # above for post-cutoff + malformed cases.
             continue
         if isinstance(raw, str) and CONTENT_HASH_RE.match(raw):
             return raw
