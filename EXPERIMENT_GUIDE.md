@@ -359,7 +359,7 @@ experiment:
   name: "unique_experiment_id"
   description: "What this experiment tests"
   hypothesis: "What we expect to find"
-  contract_version: "2.2"
+  contract_version: "3.0"
   tags: [nvda, hmhp, ...]
 
 pipeline_root: ".."
@@ -464,7 +464,7 @@ one manifest, rather than copy-pasting N configs.
 experiment:
   name: "my_sweep"
   hypothesis: "Required per hft-rules §13 — state what you expect and why."
-  contract_version: "2.2"
+  contract_version: "3.0"
 
 stages:
   # Base pipeline — fields here become defaults for every grid point.

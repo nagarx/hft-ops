@@ -87,7 +87,7 @@ def synthetic_export(tmp_path: Path) -> Path:
 
     # Top-level files (mirror production layout)
     (export_dir / "dataset_manifest.json").write_text(
-        json.dumps({"schema_version": "2.2", "n_features": 98})
+        json.dumps({"schema_version": "3.0", "n_features": 98})
     )
     (export_dir / "export_config.toml").write_text('[experiment]\nname="synthetic"\n')
     (export_dir / "hybrid_normalization_stats.json").write_text('{"strategy": "none"}')

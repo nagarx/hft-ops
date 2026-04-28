@@ -226,6 +226,52 @@ class TestComputeFingerprint:
             rationale="Manifest-level importance overrides must still be stripped.",
         )
 
+    def test_g6_e_contract_version_bump_diverges_fingerprint(
+        self, sample_manifest_yaml: Path, tmp_pipeline: Path
+    ):
+        """REV 3.1 Phase G G.6.E (deferred from G.4 per ULTRATHINK + adversarial-
+        validator scope review, 2026-04-27): locks the trust-column claim from
+        Phase V.A.4 — `compatibility_fingerprint` MUST diverge across schema
+        bumps.
+
+        Background: Phase G G.6.A bumped `[contract].schema_version` 2.2 → 3.0
+        (MAJOR per CLAUDE.md root rule). Pre-G.6.A all experiments lived at
+        contract_version "2.2"; post-G.6.A they live at "3.0". The Phase V.A.4
+        infrastructure relies on `compute_fingerprint` producing DIFFERENT
+        hashes for pre/post-bump experiments so `hft-ops ledger list
+        --compatibility-fp <hash>` cleanly partitions them. This test locks
+        that invariant: identical manifest content + different contract_version
+        MUST produce different fingerprints.
+
+        Without this test, a future regression that drops contract_version
+        from `compute_fingerprint`'s canonical input would silently merge
+        pre/post-bump experiments under the same fingerprint — defeating the
+        trust-column. The test fails LOUDLY in that scenario.
+
+        Bound to G.6.A's specific 2.2 → 3.0 bump (not just any pair) — locks
+        that THIS specific bump produces divergence, not merely "any change".
+        """
+        paths = PipelinePaths(pipeline_root=tmp_pipeline)
+
+        m_pre = load_manifest(sample_manifest_yaml)
+        m_pre.experiment.contract_version = "2.2"  # simulate pre-G.6.A
+
+        m_post = load_manifest(sample_manifest_yaml)
+        m_post.experiment.contract_version = "3.0"  # simulate post-G.6.A
+
+        fp_pre = compute_fingerprint(m_pre, paths)
+        fp_post = compute_fingerprint(m_post, paths)
+
+        assert fp_pre != fp_post, (
+            f"Phase G G.6.E LOCK: contract_version bump 2.2 → 3.0 MUST "
+            f"diverge fingerprint (Phase V.A.4 trust-column infrastructure). "
+            f"Got identical fingerprints {fp_pre!r} for both — `compute_fingerprint` "
+            f"is no longer including contract_version in its canonical input."
+        )
+        assert len(fp_pre) == 64 and len(fp_post) == 64, (
+            "fingerprints must be 64-char SHA-256 hex strings"
+        )
+
 
 def _assert_no_field_in_canonical_input(
     canonical_input: Any,

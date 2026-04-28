@@ -127,7 +127,7 @@ class TestLoadManifest:
         manifest = load_manifest(sample_manifest_yaml, now=now)
 
         assert manifest.experiment.name == "test_experiment"
-        assert manifest.experiment.contract_version == "2.2"
+        assert manifest.experiment.contract_version == "3.0"  # G.6.A bump
         assert "test" in manifest.experiment.tags
         assert manifest.stages.extraction.enabled is True
         assert manifest.stages.raw_analysis.enabled is False

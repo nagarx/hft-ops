@@ -1,6 +1,6 @@
 # hft-ops — Codebase Reference
 
-> **Version**: 0.3.0-dev | **Schema**: 2.2 | **Tests**: 621 pass + 5 env-dep failures (Phase 7.5 CYCLE COMPLETE baseline; +14 from Phase 7.5-A config resolver + 7 from Phase 7.5-B.3 loader WARN over Phase V.1's 600 baseline). The 5 env-dep `test_validation_stage.py` failures require `hft-feature-evaluator` installed in hft-ops venv — unchanged across V.1+7.5 cycles. | **Last Updated**: 2026-04-23 (Phase 7.5 CYCLE COMPLETE — Frame 5 Task 1 all 5 bugs shipped + final 5-agent validation closure)
+> **Version**: 0.3.0-dev | **Schema**: 3.0 (Phase G G.6.A bump 2.2 → 3.0 MAJOR per CLAUDE.md root rule: any modification to stable features 0-97 = BREAKING) | **Tests**: 633 pass (Phase G.6.A→G.6.E cascade validated; 5 env-dep `test_validation_stage.py` failures resolved earlier — REV 3.1 Phase G test suite all-green). | **Last Updated**: 2026-04-27 (REV 3.1 Phase G G.6.A→G.6.F — SchemaVersion bump cascade)
 >
 > **Phase 7.5 SHIPPED (2026-04-23)** — orchestrator integration gaps closed; first `hft-ops validate` + `hft-ops run --dry-run` successful in pipeline history:
 >   - **Task 1a** (`680ba77`): 3 HMHP manifests re-pointed from archived `export_hmhp_signals.py` (Phase 6 6D fossil) to canonical `lob-model-trainer/scripts/export_signals.py`.

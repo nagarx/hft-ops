@@ -40,7 +40,12 @@ def tmp_pipeline(tmp_path: Path) -> Path:
     contracts = root / "contracts"
     contracts.mkdir()
     (contracts / "pipeline_contract.toml").write_text(
-        '[contract]\nschema_version = "2.2"\n'
+        # Phase G G.6.A (2026-04-27): MAJOR bump 2.2 → 3.0 per CLAUDE.md
+        # root rule "modification to stable features (0-97) = BREAKING".
+        # Synthetic test TOML mirrors live `[contract].schema_version` so
+        # `validate_manifest` sees them match (would otherwise fail with
+        # "contract_version '2.2' != hft_contracts.SCHEMA_VERSION '3.0'").
+        '[contract]\nschema_version = "3.0"\n'
     )
 
     hft_contracts = root / "hft-contracts"
@@ -200,7 +205,9 @@ def sample_manifest_yaml(
             "name": "test_experiment",
             "description": "Test experiment for unit tests",
             "hypothesis": "Testing the orchestrator works",
-            "contract_version": "2.2",
+            # Phase G G.6.A (2026-04-27): bumped 2.2 → 3.0 to match live
+            # SCHEMA_VERSION; validator fails-loud if these diverge.
+            "contract_version": "3.0",
             "tags": ["test", "nvda"],
         },
         "pipeline_root": "..",
