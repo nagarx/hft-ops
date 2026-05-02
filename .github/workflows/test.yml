@@ -12,9 +12,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Minimum GITHUB_TOKEN permissions — OpenSSF least-privilege. This workflow
-# reads repo contents (this repo + two public siblings) and writes no
-# artifacts, so `contents: read` is sufficient.
+# Minimum GITHUB_TOKEN permissions — OpenSSF least-privilege. The default
+# GITHUB_TOKEN reads only this repo's own contents; sibling-repo checkouts
+# below pass `token: ${{ secrets.CROSS_REPO_PAT }}` for the two private
+# siblings (hft-feature-evaluator, hft-metrics). hft-contracts is public
+# and uses the default token. No artifacts written, so `contents: read`
+# suffices for this repo's GITHUB_TOKEN.
 permissions:
   contents: read
 
@@ -63,6 +66,7 @@ jobs:
           repository: nagarx/hft-feature-evaluator
           path: _deps/hft-feature-evaluator
           ref: main
+          token: ${{ secrets.CROSS_REPO_PAT }}
 
       # hft-feature-evaluator depends on hft-metrics transitively (IC,
       # bootstrap CI, Newey-West corrections). Pull it in the chain.
@@ -72,6 +76,7 @@ jobs:
           repository: nagarx/hft-metrics
           path: _deps/hft-metrics
           ref: main
+          token: ${{ secrets.CROSS_REPO_PAT }}
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
