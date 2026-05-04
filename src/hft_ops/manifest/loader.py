@@ -175,6 +175,19 @@ def _build_training(raw: Dict[str, Any]) -> TrainingStage:
             "(inline dict), not both. See TrainingStage docstring for guidance."
         )
 
+    # Phase X.1 v2 post-validation fix (Agent 4 Q8 2026-05-04): strict
+    # type-validation of strict_checkpoint_fingerprint. Pre-fix, a YAML
+    # string `"false"` would silently activate strict mode (string-truthy).
+    # Now any non-bool value raises ValueError with actionable message.
+    strict_ckpt_fp = raw.get("strict_checkpoint_fingerprint", False)
+    if not isinstance(strict_ckpt_fp, bool):
+        raise ValueError(
+            f"stages.training.strict_checkpoint_fingerprint must be bool "
+            f"(true/false), got {type(strict_ckpt_fp).__name__}={strict_ckpt_fp!r}. "
+            f"YAML 'true'/'false' parse as bool; quoted '\"true\"' is a string "
+            f"and is rejected."
+        )
+
     return TrainingStage(
         enabled=raw.get("enabled", True),
         config=config_path,
@@ -183,6 +196,7 @@ def _build_training(raw: Dict[str, Any]) -> TrainingStage:
         horizon_value=raw.get("horizon_value"),
         output_dir=raw.get("output_dir", ""),
         extra_args=raw.get("extra_args", []),
+        strict_checkpoint_fingerprint=strict_ckpt_fp,
     )
 
 

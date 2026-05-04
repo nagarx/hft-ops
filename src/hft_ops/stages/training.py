@@ -352,6 +352,12 @@ class TrainingRunner:
         if output_dir:
             cmd.extend(["--output-dir", output_dir])
 
+        # Phase X.1 v2 (2026-05-04): pass through operator opt-in for checkpoint
+        # fingerprint strict-mode. Default is warn-only at load_checkpoint per
+        # Phase X.4 promotion plan; this flag promotes to raise.
+        if getattr(stage, "strict_checkpoint_fingerprint", False):
+            cmd.append("--strict-checkpoint-fingerprint")
+
         cmd.extend(stage.extra_args)
 
         start = time.monotonic()

@@ -160,6 +160,12 @@ class TrainingStage:
     horizon_value: Optional[int] = None
     output_dir: str = ""
     extra_args: List[str] = field(default_factory=list)
+    # Phase X.1 v2 (2026-05-04): operator opt-in to checkpoint-fingerprint
+    # mismatch raise (default warn-only at trainer load_checkpoint per Phase X.4
+    # promotion plan). When True, hft-ops appends ``--strict-checkpoint-fingerprint``
+    # to the train.py subprocess invocation; load_checkpoint(strict_config=True)
+    # promotes CheckpointConfigMismatchWarning → CheckpointConfigMismatchError.
+    strict_checkpoint_fingerprint: bool = False
 
 
 @dataclass
