@@ -684,6 +684,7 @@ class ExperimentLedger:
         created_before: Optional[str] = None,
         sweep_id: Optional[str] = None,
         compatibility_fingerprint: Optional[str] = None,
+        experiment_provenance_hash: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Filter index entries by criteria.
 
@@ -698,6 +699,15 @@ class ExperimentLedger:
                 ``""`` in the index (per ExperimentRecord.index_entry
                 graceful-degradation contract); passing ``""`` explicitly
                 matches records without a fingerprint.
+            experiment_provenance_hash: Phase Y deployment (2026-05-05) —
+                exact 64-hex match on the composed full-stack identity hash
+                (data_export_fp + feature_set_content_hash + compatibility_fp
+                + model_config_hash). Surfaces every experiment with the
+                same complete-state identity (e.g., re-runs of the same
+                experiment for reproducibility verification, or
+                cross-experiment composability queries when comparing
+                same-data-different-arch ablations). Same empty-string
+                semantics as compatibility_fingerprint.
         """
         results: List[Dict[str, Any]] = []
 
@@ -741,6 +751,15 @@ class ExperimentLedger:
             # from "filter for empty-string" (records without fingerprint).
             if compatibility_fingerprint is not None:
                 if entry.get("compatibility_fingerprint", "") != compatibility_fingerprint:
+                    continue
+
+            # Phase Y deployment (2026-05-05): exact-match filter on the
+            # composed full-stack identity. Same empty-string semantics as
+            # compatibility_fingerprint above. The index_entry projection
+            # (experiment_record.py:634-641) already applies CONTENT_HASH_RE
+            # validation, so non-conforming values surface as "" here.
+            if experiment_provenance_hash is not None:
+                if entry.get("experiment_provenance_hash", "") != experiment_provenance_hash:
                     continue
 
             results.append(entry)

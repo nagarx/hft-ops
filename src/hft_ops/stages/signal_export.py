@@ -60,6 +60,14 @@ logger = logging.getLogger(__name__)
 # disrupting ledger ingestion (the harvested value is still None, graceful).
 FINGERPRINT_REQUIRED_AFTER_ISO = "2026-04-23"
 
+# Phase Y deployment cutoff (2026-05-05): the date the trainer's Phase Y
+# producer-path fix shipped (signal_metadata.json now emits ``model_config_hash``
+# at root via build_signal_metadata). Same observability contract as
+# FINGERPRINT_REQUIRED_AFTER_ISO — post-cutoff manifests missing this field
+# emit a WARN log so producer-side regressions surface, while pre-cutoff
+# legacy exports (R9-R14) gracefully get None without spam.
+MODEL_CONFIG_HASH_REQUIRED_AFTER_ISO = "2026-05-05"
+
 
 def _harvest_compatibility_fingerprint(
     output_dir: Optional[Path],
@@ -199,6 +207,113 @@ def _harvest_compatibility_fingerprint(
         # Do not try other candidates once we saw a malformed value —
         # more likely than not all candidates share the same producer bug,
         # and further WARNs would be duplicates.
+        return None
+
+    return None
+
+
+def _harvest_model_config_hash(
+    output_dir: Optional[Path],
+) -> Optional[str]:
+    """Harvest ``model_config_hash`` from signal_metadata.json (Phase Y deployment, 2026-05-05).
+
+    The trainer's Phase Y exporter emits ``model_config_hash`` at signal-
+    metadata root via ``build_signal_metadata`` (parallel to
+    ``compatibility_fingerprint``). This helper reads it back so hft-ops
+    can inject into ``record.training_config["model_config_hash"]`` —
+    closing the 4th of 4 source fields for ``compute_experiment_provenance_hash``
+    composition. Pre-Phase-Y, ``model_config_hash`` was written ONLY to
+    the checkpoint sidecar (``<ckpt>.pt`` dict + ``<ckpt>.pkl.config.json``)
+    which hft-ops never reads.
+
+    Best-effort: returns None on any failure (missing file, malformed JSON,
+    absent field, non-64-hex value) — same contract as
+    ``_harvest_compatibility_fingerprint``. The composer at
+    ``hft_contracts.experiment_record.compute_experiment_provenance_hash``
+    short-circuits to None on any None component (line 748:
+    ``if not all(components.values())``), so a missing field gracefully
+    propagates to ``record.experiment_provenance_hash = None`` without
+    raising.
+
+    Observability (mirrors Phase V.1.5 SDR-2 pattern, hft-rules §8):
+
+      * ABSENT field, pre-Phase-Y exporter (legacy) → silent None (expected).
+      * ABSENT field, post-cutoff exporter → ``logger.warning`` with
+        diagnostic citing exported_at — possible producer-path regression.
+      * MALFORMED field (uppercase, truncated, non-hex) → ``warnings.warn``
+        + silent None.
+
+    Searches at ``<output_dir>/signal_metadata.json`` AND
+    ``<output_dir>/*/signal_metadata.json`` — same dual-layout support as
+    sibling harvesters.
+
+    Returns:
+        64-char lowercase hex string (SHA-256 of canonical-JSON over
+        filtered ``model.params``) on success; None otherwise.
+    """
+    if output_dir is None or not output_dir.exists():
+        return None
+
+    candidates = [output_dir / "signal_metadata.json"]
+    try:
+        for sub in output_dir.iterdir():
+            if sub.is_dir():
+                candidates.append(sub / "signal_metadata.json")
+    except OSError:
+        return None
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            with open(path) as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(meta, dict):
+            continue
+        raw = meta.get("model_config_hash")
+        if raw is None:
+            # Phase Y cutoff observability: post-2026-05-05 manifest with
+            # no model_config_hash is a producer drift signal.
+            exported_at = meta.get("exported_at", "")
+            if isinstance(exported_at, str) and exported_at:
+                try:
+                    is_post_cutoff = is_after_cutoff(
+                        exported_at, MODEL_CONFIG_HASH_REQUIRED_AFTER_ISO
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "harvest_model_config_hash: malformed exported_at "
+                        "in manifest at %s (%r): %s. Treating as pre-cutoff; "
+                        "no post-Phase-Y WARN emitted.",
+                        path, exported_at, exc,
+                    )
+                    is_post_cutoff = False
+                if is_post_cutoff:
+                    logger.warning(
+                        "harvest_model_config_hash: post-Phase-Y manifest "
+                        "at %s has no model_config_hash (exported_at=%s). "
+                        "Possible producer-path regression — check trainer "
+                        "venv for compute_model_config_hash availability + "
+                        "build_signal_metadata kwarg propagation. Record "
+                        "will be stored with model_config_hash=None.",
+                        path, exported_at,
+                    )
+            continue
+        if isinstance(raw, str) and CONTENT_HASH_RE.match(raw):
+            return raw
+        # Malformed value present — WARN + return None (same pattern as compat_fp).
+        import warnings
+        display = repr(raw) if not isinstance(raw, str) else repr(raw[:80])
+        warnings.warn(
+            f"harvest_model_config_hash: rejected malformed value "
+            f"at {path} — expected 64-lowercase-hex SHA-256, got {display}. "
+            f"Record will be stored with model_config_hash=None. "
+            f"Inspect the trainer's signal-export step for producer drift.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return None
 
     return None
@@ -521,6 +636,16 @@ class SignalExportRunner:
                 compat_fp = _harvest_compatibility_fingerprint(resolved_output_dir)
                 if compat_fp is not None:
                     result.captured_metrics["compatibility_fingerprint"] = compat_fp
+                # Phase Y deployment (2026-05-05): harvest model_config_hash
+                # — closes the 4th of 4 source fields for
+                # compute_experiment_provenance_hash composition. cli.py
+                # injects this into training_config["model_config_hash"]
+                # before ExperimentRecord construction. None on pre-Phase-Y
+                # legacy signals (model_config_hash not yet in
+                # signal_metadata.json).
+                model_cfg_hash = _harvest_model_config_hash(resolved_output_dir)
+                if model_cfg_hash is not None:
+                    result.captured_metrics["model_config_hash"] = model_cfg_hash
                 # Phase V.1 L1.2 (2026-04-21): persist the resolved absolute
                 # signal-export output_dir into captured_metrics so
                 # cli.py::_record_experiment can attach it to the

@@ -569,6 +569,21 @@ def _record_experiment(
         raw_fp = results["signal_export"].captured_metrics.get("compatibility_fingerprint")
         if isinstance(raw_fp, str):
             compatibility_fingerprint = raw_fp
+        # Phase Y deployment (2026-05-05): inject model_config_hash into
+        # training_config so compute_experiment_provenance_hash can read
+        # it during composition. Pre-Phase-Y, training_config was loaded
+        # from the resolved trainer YAML which lacks model_config_hash
+        # (the hash is computed POST-construction, lives only in checkpoint
+        # sidecars). Phase Y emits it in signal_metadata.json which the
+        # SignalExportRunner harvester reads back. CONTENT_HASH_RE gate
+        # already applied at harvester (signal_export.py); trust here.
+        raw_mch = results["signal_export"].captured_metrics.get("model_config_hash")
+        if isinstance(raw_mch, str):
+            # Mutate the local training_config dict — this dict is the
+            # one passed to ExperimentRecord(...) below, so the injection
+            # propagates into record.training_config["model_config_hash"]
+            # which is exactly what compute_experiment_provenance_hash reads.
+            training_config["model_config_hash"] = raw_mch
         # Phase V.1 L1.2: attach resolved signal_export.output_dir captured
         # at RUN TIME (not re-resolved from manifest post-hoc). Closes
         # Agent 2 H1 manifest-move-resilience gap. Downstream tooling
@@ -599,6 +614,49 @@ def _record_experiment(
         status=status,
         stages_completed=stages_completed,
     )
+
+    # Phase Y deployment (2026-05-05): compose experiment_provenance_hash
+    # AFTER the record is constructed (all 4 source fields landed).
+    # compute_experiment_provenance_hash returns None when ANY of the 4
+    # components is missing — log a WARN diagnostic citing which fields
+    # are absent so operators can detect partial-coverage records via log
+    # monitoring (mirrors Phase V.1.5 SDR-2 observability convention,
+    # hft-rules §8 "never silently drop without recording diagnostics").
+    # Composition is a pure post-hoc derivation; mutating record.experiment_
+    # provenance_hash here is the canonical pattern (the field is dataclass-
+    # default None, set once after harvest).
+    from hft_contracts.experiment_record import compute_experiment_provenance_hash
+    provenance_hash = compute_experiment_provenance_hash(record)
+    if provenance_hash is not None:
+        record.experiment_provenance_hash = provenance_hash
+    else:
+        # Diagnose which sources are missing — operators see this in logs
+        # without crashing the run. Empty values count as missing per the
+        # composer's `if not all(components.values())` short-circuit.
+        missing = []
+        if not (record.provenance and record.provenance.data_dir_hash):
+            missing.append("provenance.data_dir_hash")
+        if not (record.feature_set_ref and record.feature_set_ref.get("content_hash")):
+            missing.append("feature_set_ref.content_hash")
+        if not record.compatibility_fingerprint:
+            missing.append("compatibility_fingerprint")
+        if not (record.training_config or {}).get("model_config_hash"):
+            missing.append("training_config.model_config_hash")
+        # Use module-level logger (already imported at top of cli.py).
+        # WARN level (not INFO) for consistency with the V.1.5 SDR-2
+        # observability convention (signal_export.py post-Phase-Y cutoff
+        # WARN at line 294). Composer-level partial-coverage diagnostic
+        # MUST surface at default log levels so operators see "all 4 needed
+        # but only 3 landed" cases without bumping log verbosity.
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "experiment_provenance_hash composition skipped — missing source(s): %s. "
+            "Record will be stored with experiment_provenance_hash=None (graceful). "
+            "Common causes: cached extraction (extraction.output_dir unset → empty data_dir_hash), "
+            "inline feature_indices: instead of feature_set: (None feature_set_ref), "
+            "signal_export stage disabled (no harvester run), or pre-Phase-Y trainer venv.",
+            ", ".join(missing) if missing else "unknown",
+        )
 
     ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
@@ -934,12 +992,28 @@ def ledger_fingerprint_explain(
         "parse time rather than silently returning zero results."
     ),
 )
+@click.option(
+    "--provenance-hash",
+    type=str,
+    default=None,
+    callback=_validate_content_hash_option,
+    help=(
+        "Filter by exact experiment_provenance_hash match (64 lowercase "
+        "hex chars, SHA-256). Phase Y deployment (2026-05-05): surfaces "
+        "every experiment with a specific full-stack identity (composes "
+        "data_export_fp + feature_set_content_hash + compatibility_fp + "
+        "model_config_hash). Use to find re-runs of the same experiment "
+        "(reproducibility audit) or compare same-data-different-arch "
+        "ablations cleanly. Malformed values fail-loud at parse time."
+    ),
+)
 @click.pass_context
 def ledger_list(
     ctx: click.Context,
     status: Optional[str],
     model_type: Optional[str],
     compatibility_fp: Optional[str],
+    provenance_hash: Optional[str],
 ) -> None:
     """List all experiments in the ledger.
 
@@ -948,6 +1022,13 @@ def ledger_list(
     column"). Use to trace every experiment that was trained against a
     specific contract version, e.g.,
     ``hft-ops ledger list --compatibility-fp abc123...``.
+
+    Phase Y deployment adds ``--provenance-hash <hex>`` for filtering by
+    the composed full-stack identity (data + features + compat + model_config).
+    Same data + same features + same arch + same loss-tuning invariants →
+    same provenance hash. Different ANY of the 4 → different hash. Enables
+    cross-experiment reproducibility queries:
+    ``hft-ops ledger list --provenance-hash 43374f95...``
     """
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
@@ -957,6 +1038,7 @@ def ledger_list(
         status=status,
         model_type=model_type,
         compatibility_fingerprint=compatibility_fp,
+        experiment_provenance_hash=provenance_hash,
     )
 
     if not entries:
