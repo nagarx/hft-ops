@@ -246,6 +246,228 @@ class TestPreflightTrainerConfigPropagatesValidation:
 
 
 # =============================================================================
+# N1 fix — `_base:` inheritance resolution at preflight + materialization
+# =============================================================================
+#
+# Forensic audit (lob-model-trainer/reports/TRAINING_PIPELINE_FORENSIC_AUDIT_2026_04_26.md)
+# flagged: trainer YAMLs using `_base: [...]` inheritance pattern have
+# `model.model_type` in a base file. Pre-N1-fix code paths read raw YAML
+# and missed `model.model_type`, raising ValueError before
+# validate_input_contract ran.
+#
+# These tests lock the structural fix (resolve `_base:` BEFORE write at
+# `_apply_overrides` + `_materialize_inline_config`; defensive resolve at
+# `preflight_trainer_config`).
+
+
+def _real_pipeline_paths():
+    """Return a `PipelinePaths` rooted at the actual monorepo so
+    `_load_trainer_merge_module` can find `merge.py`.
+
+    SKIPS the test when the trainer merge module is unavailable (standalone
+    hft-ops checkout / CI without sibling lob-model-trainer/). Mirrors the
+    `pytest.importorskip("lobmodels")` skip-guard pattern at
+    `TestConstraintTableSanity.test_table_covers_live_registry`. Phase X.1.J
+    cross-repo CI hotfix (commit `505474b` 2026-05-05) established the
+    skip-when-sibling-unavailable convention for cross-repo path tests.
+    """
+    from hft_ops.paths import PipelinePaths
+    paths = PipelinePaths.auto_detect()
+    merge_path = paths.trainer_dir / "src" / "lobtrainer" / "config" / "merge.py"
+    if not merge_path.exists():
+        pytest.skip(
+            f"N1 fix tests require trainer merge module at {merge_path} "
+            f"(standalone hft-ops checkout — skipping cross-repo integration "
+            f"tests; matches Phase X.1.J skip-when-sibling-unavailable pattern)"
+        )
+    return paths
+
+
+class TestPreflightBaseInheritance:
+    """N1 fix: preflight_trainer_config defensively resolves `_base:` when
+    `paths` is provided. Locks the structural-fix contract."""
+
+    def test_resolves_single_base_for_model_type(self, tmp_path):
+        """Leaf YAML carries only override keys; `_base:` points at a sibling
+        base file containing `model_type: tlob`. Preflight should resolve
+        the chain and pass validation against tlob constraints."""
+        # Base file (the canonical pattern from configs/bases/models/).
+        base_path = tmp_path / "base_tlob.yaml"
+        base_path.write_text(yaml.safe_dump({
+            "_partial": True,
+            "model": {"model_type": "tlob", "tlob_hidden_dim": 64},
+            "data": {
+                "feature_count": 98,
+                "sequence": {"window_size": 20},
+            },
+        }))
+
+        # Leaf — has `_base:` referencing base; carries only an override.
+        leaf_path = tmp_path / "leaf.yaml"
+        leaf_path.write_text(yaml.safe_dump({
+            "_base": ["base_tlob.yaml"],
+            "model": {"tlob_hidden_dim": 32},  # override
+        }))
+
+        # Without paths → the existing behavior path — would raise.
+        with pytest.raises(ValueError, match=r"missing model.model_type"):
+            preflight_trainer_config(leaf_path)
+
+        # With paths → resolves `_base:`, sees model_type=tlob, passes.
+        preflight_trainer_config(leaf_path, paths=_real_pipeline_paths())
+
+    def test_resolved_constraint_violation_propagates(self, tmp_path):
+        """N1 fix preserves constraint validation post-resolve. Build a
+        leaf that resolves to deeplob with feature_count=128 (above the
+        max_features=98 constraint); preflight must still raise the
+        constraint ValueError, not the missing-model_type ValueError."""
+        base_path = tmp_path / "base_deeplob.yaml"
+        base_path.write_text(yaml.safe_dump({
+            "_partial": True,
+            "model": {"model_type": "deeplob"},
+            "data": {"feature_count": 40, "sequence": {"window_size": 100}},
+        }))
+
+        leaf_path = tmp_path / "leaf_violation.yaml"
+        leaf_path.write_text(yaml.safe_dump({
+            "_base": ["base_deeplob.yaml"],
+            "data": {"feature_count": 128},  # constraint-violating override
+        }))
+
+        # Should raise the CONSTRAINT error (max_features=98), proving:
+        #   (a) `_base:` was resolved (model_type=deeplob found)
+        #   (b) override was applied AFTER resolve (feature_count=128)
+        #   (c) constraint check fires post-resolve.
+        with pytest.raises(ValueError, match=r"max_features=98"):
+            preflight_trainer_config(leaf_path, paths=_real_pipeline_paths())
+
+    def test_no_base_key_passes_through(self, tmp_path):
+        """N1 fix is no-op for flat configs (no `_base:` key)."""
+        cfg = {
+            "model": {"model_type": "tlob"},
+            "data": {"feature_count": 98, "sequence": {"window_size": 20}},
+        }
+        config_path = _write_trainer_yaml(tmp_path, cfg)
+        # Should pass with or without paths kwarg.
+        preflight_trainer_config(config_path)
+        preflight_trainer_config(config_path, paths=_real_pipeline_paths())
+
+
+class TestApplyOverridesBaseResolution:
+    """N1 fix Site B: `_apply_overrides` resolves `_base:` BEFORE writing.
+    Materialized YAML should be `_base:`-free with model.model_type filled."""
+
+    def test_apply_overrides_resolves_base(self, tmp_path):
+        """Source YAML uses `_base:` referencing a base file; materialized
+        output must have `_base:` removed AND model.model_type populated
+        from the base."""
+        from hft_ops.stages.training import _apply_overrides
+
+        base_path = tmp_path / "base_tlob.yaml"
+        base_path.write_text(yaml.safe_dump({
+            "_partial": True,
+            "model": {"model_type": "tlob"},
+            "data": {"feature_count": 98},
+        }))
+
+        leaf_path = tmp_path / "leaf.yaml"
+        leaf_path.write_text(yaml.safe_dump({
+            "_base": ["base_tlob.yaml"],
+            "data": {"data_dir": "/path/to/exports"},
+        }))
+
+        out_path = tmp_path / "resolved.yaml"
+        result = _apply_overrides(
+            leaf_path,
+            {"train.lr": 0.001},  # additional override
+            out_path,
+            paths=_real_pipeline_paths(),
+        )
+        assert result == out_path
+
+        # Read back the materialized YAML and verify:
+        with open(out_path) as f:
+            materialized = yaml.safe_load(f)
+
+        assert "_base" not in materialized, \
+            "Materialized YAML must NOT carry `_base:` (N1 fix)"
+        assert materialized["model"]["model_type"] == "tlob", \
+            "model.model_type must be populated from base (N1 fix)"
+        assert materialized["data"]["feature_count"] == 98, \
+            "data.feature_count must be populated from base"
+        assert materialized["data"]["data_dir"] == "/path/to/exports", \
+            "leaf override must be preserved"
+        assert materialized["train"]["lr"] == 0.001, \
+            "_apply_overrides override must be applied AFTER resolve"
+
+    def test_apply_overrides_no_paths_legacy_behavior(self, tmp_path):
+        """When paths=None (test fixtures, no PipelinePaths context), the
+        function preserves pre-N1 behavior: `_base:` is written verbatim.
+        This protects existing test fixtures that don't pass paths."""
+        from hft_ops.stages.training import _apply_overrides
+
+        leaf_path = tmp_path / "leaf.yaml"
+        leaf_path.write_text(yaml.safe_dump({
+            "_base": ["base_tlob.yaml"],
+            "data": {"data_dir": "/path/to/exports"},
+        }))
+
+        out_path = tmp_path / "resolved.yaml"
+        _apply_overrides(leaf_path, {}, out_path, paths=None)
+
+        with open(out_path) as f:
+            materialized = yaml.safe_load(f)
+        # Without paths, `_base:` is preserved (legacy pre-N1 behavior).
+        assert "_base" in materialized, \
+            "Without paths, _apply_overrides preserves _base: (legacy compat)"
+
+
+class TestMaterializeInlineBaseResolution:
+    """N1 fix Site C: `_materialize_inline_config` resolves `_base:` AFTER
+    absolutize, BEFORE write. The materialized YAML must be `_base:`-free."""
+
+    def test_materialize_inline_resolves_base(self, tmp_path):
+        """Inline cfg has relative `_base:` pointing at a real base file
+        in trainer_configs_root (mirrors actual production manifests)."""
+        from hft_ops.stages.training import _materialize_inline_config
+        from pathlib import Path as PathType
+
+        # Set up trainer_configs_root with a base file inside.
+        trainer_configs_root = tmp_path / "configs"
+        trainer_configs_root.mkdir()
+        base_path = trainer_configs_root / "base_tlob.yaml"
+        base_path.write_text(yaml.safe_dump({
+            "_partial": True,
+            "model": {"model_type": "tlob"},
+            "data": {"feature_count": 98, "sequence": {"window_size": 20}},
+        }))
+
+        inline_cfg = {
+            "_base": ["base_tlob.yaml"],  # relative path
+            "data": {"data_dir": "/exports"},
+        }
+
+        out_path = tmp_path / "resolved_inline.yaml"
+        _materialize_inline_config(
+            inline_cfg,
+            {},
+            out_path,
+            trainer_configs_root=trainer_configs_root,
+            paths=_real_pipeline_paths(),
+        )
+
+        with open(out_path) as f:
+            materialized = yaml.safe_load(f)
+
+        assert "_base" not in materialized, \
+            "Materialized inline YAML must NOT carry `_base:` (N1 fix)"
+        assert materialized["model"]["model_type"] == "tlob", \
+            "Inline merge must populate model.model_type from base"
+        assert materialized["data"]["feature_count"] == 98, \
+            "Inline merge must populate data.feature_count from base"
+
+
+# =============================================================================
 # _INPUT_CONTRACTS table sanity
 # =============================================================================
 

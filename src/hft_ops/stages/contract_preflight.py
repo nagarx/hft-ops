@@ -46,7 +46,17 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
+
+if TYPE_CHECKING:
+    # Type-only import — does NOT load `hft_ops.paths` at module-load time.
+    # The AST torch-free test (test_contract_preflight_module_imports_are_torch_free)
+    # only checks module-scope `import` / `from-import`; TYPE_CHECKING-gated
+    # imports are not evaluated at runtime so they are invisible to importlib.
+    # Concrete `_load_trainer_merge_module` is imported INSIDE
+    # preflight_trainer_config (function scope) on the rare path that has
+    # `paths` provided AND cfg has `_base:`.
+    from hft_ops.paths import PipelinePaths
 
 import yaml
 
@@ -252,7 +262,10 @@ def validate_input_contract(
         )
 
 
-def preflight_trainer_config(trainer_config_path: Path) -> None:
+def preflight_trainer_config(
+    trainer_config_path: Path,
+    paths: Optional["PipelinePaths"] = None,
+) -> None:
     """Load a resolved trainer YAML + extract (model, features, window) +
     delegate to ``validate_input_contract``.
 
@@ -269,8 +282,15 @@ def preflight_trainer_config(trainer_config_path: Path) -> None:
 
     Args:
         trainer_config_path: Absolute path to the materialized trainer YAML
-            (post ``_base:`` resolution + override application — i.e.,
-            what ``TrainingRunner.run`` calls ``effective_config``).
+            (typically post ``_base:`` resolution + override application,
+            i.e., what ``TrainingRunner.run`` calls ``effective_config``).
+        paths: Optional ``PipelinePaths``. When provided, ``_base:``
+            inheritance is resolved here as defense-in-depth (N1 fix —
+            forensic audit 2026-04-26 / verified 2026-05-05). Normally
+            no-op because Sites B+C of the N1 fix
+            (``_apply_overrides`` + ``_materialize_inline_config``) already
+            write a ``_base:``-free YAML. Defends against direct callers
+            who pass a raw ``_base:``-style YAML.
 
     Raises:
         ValueError: forwarded from ``validate_input_contract`` OR raised
@@ -292,6 +312,18 @@ def preflight_trainer_config(trainer_config_path: Path) -> None:
             f"Input contract pre-flight: trainer config at {trainer_config_path!r} "
             f"is not a mapping (got {type(cfg).__name__})."
         )
+
+    # N1 fix: defense-in-depth resolve `_base:` inheritance. Inline import
+    # keeps `lobtrainer` out of module scope (locked by AST test
+    # `test_contract_preflight_module_imports_are_torch_free`). Sites B+C of
+    # the N1 fix already resolve `_base:` before write, so this is a no-op
+    # in normal flow — but we keep it as defense against direct callers
+    # bypassing TrainingRunner.run.
+    if paths is not None and "_base" in cfg:
+        from hft_ops.ledger.dedup import _load_trainer_merge_module
+        merge_mod = _load_trainer_merge_module(paths)
+        if merge_mod is not None:
+            cfg = merge_mod.resolve_inheritance(cfg, trainer_config_path.resolve())
 
     model_block = cfg.get("model") or {}
     data_block = cfg.get("data") or {}

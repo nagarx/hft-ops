@@ -9,6 +9,7 @@ from the export metadata at runtime.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import sys
 import time
@@ -18,7 +19,9 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from hft_ops.config import OpsConfig
+from hft_ops.ledger.dedup import _load_trainer_merge_module
 from hft_ops.manifest.schema import ExperimentManifest
+from hft_ops.paths import PipelinePaths
 from hft_ops.stages.base import (
     StageResult,
     StageStatus,
@@ -43,6 +46,8 @@ _CLASSIFICATION_VAL_MAX_KEYS = (
     "val_macro_f1",
     "val_signal_rate",
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_horizon_idx(
@@ -97,10 +102,87 @@ def _apply_overrides_to_dict(
     return cfg
 
 
+def _resolve_trainer_inheritance(
+    cfg: Dict[str, Any],
+    config_path: Path,
+    paths: Optional[PipelinePaths],
+) -> Dict[str, Any]:
+    """Resolve `_base:` inheritance in a trainer YAML dict.
+
+    N1 fix (forensic audit 2026-04-26 / verified 2026-05-05): the trainer
+    materialization code paths (``_apply_overrides`` + ``_materialize_inline_config``)
+    used to write the cfg dict verbatim — leaving ``_base:`` keys present in
+    the materialized YAML. Downstream consumers like
+    ``hft_ops.stages.contract_preflight.preflight_trainer_config`` then read
+    the raw YAML and miss ``model.model_type`` / ``data.feature_count`` /
+    ``data.sequence.window_size`` (which live in the base files), raising
+    ValueError before ``validate_input_contract`` even runs. Calling this
+    helper before override + write fixes the gap structurally.
+
+    Reuses the torch-free SSoT shim ``_load_trainer_merge_module`` (loads
+    ``<trainer_dir>/src/lobtrainer/config/merge.py`` directly via
+    ``spec_from_file_location``, bypassing the package ``__init__.py``).
+    Soft fallback policy mirrors ``hft_ops.ledger.dedup._resolve_inline_trainer_config``:
+
+    - **No `_base:` key**: return cfg unchanged (no-op).
+    - **Merge module unavailable**: WARN log + return cfg unchanged
+      (degraded-CI tolerance; downstream may fail with clearer error).
+    - **Hard errors** (inheritance cycle, depth exceeded, malformed `_base:`,
+      missing base file): PROPAGATE — these are configuration bugs.
+
+    Args:
+        cfg: Trainer config dict (may contain `_base:`).
+        config_path: Absolute path to the trainer YAML on disk (or a
+            fictitious path inside ``<trainer_dir>/configs/`` for inline
+            configs — relative `_base:` paths in the dict resolve relative
+            to ``config_path.parent``).
+        paths: PipelinePaths instance (provides ``trainer_dir``). When None
+            (test fixtures without paths context), helper is a no-op.
+
+    Returns:
+        The resolved-and-merged dict (no `_base:` key). MAY be the same
+        object as ``cfg`` if no `_base:` was present.
+
+    Raises:
+        ValueError: inheritance cycle, depth exceeded, or malformed `_base:`.
+        FileNotFoundError: referenced base config not found.
+    """
+    if paths is None:
+        # N1-B (post-review diagnostic): log when paths is None AND `_base:`
+        # is present. This is the silent-pre-N1 path that downstream callers
+        # may interpret as `model.model_type missing`. Observability per
+        # hft-rules §8.
+        if "_base" in cfg:
+            logger.debug(
+                "_resolve_trainer_inheritance: paths=None and `_base:` "
+                "present — resolution skipped. cfg=%s. Downstream may "
+                "raise `missing model.model_type`.", config_path
+            )
+        return cfg
+    if "_base" not in cfg:
+        return cfg
+    merge_mod = _load_trainer_merge_module(paths)
+    if merge_mod is None:
+        # Degraded CI environment — trainer merge module not loadable.
+        # Caller will likely surface a clearer error downstream.
+        # N1-C (post-review diagnostic): WARN so the next "missing
+        # model.model_type" error is interpretable.
+        logger.warning(
+            "_resolve_trainer_inheritance: trainer merge module unavailable "
+            "for %s — cfg NOT resolved. Downstream `missing model.model_type` "
+            "errors may be caused by this. Inspect <trainer_dir>/src/"
+            "lobtrainer/config/merge.py.", config_path
+        )
+        return cfg
+    return merge_mod.resolve_inheritance(cfg, config_path.resolve())
+
+
 def _apply_overrides(
     config_path: Path,
     overrides: Dict[str, Any],
     output_path: Path,
+    *,
+    paths: Optional[PipelinePaths] = None,
 ) -> Path:
     """Apply dotted-key overrides to a YAML config and write to output_path.
 
@@ -108,12 +190,22 @@ def _apply_overrides(
         config_path: Original trainer YAML.
         overrides: Dict of dotted keys to values (e.g., {"data.data_dir": "/path"}).
         output_path: Where to write the modified YAML.
+        paths: Optional PipelinePaths. When provided, ``_base:`` inheritance
+            is resolved BEFORE overrides are applied (N1 fix — prevents
+            silent ``model.model_type`` loss in materialized YAML). When None
+            (legacy callers / test fixtures with flat configs), behaves
+            as pre-N1-fix.
 
     Returns:
         The output_path.
     """
     with open(config_path, "r") as f:
         cfg = yaml.safe_load(f) or {}
+
+    # N1 fix: resolve `_base:` BEFORE applying overrides + writing. Without
+    # this, the materialized YAML retains `_base:` and downstream consumers
+    # (e.g., contract_preflight) miss model.model_type which lives in a base.
+    cfg = _resolve_trainer_inheritance(cfg, config_path, paths)
 
     _apply_overrides_to_dict(cfg, overrides)
 
@@ -176,6 +268,8 @@ def _materialize_inline_config(
     overrides: Dict[str, Any],
     output_path: Path,
     trainer_configs_root: Optional[Path] = None,
+    *,
+    paths: Optional[PipelinePaths] = None,
 ) -> Path:
     """Write an inline trainer_config dict (with overrides applied) to a YAML file.
 
@@ -193,6 +287,10 @@ def _materialize_inline_config(
             When supplied, relative ``_base:`` entries are absolutized against
             this root. When None (test harness, manifests without inheritance),
             ``_base`` entries are written verbatim.
+        paths: Optional PipelinePaths. When provided, ``_base:`` inheritance is
+            resolved (after absolutize, before overrides + write) so the
+            materialized YAML has model.model_type populated for downstream
+            preflight. N1 fix.
 
     Returns:
         The output_path.
@@ -202,6 +300,16 @@ def _materialize_inline_config(
     cfg = copy.deepcopy(inline_cfg)
     if trainer_configs_root is not None:
         _absolutize_inline_base_paths(cfg, trainer_configs_root)
+
+    # N1 fix: resolve `_base:` inheritance BEFORE applying overrides + writing.
+    # For inline configs without an on-disk source, use a fictitious path
+    # inside trainer_configs_root so relative-path resolution (which uses
+    # `config_path.parent`) gets the correct root. Mirrors the pattern in
+    # `hft_ops.ledger.dedup._resolve_inline_trainer_config:551-559`.
+    if "_base" in cfg and trainer_configs_root is not None:
+        fake_config_path = trainer_configs_root / "__inline_trainer_config__.yaml"
+        cfg = _resolve_trainer_inheritance(cfg, fake_config_path, paths)
+
     _apply_overrides_to_dict(cfg, overrides)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,6 +403,7 @@ class TrainingRunner:
                 overrides,
                 resolved_config,
                 trainer_configs_root=trainer_configs_root,
+                paths=config.paths,
             )
             result.captured_metrics["_trainer_config_source"] = "inline"
         elif overrides:
@@ -303,7 +412,8 @@ class TrainingRunner:
             resolved_dir.mkdir(parents=True, exist_ok=True)
             resolved_config = resolved_dir / "resolved_trainer_config.yaml"
             effective_config = _apply_overrides(
-                original_config, overrides, resolved_config
+                original_config, overrides, resolved_config,
+                paths=config.paths,
             )
             result.captured_metrics["_trainer_config_source"] = "path_with_overrides"
         else:
@@ -331,7 +441,11 @@ class TrainingRunner:
         from hft_ops.stages.contract_preflight import preflight_trainer_config
         preflight_start = time.monotonic()
         try:
-            preflight_trainer_config(Path(effective_config))
+            # N1 fix: pass paths so preflight can defensively resolve `_base:`
+            # if the materialized YAML still carries it (which it should NOT
+            # post Sites B+C fix, but defense-in-depth catches direct callers
+            # or future regressions).
+            preflight_trainer_config(Path(effective_config), paths=config.paths)
         except ValueError as exc:
             result.duration_seconds = time.monotonic() - preflight_start
             result.status = StageStatus.FAILED
