@@ -285,19 +285,43 @@ def _resolve_contract_version(pipeline: Any) -> str:
     """Extract the pipeline contract version used by the evaluator run.
 
     Different evaluator versions expose this through different fields;
-    try the known candidates in priority order and fall back to
-    ``"unknown"`` if none apply (the FeatureSet is still constructible,
-    though consumers that verify contract_version at load time will
-    refuse it).
+    try the known candidates in priority order. Raises ``ValueError``
+    if none apply — the FeatureSet hashing layer would produce a
+    "unknown"-tagged artifact otherwise, which trainer-side verification
+    rejects anyway (see `lob-model-trainer/.../feature_set_resolver.py`
+    `_verify_contract_compat`). Better to fail-fast at production time
+    than to ship a known-broken artifact.
+
+    Phase D-α BLOCKING-2 fix (2026-05-05): pre-fix this returned the
+    sentinel ``"unknown"`` silently — violated hft-rules §8 "never
+    silently drop, clamp, or fix data". Migration audit confirmed:
+    (a) single call site at producer.py:248; (b) all 3 existing
+    FeatureSet artifacts at `contracts/feature_sets/*.json` have
+    ``contract_version="3.0"`` (produced via `migrate_feature_presets_to_registry.py`
+    which bypasses this function); (c) zero existing tests assert the
+    "unknown" return; (d) hash composition unaffected for any existing
+    artifact. Fail-loud is RISK-FREE for current state and prevents
+    future shipping of broken artifacts.
+
+    Raises:
+        ValueError: when schema is None or both attribute candidates
+            (contract_version, schema_version) are missing/empty.
     """
     schema = getattr(pipeline.loader, "schema", None)
     if schema is None:
-        return "unknown"
+        raise ValueError(
+            "Cannot resolve contract_version — pipeline.loader.schema "
+            "is None. This indicates a broken evaluator pipeline instance."
+        )
     for attr in ("contract_version", "schema_version"):
         value = getattr(schema, attr, None)
         if isinstance(value, str) and value:
             return value
-    return "unknown"
+    raise ValueError(
+        f"Cannot resolve contract_version from evaluator schema "
+        f"(tried: contract_version, schema_version). "
+        f"Schema type: {type(schema).__name__}"
+    )
 
 
 def _resolve_source_feature_count(pipeline: Any) -> int:

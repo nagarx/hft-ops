@@ -378,3 +378,94 @@ class TestProduceEndToEnd:
         assert fs_a.name != fs_b.name
         # Criteria differ (recipe metadata) — stored but NOT hashed.
         assert fs_a.criteria != fs_b.criteria
+
+
+class TestResolveContractVersionFailLoud:
+    """Phase D-α BLOCKING-2 fix (2026-05-05): _resolve_contract_version
+    raises ValueError instead of returning ``"unknown"`` sentinel when
+    schema is missing or both attribute candidates are empty/missing.
+
+    Per hft-rules §8 "never silently drop, clamp, or 'fix' data"; per
+    migration audit (2026-05-05): zero existing FeatureSet artifacts
+    carry ``contract_version="unknown"`` (all 3 use ``"3.0"``); zero
+    tests previously asserted the silent-fallback path. Risk-free fix.
+    """
+
+    def test_raises_when_schema_is_none(self):
+        """Schema=None (broken pipeline instance) → ValueError, not
+        silent ``"unknown"`` return."""
+        from hft_ops.feature_sets.producer import _resolve_contract_version
+
+        @dataclass
+        class _StubLoaderNoSchema:
+            schema: Any = None
+
+        @dataclass
+        class _StubPipelineNoSchema:
+            loader: Any = field(default_factory=_StubLoaderNoSchema)
+
+        with pytest.raises(ValueError, match="schema is None"):
+            _resolve_contract_version(_StubPipelineNoSchema())
+
+    def test_raises_when_both_attrs_missing(self):
+        """Schema present but contract_version + schema_version both
+        empty → ValueError, not silent ``"unknown"`` return."""
+        from hft_ops.feature_sets.producer import _resolve_contract_version
+
+        @dataclass
+        class _StubSchemaEmpty:
+            contract_version: str = ""
+            schema_version: str = ""
+
+        @dataclass
+        class _StubLoaderEmpty:
+            schema: _StubSchemaEmpty = field(default_factory=_StubSchemaEmpty)
+
+        @dataclass
+        class _StubPipelineEmpty:
+            loader: _StubLoaderEmpty = field(default_factory=_StubLoaderEmpty)
+
+        with pytest.raises(ValueError, match="contract_version, schema_version"):
+            _resolve_contract_version(_StubPipelineEmpty())
+
+    def test_returns_contract_version_first_when_present(self):
+        """Sanity: if contract_version is present + non-empty, return
+        it (preferred over schema_version)."""
+        from hft_ops.feature_sets.producer import _resolve_contract_version
+
+        @dataclass
+        class _StubSchemaBoth:
+            contract_version: str = "3.0"
+            schema_version: str = "2.2"
+
+        @dataclass
+        class _StubLoaderBoth:
+            schema: _StubSchemaBoth = field(default_factory=_StubSchemaBoth)
+
+        @dataclass
+        class _StubPipelineBoth:
+            loader: _StubLoaderBoth = field(default_factory=_StubLoaderBoth)
+
+        assert _resolve_contract_version(_StubPipelineBoth()) == "3.0"
+
+    def test_falls_back_to_schema_version_when_contract_version_empty(self):
+        """When contract_version is empty/missing but schema_version is
+        present + non-empty, return schema_version (legacy fallback,
+        per attribute priority order). NOT a silent ``"unknown"`` —
+        this is intentional priority resolution."""
+        from hft_ops.feature_sets.producer import _resolve_contract_version
+
+        @dataclass
+        class _StubSchemaLegacy:
+            contract_version: str = ""
+            schema_version: str = "2.2"
+
+        @dataclass
+        class _StubLoaderLegacy:
+            schema: _StubSchemaLegacy = field(default_factory=_StubSchemaLegacy)
+
+        @dataclass
+        class _StubPipelineLegacy:
+            loader: _StubLoaderLegacy = field(default_factory=_StubLoaderLegacy)
+
+        assert _resolve_contract_version(_StubPipelineLegacy()) == "2.2"
