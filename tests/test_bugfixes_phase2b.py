@@ -666,3 +666,89 @@ class TestBackfillDuplicateBenignSkip:
         assert "sys.exit(1)" not in window, (
             "Backfill duplicate skip must NOT exit(1). Regression of C4."
         )
+
+
+class TestBackfillCorruptMetricsFileFailLoud:
+    """#PY-63 / F3 regression test — fail-loud on corrupt --metrics-file JSON.
+
+    Pre-fix (cli.py:1283-1287, before 2026-05-07): caught
+    ``(json.JSONDecodeError, OSError)`` and silently logged a yellow
+    WARN, then registered the record with empty metrics. This violated
+    hft-rules §8 ("Never silently drop, clamp, or 'fix' data without
+    recording diagnostics") because operators could backfill records
+    with NO metrics, breaking downstream ``ledger list --metric``
+    filters and biasing pairwise statistical comparisons.
+
+    Post-fix (#PY-63 / F3, 2026-05-07): raise ``click.ClickException``
+    so Click formats the error as "Error: ..." to stderr and exits 1.
+    Idiomatic Click. Per adversarial-validation Item 2.
+
+    Snapshot pattern matches TestBackfillDuplicateBenignSkip above —
+    full E2E CliRunner test requires a non-trivial pipeline fixture;
+    this lightweight test reads the source file and locks the
+    structural invariant.
+    """
+
+    def test_corrupt_metrics_file_raises_click_exception(self):
+        """The metrics_file JSONDecodeError/OSError branch must raise
+        ``click.ClickException``, NOT silent log + continue."""
+        cli_path = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "hft_ops"
+            / "cli.py"
+        )
+        source = cli_path.read_text()
+
+        # Locate the F3 except block.
+        assert "except (json.JSONDecodeError, OSError)" in source, (
+            "Expected F3 except block missing — has the backfill CLI "
+            "been renamed or refactored? Update this test."
+        )
+        except_idx = source.index("except (json.JSONDecodeError, OSError)")
+        # Look ahead 1500 chars (covers comment block + raise span).
+        window = source[except_idx : except_idx + 1500]
+
+        # MUST raise click.ClickException (idiomatic, not raw SystemExit).
+        assert "raise click.ClickException" in window, (
+            "F3 fix regressed: corrupt metrics_file path no longer raises "
+            "click.ClickException. Per hft-rules §8 + #PY-63, this branch "
+            "MUST fail loud (was silent WARN + register-with-empty-metrics)."
+        )
+        # MUST NOT silently log + continue (the pre-fix behavior).
+        # The OLD pattern was `console.print(f"[yellow]Warning: failed to load
+        # metrics_file ({e}); creating record with empty metrics[/yellow]")`
+        # followed by no raise. Lock against re-introduction.
+        assert "creating record with empty metrics" not in window, (
+            "F3 fix regressed: pre-fix WARN message text 'creating record "
+            "with empty metrics' has reappeared. This indicates the silent "
+            "skip pattern has been re-introduced. Per #PY-63, fail loud."
+        )
+        # Note: the comment block legitimately mentions
+        # "Was raise SystemExit(1) which bypassed Click's..." as historical
+        # context (per #PY-63 adversarial-validation Item 2). The positive
+        # `raise click.ClickException` assertion above is sufficient to
+        # lock the new behavior; a negative `not "raise SystemExit"` check
+        # would false-positive on the historical comment text.
+
+    def test_metrics_file_diagnostic_message_is_actionable(self):
+        """The error message must tell the operator HOW to fix the issue."""
+        cli_path = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "hft_ops"
+            / "cli.py"
+        )
+        source = cli_path.read_text()
+        except_idx = source.index("except (json.JSONDecodeError, OSError)")
+        window = source[except_idx : except_idx + 800]
+
+        # Per hft-rules §6 + §8: error messages must explain WHY + HOW to fix.
+        actionable_keywords = ["fix the file", "omit", "known-good"]
+        for keyword in actionable_keywords:
+            assert keyword in window, (
+                f"F3 error message missing actionable guidance: "
+                f"'{keyword}' not found in raise block. Per hft-rules §6 "
+                f"('Assertions must explain WHAT failed and WHY'), the "
+                f"operator needs concrete next steps."
+            )

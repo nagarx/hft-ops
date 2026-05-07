@@ -1281,10 +1281,27 @@ def ledger_backfill(
                 if "backtest_metrics" in metrics_data:
                     backtest_metrics = metrics_data["backtest_metrics"]
         except (json.JSONDecodeError, OSError) as e:
-            console.print(
-                f"[yellow]Warning: failed to load metrics_file ({e}); "
-                f"creating record with empty metrics[/yellow]"
-            )
+            # #PY-63 / F3 (2026-05-07): fail-loud per hft-rules §5/§8.
+            # Was: WARN + register record with empty metrics. Silent
+            # downgrade meant operators could backfill records with NO
+            # metrics, breaking downstream `ledger list --metric` filters
+            # and biasing pairwise statistical comparisons. Per §8 ("Never
+            # silently drop, clamp, or 'fix' data without recording
+            # diagnostics") + §5 fail-fast: surface the error and let the
+            # operator decide whether to fix the file, omit --metrics-file,
+            # or supply a known-good replacement.
+            #
+            # Adversarial-validation Item 2 (2026-05-07): use
+            # click.ClickException for idiomatic Click exit (formats as
+            # "Error: ..." to stderr, exits with code=1, no traceback).
+            # Was raise SystemExit(1) which bypassed Click's exception
+            # handling.
+            raise click.ClickException(
+                f"failed to load metrics_file '{metrics_file}': {e}. "
+                f"Either fix the file (validate JSON syntax + parseable "
+                f"shape), omit --metrics-file from the backfill "
+                f"invocation, or supply a known-good metrics file."
+            ) from e
 
     # Compute fingerprint of the manifest config (no actual run state)
     fingerprint = compute_fingerprint(manifest, paths)
