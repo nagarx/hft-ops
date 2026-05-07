@@ -53,6 +53,17 @@ _POST_STAGE_ARTIFACT_PATTERNS: List[Dict[str, str]] = [
         "storage_subdir": "feature_importance",
         "validator": "hft_contracts.feature_importance_artifact.FeatureImportanceArtifact.load",
     },
+    # Phase 2 P2.A bootstrap-CI artifact (Cyclelet B, 2026-05-07).
+    # Produced by ``lobtrainer.analysis.stat_rigor.ci``. Validates via
+    # ``TestMetricsCIArtifact.from_dict`` on load (raises ``KeyError`` on
+    # missing required fields, ``ValueError`` on invalid invariants per
+    # ``__post_init__`` — partial artifacts are skipped per hft-rules §8).
+    {
+        "filename": "test_metrics_ci_v1.json",
+        "kind": "test_metrics_ci",
+        "storage_subdir": "test_metrics_ci",
+        "validator": "hft_contracts.test_metrics_ci_artifact.TestMetricsCIArtifact.load",
+    },
 ]
 
 _LOGGER = logging.getLogger(__name__)
