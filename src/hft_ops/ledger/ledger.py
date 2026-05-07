@@ -64,6 +64,17 @@ _POST_STAGE_ARTIFACT_PATTERNS: List[Dict[str, str]] = [
         "storage_subdir": "test_metrics_ci",
         "validator": "hft_contracts.test_metrics_ci_artifact.TestMetricsCIArtifact.load",
     },
+    # Phase 2 P2.C K-way pairwise-compare artifact (Cyclelet B, 2026-05-07).
+    # Produced by ``lobtrainer.analysis.stat_rigor.pairwise.compare_k_way``.
+    # Validates via ``PairwiseCompareArtifact.from_dict`` on load. Phase Y
+    # composability: artifact integrates as "comparison node" in future
+    # ``experiment_provenance_hash`` graph via ``parent_experiment_ids`` tuple.
+    {
+        "filename": "pairwise_compare_v1.json",
+        "kind": "pairwise_compare",
+        "storage_subdir": "pairwise_compare",
+        "validator": "hft_contracts.pairwise_compare_artifact.PairwiseCompareArtifact.load",
+    },
 ]
 
 _LOGGER = logging.getLogger(__name__)
