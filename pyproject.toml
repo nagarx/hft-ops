@@ -13,7 +13,14 @@ dependencies = [
     # which first shipped in hft-contracts 2.3.0 (Phase A.5.1). A pre-2.3.0
     # install would fail at import time with ImportError. See hft-ops
     # CHANGELOG [0.3.0-dev § A.5.2] for the migration note.
-    "hft-contracts>=2.3.0",
+    # Cycle 2 / Option F (2026-05-07): bumped >=2.3.0 → >=2.5.0 after Cyclelet B
+    # P2.A (v2.4.0 added `TestMetricsCIArtifact` + bootstrap CI primitive,
+    # consumed by `hft_ops.ledger.ledger._POST_STAGE_ARTIFACT_PATTERNS`) +
+    # P2.C (v2.5.0 added `PairwiseCompareArtifact` + K-way pairwise compare,
+    # consumed by `hft_ops.ledger.statistical_compare.compare_sweep_statistical`
+    # adapter for `hft-ops sweep compare` CLI). Strictly additive bump per
+    # SemVer; no symbols removed.
+    "hft-contracts>=2.5.0",
     "click>=8.0",
     "pyyaml>=6.0",
     "rich>=13.0",

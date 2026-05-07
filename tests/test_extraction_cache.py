@@ -623,3 +623,50 @@ class TestGarbageCollectionLRU:
             assert planned_paths.index(keys[0]) < planned_paths.index(keys[2]), (
                 "LRU order violated: oldest must be evicted first"
             )
+
+
+# =============================================================================
+# Cycle 2 / #PY-41 (2026-05-07) — SSoT regression test
+# =============================================================================
+
+
+def test_no_inline_hashlib_after_PY41():
+    """Cycle 2 #PY-41 (2026-05-07): extraction_cache.py must not regress to
+    inline `hashlib.sha256` after migration to canonical SSoTs.
+
+    Sites previously using raw `hashlib.sha256(<bytes>).hexdigest()`:
+    - line 392 area (`_build_files_manifest`): now `sha256_hex(data)`
+    - line 619 area (cache integrity SHA validation): now `hash_file`
+    - line 1046 area (Cargo.lock hash): now `hash_file`
+    - line 1093 area (compiled binary hash): now `hash_file`
+    - line 1214 area (databento manifest hash): now `hash_file`
+
+    `import hashlib` was also retired since zero callers remain. This
+    test fail-loud catches any future regression to inline `hashlib.sha256`
+    or re-introduction of the `hashlib` import.
+
+    Per hft-rules §0 reuse-first SSoT discipline.
+    """
+    import inspect
+
+    from hft_ops.scheduler import extraction_cache
+
+    src = inspect.getsource(extraction_cache)
+    # Strip comments before the AST-style check to avoid false positives
+    # on documentation references like "no inline hashlib.sha256".
+    lines = [
+        line for line in src.splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+    code_only = "\n".join(lines)
+    assert "hashlib.sha256" not in code_only, (
+        "#PY-41 regression: extraction_cache.py reverted to inline "
+        "`hashlib.sha256` — must use `hft_contracts.canonical_hash.sha256_hex` "
+        "(for in-memory bytes) or `hft_contracts.provenance.hash_file` "
+        "(for file paths) SSoTs. See PHASE_P_BACKLOG.md #PY-41."
+    )
+    assert "import hashlib" not in code_only, (
+        "#PY-41 regression: `import hashlib` re-introduced in "
+        "extraction_cache.py — should remain retired post-Cycle-2 since "
+        "all 5 sites consume `hft_contracts.*` SSoTs."
+    )

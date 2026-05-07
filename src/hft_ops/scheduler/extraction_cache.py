@@ -81,7 +81,11 @@ Combined filters apply with AND semantics.
 from __future__ import annotations
 
 import errno
-import hashlib
+# Cycle 2 #PY-41 (2026-05-07): `import hashlib` retired — all 5 sites
+# migrated to `hft_contracts.canonical_hash.sha256_hex` (bytes input) +
+# `hft_contracts.provenance.hash_file` (file path input) SSoTs. Zero
+# remaining inline `hashlib.sha256` consumers in this module. Verified
+# by `tests/test_extraction_cache.py::test_no_inline_hashlib_after_PY41`.
 import json
 import logging
 import os
@@ -96,6 +100,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from hft_contracts.atomic_io import atomic_write_json
 from hft_contracts.canonical_hash import canonical_json_blob, sha256_hex
+from hft_contracts.provenance import hash_file
 
 logger = logging.getLogger(__name__)
 
@@ -386,10 +391,14 @@ def _build_files_manifest(staging_dir: Path) -> List[Dict[str, Any]]:
         if path.name == CACHE_MANIFEST_NAME:
             continue
         rel = path.relative_to(staging_dir).as_posix()
+        # Cycle 2 #PY-41 (2026-05-07): use canonical bytes-SSoT
+        # `hft_contracts.canonical_hash.sha256_hex` for in-memory bytes.
+        # `data` is reused for `len()` so we keep the bytes-in-hand pattern
+        # rather than switch to `hash_file` (which would force a re-read).
         data = path.read_bytes()
         entries.append({
             "path": rel,
-            "sha256": hashlib.sha256(data).hexdigest(),
+            "sha256": sha256_hex(data),
             "size_bytes": len(data),
         })
     return entries
@@ -616,7 +625,11 @@ def _validate_cache_entry(
             )
             _SHA_VALIDATION_MEMO[memo_key] = False
             return False
-        actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        # Cycle 2 #PY-41 (2026-05-07): use `hash_file` SSoT (existence +
+        # size already pre-checked at lines 605-616, so missing_ok=False
+        # is correct — the helper raises FileNotFoundError on missing,
+        # which can never fire here per the early-return guards).
+        actual_sha = hash_file(path, missing_ok=False)
         if actual_sha != expected_sha:
             logger.warning(
                 "Cache file SHA mismatch: %s (expected %s, got %s)",
@@ -1043,7 +1056,8 @@ def prepare_cache_key_inputs(
     if not cargo_lock.exists():
         logger.warning("Cache disabled: Cargo.lock missing at %s", cargo_lock)
         return None
-    cargo_lock_sha = hashlib.sha256(cargo_lock.read_bytes()).hexdigest()
+    # Cycle 2 #PY-41 (2026-05-07): `hash_file` SSoT — existence pre-checked.
+    cargo_lock_sha = hash_file(cargo_lock, missing_ok=False)
 
     # 4. reconstructor_git_sha
     reconstructor_git_sha = _git_rev_parse_head(reconstructor_dir)
@@ -1090,7 +1104,8 @@ def prepare_cache_key_inputs(
             binary_path,
         )
         return None
-    binary_sha = hashlib.sha256(binary_path.read_bytes()).hexdigest()
+    # Cycle 2 #PY-41 (2026-05-07): `hash_file` SSoT — existence pre-checked.
+    binary_sha = hash_file(binary_path, missing_ok=False)
 
     # 8. platform_target
     platform_target = f"{sys.platform}-{platform.machine()}"
@@ -1210,7 +1225,11 @@ def _compute_raw_input_manifest_hash(
             manifest_path, input_dir_rel,
         )
         return None
+    # Cycle 2 #PY-41 (2026-05-07): `hash_file` SSoT — `try/except OSError`
+    # wrapper preserved (graceful cache-disable on read errors). `hash_file`
+    # raises only FileNotFoundError on missing (existence pre-checked above),
+    # which OSError catches transitively. Behavior bit-exact to legacy.
     try:
-        return hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        return hash_file(manifest_path, missing_ok=False)
     except OSError:
         return None
