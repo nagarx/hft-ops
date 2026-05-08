@@ -31,6 +31,13 @@ htmlcov/
 ledger/index.json
 ledger/records/*.json
 
+# Per-experiment run artifacts (config snapshot + training logs +
+# diagnostics + history). These accumulate over time and are
+# regenerable from ledger/records/<run_id>.json once Phase Y
+# experiment_provenance_hash composer is end-to-end validated. Adding
+# here as part of α-5/100 (Phase α-1.1 hardening cycle, 2026-05-10).
+ledger/runs/
+
 # CI sibling-checkout scaffolding (Phase V.A.2): GitHub Actions
 # workflows checkout sibling repos into _deps/<name>/. These are
 # build-time artifacts, never committed. Keeps 'git status' clean

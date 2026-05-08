@@ -1,0 +1,142 @@
+# =============================================================================
+# Cycle 7 — First Evaluator-Derived FeatureSet (DOC-ONLY MANIFEST)
+# =============================================================================
+#
+# ARCHITECTURAL STATUS — IMPORTANT FOR FUTURE CYCLES:
+#
+#   `hft-ops` does NOT currently have an `evaluate` stage runner. The
+#   `hft-ops evaluate` CLI subcommand is a top-level invocation (see
+#   `hft-ops/src/hft_ops/cli.py:2160 @main.command(name="evaluate")`)
+#   that runs the evaluator + writes a FeatureSet directly. There is
+#   no `Stages.evaluate` field in `manifest/schema.py::Stages` and no
+#   `stages/evaluate.py` runner module.
+#
+#   Consequence: this manifest is NOT runnable via `hft-ops run
+#   cycle7_evaluator_v1.yaml`. It is a DOCUMENTATION ARTIFACT capturing
+#   the intent + run command + provenance metadata for the Cycle 7
+#   first-evaluator-derived-FeatureSet ship. It validates clean (`hft-ops
+#   validate <manifest>` emits one WARN: "No stages enabled in manifest"
+#   — expected, since all stages are disabled by design).
+#
+#   Phase VI / Phase VII candidate: lift `hft-ops evaluate` into a proper
+#   `EvaluateStage` runner so feature-set production participates in
+#   sweeps + the ledger. Out of scope for Cycle 7. See `PHASE_P_BACKLOG.md`
+#   for a future enhancement entry.
+#
+# WHAT THIS MANIFEST DOCUMENTS:
+#
+#   - Provenance: which evaluator config + criteria YAML produces the
+#     Cycle 7 FeatureSet
+#   - Run command (in the `# RUN COMMAND:` block below) for operators
+#   - Hypothesis + expected output for cross-cycle audit
+#   - Tags for ledger/dashboard filtering
+#
+# WHAT TO RUN INSTEAD:
+#
+#   See `# RUN COMMAND:` block at the bottom of this file.
+#
+# =============================================================================
+
+experiment:
+  name: "cycle7_evaluator_v1"
+  description: >
+    Cycle 7 — first evaluator-derived FeatureSet for NVDA E5 60s smoothed
+    H=10. Closes STRAT-A MVP gap #2: replaces the 4 hand-curated entries
+    in `contracts/feature_sets/` with the FIRST `produced_by.tool=
+    "hft-feature-evaluator"` artifact.
+  hypothesis: >
+    Per CLAUDE.md "Validated Findings", a small subset (5-15 features)
+    will pass the 5-path framework + IC > 0.05 + stability >= 0.6 gates.
+    Surviving features should cluster around derived signals (indices
+    40-47: mid_price, spread, volume_imbalance, weighted_mid_price) +
+    trading-signals block (indices 84-91: true_ofi, depth_norm_ofi,
+    executed_pressure, signed_mp_delta_bps), with possibly a few MLOFI
+    indices (116-117: total_mlofi, weighted_mlofi). DEPTH_NORM_OFI
+    (index 85) is expected to be the strongest single feature
+    (R²=0.107, IC=0.335 at H=10 per CLAUDE.md's prior measurements;
+    note context-validity caveat — those were measured on event-based
+    128-feat exports, NOT 60s time-based 98-feat which is this cycle's
+    corpus).
+  contract_version: "3.0"
+  tags:
+    - cycle7
+    - nvda
+    - h10
+    - 60s
+    - evaluator-derived
+    - featureset-production
+    - phase-strat-a-mvp-gap-2
+
+pipeline_root: ".."
+
+# All stages DISABLED — this manifest documents a top-level
+# `hft-ops evaluate` invocation, not a `hft-ops run`-able pipeline.
+stages:
+  extraction:
+    enabled: false
+  raw_analysis:
+    enabled: false
+  dataset_analysis:
+    enabled: false
+  validation:
+    enabled: false
+  training:
+    enabled: false
+  signal_export:
+    enabled: false
+  backtesting:
+    enabled: false
+
+# =============================================================================
+# RUN COMMAND
+# =============================================================================
+#
+# From the monorepo root (`/Users/knight/code_local/HFT-pipeline-v2`):
+#
+#   python3 -m hft_ops.cli evaluate \
+#       --config   hft-feature-evaluator/configs/nvda_evaluator_v1.yaml \
+#       --criteria hft-feature-evaluator/configs/criteria/nvda_evaluator_v1.yaml \
+#       --save-feature-set    nvda_evaluator_v1 \
+#       --applies-to-assets   NVDA \
+#       --applies-to-horizons 10 \
+#       --description "Cycle 7 first evaluator-derived FeatureSet for NVDA E5 60s smoothed H=10" \
+#       --created-by "cycle-7-evaluator-derived-featureset"
+#
+# Expected runtime: ~2.5-3 hours (per `mbo_98feat_lean.yaml` banner —
+# similar lean parameters on the same 230-day × 98-feature corpus).
+#
+# Expected output:
+#   contracts/feature_sets/nvda_evaluator_v1.json
+#   - feature_indices:        5-15 ints (per CLAUDE.md predictions)
+#   - source_feature_count:   98
+#   - contract_version:       "3.0"
+#   - applies_to.assets:      ["NVDA"]
+#   - applies_to.horizons:    [10]
+#   - produced_by.tool:       "hft-feature-evaluator"
+#   - produced_by.tool_version: actual __version__ from importlib.metadata
+#   - produced_by.config_hash: SHA-256 of `nvda_evaluator_v1.yaml`
+#   - produced_by.source_profile_hash: pipeline.last_profile_hash
+#   - produced_by.data_dir_hash: hash_directory_manifest of the v3p0 export
+#   - content_hash:           64-char lowercase hex SHA-256
+#
+# Failure modes (operator should know):
+#   - `EvaluatorNotInstalled` → `pip install -e hft-feature-evaluator`
+#   - `NoFeaturesSelectedError` → criteria too strict; loosen
+#     `min_combined_stability` or `min_abs_metric` in
+#     `criteria/nvda_evaluator_v1.yaml`
+#   - `FeatureSetExists` (different content_hash) → bump name
+#     suffix to `_v2` or pass `--force` (NOT recommended for first cycle)
+#
+# Post-run validation:
+#   python3 -c "
+#   from hft_ops.feature_sets import FeatureSetRegistry
+#   from hft_ops.paths import PipelinePaths
+#   from pathlib import Path
+#   paths = PipelinePaths(pipeline_root=Path('.').resolve())
+#   reg = FeatureSetRegistry(paths.feature_sets_dir)
+#   fs = reg.read('nvda_evaluator_v1')
+#   fs.verify_integrity()
+#   print('OK:', fs.content_hash[:16], 'features:', len(fs.feature_indices))
+#   "
+#
+# =============================================================================

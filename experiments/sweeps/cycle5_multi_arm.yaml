@@ -1,0 +1,298 @@
+# =============================================================================
+# Cycle 5 multi-arm sweep — model_type × return_type × horizons
+# =============================================================================
+#
+# MVP requirement #3: ≥1 multi-arm pairwise-bootstrap comparison via
+# `hft-ops sweep compare`. This is the FIRST canonical multi-arm sweep on
+# v3p0 corpus, producing 16 ledger records + 1 sweep_aggregate parent for
+# pairwise paired-bootstrap analysis.
+#
+# Grid (3 axes × Cartesian product = 16 arms):
+#   model_type   ∈ {temporal_ridge, tlob}                 (2)
+#   return_type  ∈ {point_return, smoothed_return}        (2)
+#   horizons     ∈ {10, 60, 300}                          (3)   ← see SCOPE NOTE
+#
+#   2 × 2 × 3 = 12 grid points (NOT 16).
+#
+# SCOPE NOTE — horizons reduced from authorized {1,2,5,10} to {10,60,300}:
+#   The user's authorization specified horizons ∈ {1,2,5,10} per CONSOLIDATED_
+#   FINDINGS Day 1-2 step 1c. However, the v3p0 baseline corpus
+#   `e5_timebased_60s_v3p0` exports forward_prices with `horizons: [10, 60, 300]`
+#   only (verified 2026-05-09 against `train/20250203_metadata.json::labeling`).
+#   Horizons {1, 2, 5} are NOT in the export; running this sweep with those
+#   horizon values would either (a) require re-extraction of a NEW corpus, or
+#   (b) silently fall back to H10 / fail at LabelFactory dispatch.
+#
+#   Alignment: `horizon_sensitivity.yaml` (the existing canonical CROSS-STAGE
+#   template) uses {10, 60, 300} for the same reason. We mirror that choice
+#   here. Resolves to 12 grid points, NOT 16.
+#
+#   Re-extracting a fine-grained-horizon corpus is OUT OF SCOPE for Cycle 5
+#   (~1-2 hr extractor run + new contract version + downstream cache invalida-
+#   tion). If finer horizons are needed for Phase 4 step 1c per CONSOLIDATED_
+#   FINDINGS, that requires a DEDICATED corpus-extraction cycle BEFORE Cycle 5
+#   is rerun. Tracked as candidate Phase P backlog item.
+#
+# Architecture pinning (per Phase Y composability + Phase 4 D5 unblock gate):
+#   - feature_set: nvda_short_term_98_src98_v1
+#       (hand-curated 98-index pass-through; content_hash 122fe5cb...; same as
+#        Cycle 4 e5_60s_importance_audit.yaml:103. Pinning identical FeatureSet
+#        across all 12 arms = valid pairwise-compare; arms differ ONLY on the
+#        treatment axes.)
+#   - data_dir: e5_timebased_60s_v3p0 (96 MB / 136,902 sequences / 230 days)
+#   - data.labels.source: forward_prices  (forces LabelFactory recomputation
+#     at trainer load-time per `return_type` axis. v3p0 metadata pins
+#     return_type="SmoothedReturn" but forward_prices.npy is exported, so
+#     trainer can recompute via LabelFactory.point_return /
+#     LabelFactory.smoothed_return per axis.)
+#
+# Adversarial considerations preserved in this manifest:
+#   #PY-68: All 34 prior records are retroactive (`_retro.json`); these 12
+#     Cycle 5 records will be canonical → cross-cycle (retroactive vs canonical)
+#     pairwise compare is statistically fragile. INSTRUCTION: run
+#     `hft-ops sweep compare cycle5_multi_arm --metric val_ic` ONLY on intra-
+#     Cycle-5 records. Cross-cycle compare requires Cycle 6 ledger bridge
+#     (#PY-4) so canonical scripts also write `_record_experiment` records.
+#   #PY-71: NaN-poisoning hardening NOT YET shipped; v3p0 spreads have
+#     0/9457 NaN per CTX-A audit so LATENT-safe in this sweep. New return
+#     types (point_return) MAY introduce label-side NaN if forward_prices
+#     contain non-finite — verified 2026-05-09 forward_prices.npy is
+#     0% NaN-finite-fraction per Phase O Cycle 1 producer-readiness audit.
+#   #PY-67: strict_config=False MANDATE applies if any arm uses load_checkpoint
+#     + PermutationImportanceCallback. NOT applicable here — Cycle 5 does
+#     fresh training per arm; importance audit is OUT OF SCOPE for this sweep.
+#
+# Composability target — each arm produces a ledger record with all 4
+# experiment_provenance_hash sources populated:
+#   1. data_dir_hash      (auto from extraction stage)
+#   2. feature_set_ref    (from data.feature_set above, propagated via
+#                          signal_metadata.json by trainer)
+#   3. compatibility_fingerprint (from signal_export stage harvester)
+#   4. model_config_hash  (from signal_export harvester per Phase Y Stage 1)
+#
+# Decision-gate criteria (declared BEFORE running per hft-rules §13):
+#   - GO: aggregate sweep produces 12 distinct fingerprints + ≥10 records
+#         with non-None experiment_provenance_hash + sweep_compare emits
+#         ≥1 BH FDR q-value < 0.10 on val_ic differences.
+#   - PIVOT: any arm fails on InputContract preflight or label dispatch
+#         → root-cause + retry that single arm via --rerun-failed; do NOT
+#         re-run all 12 arms.
+#   - ABORT: ≥3 arms fail with the SAME error class (indicates manifest-
+#         level systemic bug not arm-specific). Halt + adversarial-debug.
+#
+# Total expected wall-clock (serial):
+#   TLOB arms (6): ~30-90 min/arm GPU = 3-9 hr
+#   TemporalRidge arms (6): ~5-15 min/arm CPU = 30-90 min
+#   Total serial: ~3.5-10.5 hr
+#   With --gpus 1 + parallel CPU sklearn: ~3-5 hr (TLOB serializes on GPU,
+#       sklearn arms run concurrent on CPU).
+#
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/cycle5_multi_arm.yaml
+#   hft-ops sweep run     experiments/sweeps/cycle5_multi_arm.yaml --gpus 1
+#   hft-ops sweep results experiments/sweeps/cycle5_multi_arm.yaml
+#   hft-ops sweep compare experiments/sweeps/cycle5_multi_arm.yaml \
+#       --metric val_ic --alpha 0.05
+#
+# Reference templates structurally borrowed from:
+#   - horizon_sensitivity.yaml (lines 153-179) — multi-axis grid pattern
+#   - loss_ablation.yaml (lines 142-165)        — training-only axes
+#   - e5_phase2_sweep.yaml (lines 154-175)      — axis labels + overrides
+#   - seed_stability.yaml (lines 21-40)         — fingerprint-discipline note
+# =============================================================================
+
+experiment:
+  name: "cycle5_multi_arm"
+  description: >
+    Cycle 5 first canonical multi-arm sweep on v3p0 corpus. 12 grid points
+    (model_type × return_type × horizons). Produces FIRST live empirical
+    validation of cross-arm pairwise-bootstrap-compare tooling shipped in
+    Phase V.B.4. Target: ≥10 records with populated experiment_provenance_
+    hash (Phase Y composability) + ≥1 BH FDR-significant cross-arm IC delta.
+  hypothesis: >
+    H1 (label-execution alignment): point_return arms produce HIGHER test-set
+    directional accuracy than smoothed_return arms at H10 60s, REVERSING the
+    R9-R14 pattern (which trained on smoothed labels and showed DA=48.3%
+    on point returns). If H1 holds with BH q < 0.10 across model_type axis,
+    point-return labels are tradeable.
+    H2 (architecture invariance): temporal_ridge captures ≥80% of TLOB IC at
+    H10 (replicates CLAUDE.md §Validated Findings: "TemporalRidge captures
+    91% of TLOB IC"). Cycle 5 confirms or refutes on v3p0 corpus.
+    H3 (horizon decay): IC decays monotonically H10 > H60 > H300 (replicates
+    OFI ACF=0.266 at 5m persistence ceiling).
+  contract_version: "3.0"
+  tags:
+    - nvda
+    - cycle5
+    - regression
+    - multi-arm
+    - v3p0
+    - sweep
+    - mvp-3
+    - phase-y-composability
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s_v3p0"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    trainer_config:
+      name: cycle5_multi_arm_base
+      description: "Cycle 5 multi-arm base; axes override model_type, data.labels.return_type, and training.horizon_value."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s_v3p0"
+        feature_count: 98
+        feature_set: nvda_short_term_98_src98_v1
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 0
+        # data.labels block is REQUIRED so the return_type axis routes via
+        # `data.labels.return_type` overrides. `source: forward_prices` forces
+        # LabelFactory recomputation at trainer load (the v3p0 metadata pins
+        # return_type="SmoothedReturn" but forward_prices.npy is exported,
+        # so trainer can recompute per-axis return_type).
+        labels:
+          source: forward_prices
+          return_type: smoothed_return    # <- overridden by axis `return_type`
+          task: regression
+          horizons: [10, 60, 300]
+          primary_horizon_idx: 0
+          sample_weights: none
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob                  # <- overridden by axis `model_type`
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        # TLOB-specific (ignored when model_type=temporal_ridge per dispatch).
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false
+        # temporal_ridge-specific params (ignored when model_type=tlob per dispatch).
+        params:
+          alpha: 1.0
+          features:
+            signal_indices: [85, 84, 86, 56, 45]
+            top_k_signals: 3
+            rolling_windows: [3, 5, 10]
+            include_volatility: true
+            include_momentum: true
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42
+        mixed_precision: false
+
+      output_dir: outputs/experiments/cycle5_multi_arm_base
+      log_level: INFO
+      tags: [cycle5, nvda, regression, multi-arm, v3p0, sweep]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    horizon_value: 10                                               # <- overridden by axis `horizon_value`
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_signals.py"
+    # α-1.1 / #PY-81 fix (2026-05-10): explicit checkpoint required.
+    # α-2 / #PY-80 introduced fail-loud validate-time gate at signal_export.py
+    # rejecting empty stage.checkpoint when stage.enabled=true. This sweep
+    # manifest predated α-2 ship and was not synchronously fixed; without this
+    # field, all 12 grid-points would be REJECTED at validate time.
+    checkpoint: "${stages.training.output_dir}/checkpoints/final.pt"
+    split: test
+    output_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+    # signal_export REQUIRED so harvester populates compatibility_fingerprint
+    # + model_config_hash on each ledger record (composer sources 3/4 + 4/4).
+    # Combined with feature_set + data_dir_hash, all 4 experiment_provenance_
+    # hash sources are populated → FIRST LIVE multi-arm validation of Phase Y.
+
+  backtesting:
+    enabled: false
+
+# =============================================================================
+# Sweep definition — 3 axes, 12 grid points, no cross-axis key conflicts:
+#   model_type        owns: model.model_type
+#   return_type       owns: data.labels.return_type
+#   horizon_value     owns: horizon_value (manifest-level training-stage field)
+#
+# Axis keys are disjoint per validate_sweep cross-axis conflict check
+# (sweep.py:179-199). horizon_value is a bare manifest field (no dot prefix)
+# routing per sweep.py:213 special-case for the training stage horizon_value.
+# =============================================================================
+
+sweep:
+  name: "cycle5_multi_arm"
+  strategy: "grid"
+  axes:
+    - name: "model_type"
+      values:
+        - label: "temporal_ridge"
+          overrides:
+            model.model_type: temporal_ridge
+        - label: "tlob"
+          overrides:
+            model.model_type: tlob
+
+    - name: "return_type"
+      values:
+        - label: "point_return"
+          overrides:
+            data.labels.return_type: point_return
+        - label: "smoothed_return"
+          overrides:
+            data.labels.return_type: smoothed_return
+
+    - name: "horizon_value"
+      values:
+        - label: "H10"
+          overrides:
+            horizon_value: 10
+        - label: "H60"
+          overrides:
+            horizon_value: 60
+        - label: "H300"
+          overrides:
+            horizon_value: 300
