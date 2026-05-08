@@ -189,9 +189,16 @@ def _construct_ledger_or_exit(
 
 
 def _resolve_pipeline_root(ctx_root: Optional[str]) -> Path:
-    """Resolve pipeline root from CLI option or auto-detect."""
+    """Resolve pipeline root from CLI option or auto-detect.
+
+    Phase α-1.1 / #PY-83 fix (2026-05-10): use `.absolute()` not
+    `.resolve()` so user-supplied `--pipeline-root` preserves symlink-source
+    lineage. Mirrors α-3 / #PY-79 lesson — symlinked-data deployments
+    require the symlink-source to be preserved for downstream relpath /
+    walk-up logic.
+    """
     if ctx_root:
-        return Path(ctx_root).resolve()
+        return Path(ctx_root).absolute()
     try:
         return PipelinePaths.auto_detect().pipeline_root
     except FileNotFoundError:

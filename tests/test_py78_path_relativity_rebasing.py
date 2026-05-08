@@ -422,3 +422,75 @@ class TestMultiPassRebase:
         once = _resolve_variables(raw, now=now, paths=paths)
         twice = _resolve_variables(once, now=now, paths=paths)
         assert once == twice
+
+
+# ---------------------------------------------------------------------------
+# Phase α-1.1 / #PY-83 regression: substitution through symlinked data dir
+# ---------------------------------------------------------------------------
+
+
+class TestRebasePreservesSymlinkSourceForSubstitution:
+    """Phase α-1.1 / #PY-83 regression: when ``data/`` is symlinked to an
+    external mount, the path-rebasing must preserve the symlink-source so
+    the relpath stays intra-monorepo. This is the production-critical case
+    for the user's deployment where ``data/`` ->
+    ``/Volumes/WD_Black/HFT-data/``.
+
+    Pre-α-1.1, this would have produced
+    ``'../../../../../external_volume/HFT-data/exports/foo'`` (cross-mount
+    5-level relpath). Post-α-1.1, produces ``'../data/exports/foo'``.
+
+    Closes Agent I FINDING 1 from 8-agent prep round 2026-05-10.
+    """
+
+    def test_substitution_through_symlinked_data_dir_stays_intra_monorepo(
+        self, tmp_path: Path
+    ):
+        # Real data location — external to pipeline root, mimics
+        # the user's deployment with /Volumes/WD_Black/HFT-data/
+        real_data = tmp_path / "external_volume" / "HFT-data"
+        (real_data / "exports" / "foo").mkdir(parents=True)
+
+        # Pipeline root with symlinked data/
+        root = tmp_path / "HFT-pipeline-v2"
+        root.mkdir()
+        (root / "contracts").mkdir()
+        (root / "contracts" / "pipeline_contract.toml").write_text(
+            '[contract]\nschema_version = "3.0"\n'
+        )
+        (root / "data").symlink_to(real_data)
+
+        paths = PipelinePaths(pipeline_root=root)
+        raw = {
+            "stages": {
+                "extraction": {"output_dir": "data/exports/foo"},
+                "training": {
+                    "trainer_config": {
+                        "data": {
+                            "data_dir": "${stages.extraction.output_dir}",
+                        },
+                    },
+                },
+            },
+        }
+        now = datetime(2026, 5, 10, tzinfo=timezone.utc)
+        resolved = _resolve_variables(raw, now=now, paths=paths)
+        actual = resolved["stages"]["training"]["trainer_config"]["data"][
+            "data_dir"
+        ]
+        # Critical: must be `'../data/exports/foo'` (intra-monorepo)
+        # NOT `'../../../../../external_volume/HFT-data/exports/foo'`
+        assert actual == "../data/exports/foo", (
+            f"#PY-83 regression: expected intra-monorepo relpath "
+            f"'../data/exports/foo', got cross-mount {actual!r}. "
+            f"This means paths.resolve() is dereferencing the data/ symlink "
+            f"— the bug α-1.1 was supposed to fix."
+        )
+        # Defense-in-depth: explicitly assert NO cross-mount components
+        assert "external_volume" not in actual
+        # 5-level cross-mount path would contain "../../../../../" — the
+        # exact form depends on tmp_path depth, so check for any 4+ level
+        # ascent (intra-monorepo only needs 1 level: "../").
+        assert "../../../" not in actual, (
+            f"#PY-83 regression: cross-mount path detected in {actual!r}"
+        )

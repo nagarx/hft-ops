@@ -25,9 +25,15 @@ class PipelinePaths:
     pipeline_root: Path
 
     def __post_init__(self) -> None:
+        # Phase α-1.1 / #PY-83 fix (2026-05-10): use Path.absolute() not
+        # Path.resolve() to preserve symlink-source lineage. Per α-3 / #PY-79
+        # lesson — when `data/` is symlinked to external mount, resolve()
+        # derefs the symlink at start, breaking downstream relpath logic
+        # that expects monorepo-root-anchored paths. absolute() preserves
+        # the symlink-source so subsequent walks find contracts/, etc.
         if not self.pipeline_root.is_absolute():
             object.__setattr__(
-                self, "pipeline_root", self.pipeline_root.resolve()
+                self, "pipeline_root", self.pipeline_root.absolute()
             )
 
     # -- Module directories --------------------------------------------------
@@ -115,7 +121,39 @@ class PipelinePaths:
     # -- Convenience ---------------------------------------------------------
 
     def resolve(self, relative_path: str) -> Path:
-        """Resolve a path relative to pipeline_root."""
+        """Make a path absolute relative to pipeline_root, preserving symlink-source.
+
+        Phase α-1.1 / #PY-83 fix (2026-05-10): default behavior is
+        `.absolute()` (preserve symlink-source lineage) per α-3 / #PY-79
+        lesson. For cases where the canonical filesystem path is required
+        (cache-key inputs, content-addressed hashes, lineage manifests
+        where symlink-equivalence must collapse), use `canonical()` instead.
+
+        Used by 47+ call sites in hft-ops (manifest/loader, cli, validators,
+        stage runners, ledger). NONE of these need symlink-deref; they all
+        pass through `os.path.relpath` or file existence checks where
+        symlink-source preservation is correct.
+        """
+        return (self.pipeline_root / relative_path).absolute()
+
+    def canonical(self, relative_path: str) -> Path:
+        """Resolve a path to its canonical filesystem location (DEREFERENCES symlinks).
+
+        Phase α-1.1 / #PY-83 (2026-05-10): explicit escape hatch for the
+        rare cases where symlink-equivalence must collapse, e.g.:
+        - Content-addressed cache keys (two configs pointing through different
+          symlinks but to same physical input must collide)
+        - Lineage manifests where data_dir hash must be canonical
+        - Symlink-tree builders computing relative-symlink portability
+
+        Default consumers should use `resolve()` instead — symlink-source
+        preservation is correct for path substitution, relpath, and most
+        I/O paths.
+
+        Note: `extraction_cache.py` + `feature_sets/producer.py` already
+        bypass `paths.resolve()` by calling `(extractor_dir / x).resolve()`
+        directly for cache-key purposes — they do not need migration.
+        """
         return (self.pipeline_root / relative_path).resolve()
 
     def validate(self) -> list[str]:
@@ -136,8 +174,15 @@ class PipelinePaths:
 
     @classmethod
     def auto_detect(cls) -> PipelinePaths:
-        """Auto-detect pipeline root by walking up from hft-ops/src/hft_ops/."""
-        here = Path(__file__).resolve()
+        """Auto-detect pipeline root by walking up from hft-ops/src/hft_ops/.
+
+        Phase α-1.1 / #PY-83 fix (2026-05-10): use `.absolute()` not
+        `.resolve()` so that hft-ops checked out under a symlinked
+        directory still detects the correct pipeline root via symlink-source
+        lineage. Mirrors α-3 / #PY-79 fix in
+        lob-model-trainer/feature_set_resolver.py:442.
+        """
+        here = Path(__file__).absolute()
         # hft-ops/src/hft_ops/paths.py -> walk up 4 levels to pipeline root
         candidate = here.parent.parent.parent.parent
         if (candidate / "contracts" / "pipeline_contract.toml").exists():

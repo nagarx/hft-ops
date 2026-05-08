@@ -57,7 +57,10 @@ class OpsConfig:
     ) -> OpsConfig:
         """Build config from an explicit or auto-detected pipeline root."""
         if pipeline_root is not None:
-            paths = PipelinePaths(pipeline_root=Path(pipeline_root).resolve())
+            # Phase α-1.1 / #PY-83 fix (2026-05-10): use `.absolute()` not
+            # `.resolve()` to preserve symlink-source lineage for the
+            # pipeline_root. Mirrors α-3 / #PY-79 lesson.
+            paths = PipelinePaths(pipeline_root=Path(pipeline_root).absolute())
         else:
             paths = PipelinePaths.auto_detect()
         return cls(
