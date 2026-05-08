@@ -65,7 +65,7 @@ experiment:
     pre-training evaluator) should show importance_mean ~0 — if any
     shows stably-positive importance_mean with stability > 0.6, that
     feature is a candidate for tier-flip at Stage C.5.
-  contract_version: "2.2"
+  contract_version: "3.0"
   tags:
     - nvda
     - e5
@@ -83,13 +83,13 @@ stages:
     enabled: true
     skip_if_exists: true
     config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
-    output_dir: "data/exports/e5_timebased_60s"
+    output_dir: "data/exports/e5_timebased_60s_v3p0"
 
   raw_analysis:
     enabled: false
 
   dataset_analysis:
-    enabled: false
+    enabled: true
 
   training:
     enabled: true
@@ -98,8 +98,9 @@ stages:
       description: "E5 Phase 8C-α Stage C.1 importance audit: TLOB H10 regression + permutation importance."
 
       data:
-        data_dir: "../data/exports/e5_timebased_60s"
+        data_dir: "../data/exports/e5_timebased_60s_v3p0"
         feature_count: 98
+        feature_set: nvda_short_term_98_src98_v1  # P0-4 fix (Phase 2 Cycle 4 pre-impl, 2026-05-08): trivial pass-through 98-feat (indices 0-97) so signal_metadata.json carries feature_set_ref → composer source 2/4 populated → experiment_provenance_hash non-None.
         labeling_strategy: regression
         num_classes: 3
         horizon_idx: 0
@@ -151,12 +152,20 @@ stages:
       # this block is omitted (or importance.enabled=false), the
       # trainer callback is auto-skipped with zero overhead.
       importance:
+        # P1 tunes (Phase 2 Cycle 4 pre-impl, 2026-05-08; mid-impl 2026-05-08):
+        # - n_seeds: 3 → 5 (Phase 8C-β feedback-merge default; tighter std estimate)
+        # - block_length_samples: 1 → 36 (≈8K test_samples / 230 days; preserves
+        #   intraday autocorrelation per CLAUDE.md ACF=0.266 5m XNAS finding)
+        # - eval_split: KEPT as "test" per importance_default.yaml:68-71 rationale
+        #   ("Test is preferred — val was implicitly used for early-stopping so the
+        #   model is indirectly optimized on it"). Mid-impl agent flagged that an
+        #   earlier tune to "val" CONTRADICTED the project doc; reverted.
         enabled: true
         method: permutation
         n_permutations: 100
-        n_seeds: 3
+        n_seeds: 5
         subsample: 5000
-        block_length_samples: 1
+        block_length_samples: 36
         seed: 42
         eval_split: "test"
         baseline_metric: "auto"  # resolves to val_ic for regression
@@ -172,7 +181,20 @@ stages:
     output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
 
   signal_export:
-    enabled: false
+    enabled: true
+    script: "lob-model-trainer/scripts/export_signals.py"
+    split: test
+    output_dir: "outputs/experiments/${experiment.name}/signals/test"
+    # P0-3 fix (Phase 2 Cycle 4 pre-impl, 2026-05-08): enabled so harvester
+    # populates compatibility_fingerprint (composer source 3/4) AND
+    # model_config_hash (composer source 4/4). Combined with P0-4 feature_set
+    # ref, all 4 sources are populated → experiment_provenance_hash non-None →
+    # FIRST live record validates Phase Y composability empirically.
+    #
+    # P0-NEW fix (mid-impl 2026-05-08): output_dir REQUIRED. Without it,
+    # SignalExportStage.output_dir defaults to "" → _harvest_compatibility_fingerprint
+    # returns None → composer silently returns None despite signal_export running.
+    # Fix sets explicit output_dir matching exporter.py:132 default convention.
 
   backtesting:
     enabled: false
