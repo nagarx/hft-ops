@@ -17,10 +17,11 @@ runtime resolution by the stage runners.
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import yaml
 
@@ -41,6 +42,9 @@ from hft_ops.manifest.schema import (
     ValidationStage,
 )
 
+if TYPE_CHECKING:
+    from hft_ops.paths import PipelinePaths
+
 _VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 _DEFERRED_PREFIXES = ("resolved.",)
@@ -49,12 +53,68 @@ _DEFERRED_PREFIXES = ("resolved.",)
 from hft_ops.utils import get_nested as _get_nested
 
 
+def _maybe_rebase_path(
+    resolved_str: str,
+    *,
+    source_key: str,
+    target_key: str,
+    paths: Optional["PipelinePaths"],
+) -> str:
+    """Rebase a substituted path value when source slot and target slot live in
+    different path-base coordinate systems.
+
+    Phase α-1 / #PY-78 (2026-05-10) — fixes path-relativity contract mismatch
+    between pipeline-root-relative source slots (e.g., ``stages.extraction.output_dir``
+    consumed via ``paths.resolve(...)``) and trainer-cwd-relative target slots
+    (e.g., ``stages.training.trainer_config.data.data_dir`` consumed bare by
+    the trainer subprocess with cwd=``$pipeline_root/lob-model-trainer/``).
+
+    When ``paths`` is None (legacy callers / test fixtures without a pipeline
+    root), no rebasing happens — substitution behaves exactly like before this
+    fix landed. This preserves backward-compat with the prior behavior.
+
+    Path-base classification is delegated to ``slot_taxonomy.detect_slot_path_base``
+    (the SSoT). New slot path-bases must be registered there per hft-rules §0.
+    """
+    if paths is None:
+        return resolved_str
+    # Local import to avoid circular dependency at module load time.
+    from hft_ops.manifest.slot_taxonomy import PathBase, detect_slot_path_base
+
+    src_base = detect_slot_path_base(source_key)
+    tgt_base = detect_slot_path_base(target_key)
+    if src_base == PathBase.PIPELINE_ROOT and tgt_base == PathBase.TRAINER_CWD:
+        # HIGH-1 short-circuit: absolute source paths are cwd-independent.
+        # Skip rebasing — the trainer subprocess will interpret an absolute
+        # path identically regardless of cwd, and forcing a long
+        # `../../../...` cross-mount relative path is operationally fragile.
+        if os.path.isabs(resolved_str):
+            return resolved_str
+        # Convert pipeline-root-relative source → trainer-cwd-relative literal
+        # so trainer subprocess (cwd=trainer_dir) sees the correct path.
+        # HIGH-2 fail-loud: surface filesystem errors with actionable context
+        # per hft-rules §8 (never silently drop/clamp/fix data; explicit
+        # diagnostic citing slot keys + source value).
+        try:
+            abs_path = paths.resolve(resolved_str)
+            return os.path.relpath(abs_path, paths.trainer_dir)
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"Cannot rebase manifest path: source slot "
+                f"'{source_key}' = {resolved_str!r} (pipeline-root-relative) → "
+                f"target slot '{target_key}' (trainer-cwd-relative). "
+                f"Resolution failed: {type(exc).__name__}: {exc}"
+            ) from exc
+    return resolved_str
+
+
 def _resolve_variables(
     raw: Dict[str, Any],
     *,
     now: datetime,
     max_passes: int = 5,
     extra_vars: Dict[str, Any] | None = None,
+    paths: Optional["PipelinePaths"] = None,
 ) -> Dict[str, Any]:
     """Resolve ${...} variable references in a nested dict.
 
@@ -72,6 +132,15 @@ def _resolve_variables(
             ..., "axis_values": {...}}}`` without having to mutate ``raw``
             (which would require post-resolution key stripping). Lookup
             precedence: deferred prefixes → builtin_vars → extra_vars → raw.
+        paths: Optional :class:`PipelinePaths` for path-base aware substitution
+            (Phase α-1 / #PY-78). When provided AND a substitution crosses
+            path-bases (source slot is pipeline-root-relative, target slot is
+            trainer-cwd-relative), the value is rebased via
+            ``paths.resolve()`` + ``os.path.relpath(..., trainer_dir)``. When
+            ``None`` (legacy/test callers), substitution behaves exactly like
+            before — preserving backward-compat. Slot path-base classification
+            lives in :mod:`hft_ops.manifest.slot_taxonomy` (SSoT per
+            hft-rules §0).
 
     Returns:
         The dict with all resolvable variables substituted.
@@ -82,7 +151,7 @@ def _resolve_variables(
     }
     extras: Dict[str, Any] = extra_vars or {}
 
-    def _substitute(value: Any) -> Any:
+    def _substitute(value: Any, current_dotted_path: str = "") -> Any:
         if isinstance(value, str):
             def _replacer(match: re.Match) -> str:
                 key = match.group(1)
@@ -94,23 +163,41 @@ def _resolve_variables(
                 if extras:
                     resolved_extra = _get_nested(extras, key)
                     if resolved_extra is not None and isinstance(resolved_extra, (str, int, float)):
-                        return str(resolved_extra)
+                        return _maybe_rebase_path(
+                            str(resolved_extra),
+                            source_key=key,
+                            target_key=current_dotted_path,
+                            paths=paths,
+                        )
                 resolved = _get_nested(raw, key)
                 if resolved is not None and isinstance(resolved, (str, int, float)):
-                    return str(resolved)
+                    return _maybe_rebase_path(
+                        str(resolved),
+                        source_key=key,
+                        target_key=current_dotted_path,
+                        paths=paths,
+                    )
                 return match.group(0)
 
             return _VAR_PATTERN.sub(_replacer, value)
         elif isinstance(value, dict):
-            return {k: _substitute(v) for k, v in value.items()}
+            return {
+                k: _substitute(
+                    v,
+                    f"{current_dotted_path}.{k}".lstrip("."),
+                )
+                for k, v in value.items()
+            }
         elif isinstance(value, list):
-            return [_substitute(v) for v in value]
+            # Lists pass through current_dotted_path unchanged. List indices
+            # are NOT part of slot taxonomy (slots classify by dotted-name path).
+            return [_substitute(v, current_dotted_path) for v in value]
         return value
 
     resolved = raw
     for _ in range(max_passes):
         prev = str(resolved)
-        resolved = _substitute(resolved)
+        resolved = _substitute(resolved, "")
         if str(resolved) == prev:
             break
 
@@ -418,12 +505,20 @@ def load_manifest(
     manifest_path: str | Path,
     *,
     now: datetime | None = None,
+    paths: Optional["PipelinePaths"] = None,
 ) -> ExperimentManifest:
     """Load and resolve an experiment manifest from a YAML file.
 
     Args:
         manifest_path: Path to the manifest YAML file.
         now: Override timestamp for deterministic testing.
+        paths: Optional :class:`PipelinePaths` for path-base aware ``${...}``
+            substitution (Phase α-1 / #PY-78). When ``None``, the loader
+            attempts ``PipelinePaths.auto_detect()`` so production callers
+            transparently get correct path-rebasing without signature changes.
+            If auto-detect raises (test fixtures running outside a pipeline
+            root), substitution falls back to legacy behavior (no rebasing) —
+            preserves backward compatibility.
 
     Returns:
         A fully resolved ExperimentManifest.
@@ -440,13 +535,31 @@ def load_manifest(
     if now is None:
         now = datetime.now(timezone.utc)
 
+    if paths is None:
+        # Auto-detect pipeline root by walking up from the MANIFEST path
+        # (not from this source file's location). This ensures test fixtures
+        # in tmp dirs auto-detect their OWN tmp pipeline root if present,
+        # OR fall through to legacy no-rebasing if the fixture lacks
+        # `contracts/pipeline_contract.toml`. Production callers transparently
+        # get the path-base-aware substitution.
+        try:
+            from hft_ops.paths import PipelinePaths
+            for ancestor in [manifest_path, *manifest_path.parents]:
+                if (ancestor / "contracts" / "pipeline_contract.toml").exists():
+                    paths = PipelinePaths(pipeline_root=ancestor)
+                    break
+            else:
+                paths = None
+        except Exception:
+            paths = None
+
     with open(manifest_path, "r") as f:
         raw: Dict[str, Any] = yaml.safe_load(f)
 
     if not raw or not isinstance(raw, dict):
         raise ValueError(f"Manifest is empty or not a dict: {manifest_path}")
 
-    raw = _resolve_variables(raw, now=now)
+    raw = _resolve_variables(raw, now=now, paths=paths)
 
     experiment_raw = raw.get("experiment", {})
     if not experiment_raw.get("name"):

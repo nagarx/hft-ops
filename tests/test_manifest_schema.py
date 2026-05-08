@@ -136,8 +136,17 @@ class TestLoadManifest:
     def test_variable_resolution_in_load(self, sample_manifest_yaml: Path):
         now = datetime(2026, 3, 5, 12, 0, 0, tzinfo=timezone.utc)
         manifest = load_manifest(sample_manifest_yaml, now=now)
+        # Phase α-1 / #PY-78 (2026-05-10): orchestrator now path-base-rebases
+        # cross-coordinate substitutions. Source slot ``stages.extraction.output_dir``
+        # is pipeline-root-relative (consumed via paths.resolve()); target slot
+        # ``stages.training.overrides.data.data_dir`` is trainer-cwd-relative
+        # (consumed bare by trainer subprocess with cwd=lob-model-trainer/).
+        # Resolver converts via paths.resolve() + os.path.relpath(..., trainer_dir),
+        # yielding "../data/exports/nvda_test" in the tmp_pipeline fixture
+        # (where trainer_dir = $tmp_root/lob-model-trainer/ and source value
+        # resolves to $tmp_root/data/exports/nvda_test).
         assert manifest.stages.training.overrides.get("data.data_dir") == (
-            "data/exports/nvda_test"
+            "../data/exports/nvda_test"
         )
 
     def test_missing_file_raises(self, tmp_path: Path):

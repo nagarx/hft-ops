@@ -460,9 +460,20 @@ def expand_sweep_with_axis_values(
         # to the per-grid-point values (e.g., if an axis set extraction.output_dir,
         # backtesting.data_dir = "${stages.extraction.output_dir}" now re-resolves).
         # Also rebinds ${sweep.point_name} / ${sweep.axis_values.*} via extra_vars.
+        # Phase α-1 / #PY-78 (2026-05-10): forward `paths` so path-base aware
+        # substitution rebases pipeline-root-relative → trainer-cwd-relative
+        # when grid-point overrides target trainer-consumed slots. Auto-detect
+        # is best-effort; legacy callers running outside a pipeline root fall
+        # through to no-rebasing (preserves prior behavior for test fixtures).
+        try:
+            from hft_ops.paths import PipelinePaths
+            sweep_paths = PipelinePaths.auto_detect()
+        except FileNotFoundError:
+            sweep_paths = None
         ctx = VarResolutionContext(
             now=sweep_now,
             extra_vars={"sweep": {"point_name": point_name, "axis_values": axis_values}},
+            paths=sweep_paths,
         )
         concrete = resolve_variables_in_manifest(concrete, ctx)
 

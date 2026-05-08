@@ -40,7 +40,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+if TYPE_CHECKING:
+    from hft_ops.paths import PipelinePaths
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,14 @@ class VarResolutionContext:
             ``{"sweep": {"point_name": ..., "axis_values": {...}}}`` so
             templates can reference ``${sweep.point_name}`` and
             ``${sweep.axis_values.<axis_name>}``.
+        paths: Optional :class:`PipelinePaths` for path-base aware ``${...}``
+            substitution (Phase α-1 / #PY-78, 2026-05-10). When provided AND
+            a substitution crosses path-bases (source slot is pipeline-root-
+            relative, target slot is trainer-cwd-relative), the value is
+            rebased via ``paths.resolve()`` + ``os.path.relpath(..., trainer_dir)``.
+            When ``None`` (legacy / test fixtures), no rebasing happens —
+            preserves backward-compat. Slot path-base classification is
+            owned by :mod:`hft_ops.manifest.slot_taxonomy` (SSoT).
 
     Note on ``${timestamp}``/``${date}`` semantics:
         These are LOAD-TIME variables consumed by ``_resolve_variables`` at
@@ -77,6 +88,7 @@ class VarResolutionContext:
 
     now: datetime
     extra_vars: Dict[str, Any] = field(default_factory=dict)
+    paths: Optional["PipelinePaths"] = None
 
 
 def resolve_variables_in_manifest(manifest, ctx: VarResolutionContext):
@@ -138,7 +150,13 @@ def resolve_variables_in_manifest(manifest, ctx: VarResolutionContext):
     # extra_vars is passed through — _resolve_variables consults it BEFORE the
     # raw-dict lookup, enabling ${sweep.point_name} / ${sweep.axis_values.*}
     # without polluting the manifest dict.
-    raw = _resolve_variables(raw, now=ctx.now, extra_vars=ctx.extra_vars)
+    # ctx.paths is forwarded so path-base aware substitution (Phase α-1 / #PY-78)
+    # rebases pipeline-root-relative source slots into trainer-cwd-relative
+    # target slots when crossing the boundary (e.g., ${stages.extraction.output_dir}
+    # → trainer's data.data_dir slot).
+    raw = _resolve_variables(
+        raw, now=ctx.now, extra_vars=ctx.extra_vars, paths=ctx.paths,
+    )
 
     # Step 5: rebuild manifest via the canonical _build_* helpers (reuse).
     experiment_raw = raw.get("experiment", {})
