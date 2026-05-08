@@ -24,6 +24,7 @@ from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.stages.base import (
     StageResult,
     StageStatus,
+    _format_subprocess_failure,
     run_subprocess,
     _tail,
 )
@@ -168,9 +169,8 @@ class BacktestRunner:
                 result.status = StageStatus.COMPLETED
             else:
                 result.status = StageStatus.FAILED
-                result.error_message = (
-                    f"{script_basename} exited with code {proc.returncode}"
-                )
+                # Phase α-2 / #PY-80 (2026-05-10) — surface stderr.
+                result.error_message = _format_subprocess_failure(proc, script_basename)
         except Exception as e:
             result.duration_seconds = time.monotonic() - start
             result.status = StageStatus.FAILED

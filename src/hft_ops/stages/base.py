@@ -182,3 +182,51 @@ def _tail(text: str, max_lines: int = _MAX_CAPTURED_LINES) -> str:
     if len(lines) > max_lines:
         lines = lines[-max_lines:]
     return "\n".join(lines)
+
+
+_DEFAULT_STDERR_TAIL_LINES = 20
+
+
+def _format_subprocess_failure(
+    proc: subprocess.CompletedProcess,
+    script_basename: str,
+    *,
+    stderr_tail_lines: int = _DEFAULT_STDERR_TAIL_LINES,
+) -> str:
+    """Build an actionable error message from a failed subprocess.
+
+    Phase α-2 / #PY-80 (2026-05-10) — closes "argparse error in 0.1s with
+    no diagnostic" class of bugs across all 6 stage runners.
+
+    Augments the generic ``f"{script_basename} exited with code {N}"`` pattern
+    by tailing the last ``stderr_tail_lines`` of stderr — surfaces argparse
+    errors, Python tracebacks, and missing-dependency messages that previously
+    were captured into ``result.stderr`` but never displayed by the
+    orchestrator's main loop (cli.py only prints ``result.error_message``).
+
+    Per hft-rules §8 ("never silently drop, clamp, or 'fix' data without
+    recording diagnostics"): pre-#PY-80, a 0.1s argparse exit produced a
+    generic message and the stderr "the following arguments are required:
+    --checkpoint" was buried in ``result.stderr`` (truncated by ``_tail``)
+    and never displayed.
+
+    Args:
+        proc: Completed subprocess result with ``returncode`` and ``stderr``.
+        script_basename: Display name for the failed script (e.g.,
+            ``"export_signals.py"``, ``"train.py"``).
+        stderr_tail_lines: Number of trailing stderr lines to include
+            (default: 20). Bounded so the resulting message stays digestible
+            in the orchestrator UI; full stderr remains in ``result.stderr``.
+
+    Returns:
+        Multi-line string: the generic exit-code line, optionally followed
+        by ``--- last N stderr lines ---`` and the tail. If stderr is empty,
+        returns only the generic line (no fanciness).
+    """
+    base = f"{script_basename} exited with code {proc.returncode}"
+    stderr = (proc.stderr or "").strip()
+    if not stderr:
+        return base
+    lines = stderr.splitlines()[-stderr_tail_lines:]
+    tail = "\n".join(lines)
+    return f"{base}\n--- last {len(lines)} stderr lines ---\n{tail}"

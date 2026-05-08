@@ -23,6 +23,7 @@ from hft_ops.ledger.dedup import _load_trainer_merge_module
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.paths import PipelinePaths
 from hft_ops.stages.base import (
+    _format_subprocess_failure,
     StageResult,
     StageStatus,
     run_subprocess,
@@ -493,9 +494,10 @@ class TrainingRunner:
                 self._capture_training_metrics(result)
             else:
                 result.status = StageStatus.FAILED
-                result.error_message = (
-                    f"train.py exited with code {proc.returncode}"
-                )
+                # Phase α-2 / #PY-80 (2026-05-10) — surface argparse + traceback
+                # stderr to the orchestrator's main loop (cli.py prints
+                # error_message; without this, stderr was buried in result.stderr).
+                result.error_message = _format_subprocess_failure(proc, "train.py")
         except Exception as e:
             result.duration_seconds = time.monotonic() - start
             result.status = StageStatus.FAILED

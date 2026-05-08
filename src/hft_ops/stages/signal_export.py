@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 from hft_ops.config import OpsConfig
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.stages.base import (
+    _format_subprocess_failure,
     StageResult,
     StageStatus,
     run_subprocess,
@@ -484,6 +485,26 @@ class SignalExportRunner:
                 f"(configured via stages.signal_export.script='{stage.script}')"
             )
 
+        # Phase α-2 / #PY-80 (2026-05-10) — fail-loud on empty checkpoint
+        # when stage enabled. Without this gate, the runner's
+        # `if stage.checkpoint:` check at line 590 silently skips emitting
+        # `--checkpoint <path>` to the subprocess. `export_signals.py`
+        # argparse declares `--checkpoint required=True`, so the subprocess
+        # exits with code 2 in <100ms with stderr "the following arguments
+        # are required: --checkpoint". Per hft-rules §5 fail-fast, surface
+        # the mistake at manifest-load time with an actionable message
+        # citing the canonical convention.
+        if stage.enabled and not stage.checkpoint:
+            errors.append(
+                "signal_export.checkpoint is empty. "
+                "lob-model-trainer/scripts/export_signals.py requires "
+                "--checkpoint <path>. Set "
+                "stages.signal_export.checkpoint: "
+                "'${stages.training.output_dir}/checkpoints/best.pt' "
+                "(matches nvda_hmhp_*.yaml convention) or an explicit path "
+                "to a pre-trained .pt/.pkl file."
+            )
+
         # Checkpoint path may reference a variable that resolves at runtime;
         # only validate if it's a concrete path AND training is disabled
         # (i.e., we depend on a pre-existing checkpoint).
@@ -659,9 +680,11 @@ class SignalExportRunner:
                     )
             else:
                 result.status = StageStatus.FAILED
-                result.error_message = (
-                    f"{script_basename} exited with code {proc.returncode}"
-                )
+                # Phase α-2 / #PY-80 (2026-05-10) — surface argparse + traceback
+                # stderr to the orchestrator's main loop. The original instance
+                # of this bug class: `export_signals.py` exit-2-in-0.1s with
+                # "the following arguments are required: --checkpoint" buried.
+                result.error_message = _format_subprocess_failure(proc, script_basename)
         except Exception as e:
             result.duration_seconds = time.monotonic() - start
             result.status = StageStatus.FAILED

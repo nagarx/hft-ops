@@ -99,6 +99,7 @@ stages:
 
       data:
         data_dir: "../data/exports/e5_timebased_60s_v3p0"
+        feature_sets_dir: "../contracts/feature_sets"  # P0-NEW2 fix (Cycle 4 attempt 3 post-mortem 2026-05-09): data/ is a symlink to /Volumes/WD_Black/HFT-data/; trainer's find_feature_sets_dir auto-detect walks symlink target up to / and never finds contracts/pipeline_contract.toml. Explicit override bypasses the symlink-walk bug.
         feature_count: 98
         feature_set: nvda_short_term_98_src98_v1  # P0-4 fix (Phase 2 Cycle 4 pre-impl, 2026-05-08): trivial pass-through 98-feat (indices 0-97) so signal_metadata.json carries feature_set_ref → composer source 2/4 populated → experiment_provenance_hash non-None.
         labeling_strategy: regression
@@ -174,8 +175,13 @@ stages:
       log_level: INFO
       tags: [e5, nvda, regression, h10, 60s, importance, audit]
 
-    overrides:
-      data.data_dir: "${stages.extraction.output_dir}"
+    # overrides block removed 2026-05-09 per #PY-78 (orchestrator path-substitution
+    # bug strips `../` prefix needed for trainer-cwd-relative data_dir).
+    # trainer_config.data.data_dir = "../data/exports/e5_timebased_60s_v3p0"
+    # is already correct relative to trainer subprocess cwd (lob-model-trainer/).
+    # When orchestrator-side fix ships (#PY-78), this override block can be
+    # restored as `data.data_dir: "${stages.extraction.output_dir | trainer_relative}"`
+    # or similar safe pattern.
 
     horizon_value: 10
     output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
@@ -183,6 +189,12 @@ stages:
   signal_export:
     enabled: true
     script: "lob-model-trainer/scripts/export_signals.py"
+    # Phase α-2 / #PY-80 (2026-05-10): explicit checkpoint required.
+    # Without this, the runner skipped emitting --checkpoint to the subprocess
+    # and argparse exited code 2 in <100ms with "the following arguments are
+    # required: --checkpoint". The validate-time gate now catches this before
+    # subprocess launch (see signal_export.py::validate_inputs).
+    checkpoint: "${stages.training.output_dir}/checkpoints/final.pt"
     split: test
     output_dir: "outputs/experiments/${experiment.name}/signals/test"
     # P0-3 fix (Phase 2 Cycle 4 pre-impl, 2026-05-08): enabled so harvester
