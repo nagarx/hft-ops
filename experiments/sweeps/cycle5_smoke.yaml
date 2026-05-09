@@ -1,6 +1,21 @@
 # =============================================================================
-# Cycle 5 multi-arm sweep — model_type × return_type × horizons
+# Cycle 5 SMOKE — 1-arm reduction of cycle5_multi_arm.yaml
 # =============================================================================
+#
+# SMOKE = 1 grid point (sklearn temporal_ridge × smoothed_return × H10).
+# Used for sweep-mode pre-launch validation: manifest expansion + per-point
+# config materialization + ${sweep.point_name} substitution + sweep_aggregate
+# parent record + Phase Y composer in sweep mode. Validates without committing
+# to ~3-5 hr full 12-arm run. Expected ~5-15 min compute.
+#
+# THE FOLLOWING DESCRIPTION IS PRESERVED FROM cycle5_multi_arm.yaml as the
+# parent context for the SMOKE structural reduction. Numeric figures (12 arms,
+# decision-gate criteria, etc.) DO NOT APPLY to SMOKE — they describe the
+# multi-arm parent. SMOKE inherits the same trainer_config + axes structure
+# but with axis-values reduced to 1 each. See sweep block at line 287+ for
+# the actual SMOKE expansion (1 grid point).
+#
+# === Parent context (cycle5_multi_arm.yaml) ===
 #
 # MVP requirement #3: ≥1 multi-arm pairwise-bootstrap comparison via
 # `hft-ops sweep compare`. This is the FIRST canonical multi-arm sweep on
@@ -102,9 +117,9 @@
 # =============================================================================
 
 experiment:
-  name: "cycle5_multi_arm"
+  name: "cycle5_smoke"
   description: >
-    Cycle 5 first canonical multi-arm sweep on v3p0 corpus. 12 grid points
+    Cycle 5 SMOKE — 1-arm reduction of cycle5_multi_arm.yaml for sweep-mode pre-launch validation. 1 grid point
     (model_type × return_type × horizons). Produces FIRST live empirical
     validation of cross-arm pairwise-bootstrap-compare tooling shipped in
     Phase V.B.4. Target: ≥10 records with populated experiment_provenance_
@@ -149,7 +164,7 @@ stages:
   training:
     enabled: true
     trainer_config:
-      name: cycle5_multi_arm_base
+      name: cycle5_smoke_base
       description: "Cycle 5 multi-arm base; axes override model_type, data.labels.return_type, and training.horizon_value."
 
       data:
@@ -198,22 +213,12 @@ stages:
         tlob_dataset_type: nvda
         tlob_use_cvml: false
         # γ-1 LITE / #PY-86 fix (2026-05-09): sklearn-only `params: {alpha, features}`
-        # was previously declared HERE at base level and the comment claimed it was
-        # "ignored when model_type=tlob per dispatch". This was FALSE. The trainer's
-        # ModelConfig.__post_init__ at lobtrainer/config/schema.py:1619 short-circuits
-        # `_build_params_from_legacy()` whenever `self.params` is non-empty, so a
-        # base-level `params: {alpha, features}` propagates to TLOB arms and crashes
-        # with `TypeError: TLOBConfig.__init__() got an unexpected keyword argument
-        # 'alpha'`. The 5-arm sklearn cohort succeeded because sklearn config classes
-        # accept the kwarg; the 7th grid point (TLOB) crashed.
-        #
-        # FIX: sklearn `params:` block now lives ONLY on the `temporal_ridge` value
-        # of the `model_type` axis (see `sweep.axes[0].values[0].overrides` below).
-        # TLOB arms get `params: {}` default → `_build_params_from_legacy` fires →
-        # reconstructs `{num_features, hidden_dim, num_layers, num_heads, ...}` from
-        # the `tlob_*` flat fields above. Cross-arm SSoT: see PHASE_P_BACKLOG #PY-86
-        # + #PY-93 (queue ParamOwnership.validate at ModelRegistry.create:281 to
-        # close the silent kwarg-acceptance class systemically).
+        # was previously declared HERE at base level. See cycle5_multi_arm.yaml for
+        # the full architectural rationale. SMOKE has only 1 grid point (sklearn-only)
+        # so the bug was LATENT here — no TLOB arm to crash. Mirroring the fix to
+        # cycle5_multi_arm.yaml for cross-manifest consistency (cycle5_smoke is the
+        # structural reduction of cycle5_multi_arm; future TLOB arms added to smoke
+        # would crash without this fix).
 
       train:
         task_type: regression
@@ -231,7 +236,7 @@ stages:
         seed: 42
         mixed_precision: false
 
-      output_dir: outputs/experiments/cycle5_multi_arm_base
+      output_dir: outputs/experiments/cycle5_smoke_base
       log_level: INFO
       tags: [cycle5, nvda, regression, multi-arm, v3p0, sweep]
 
@@ -272,20 +277,21 @@ stages:
 # =============================================================================
 
 sweep:
-  name: "cycle5_multi_arm"
+  name: "cycle5_smoke"
   strategy: "grid"
+  # SMOKE: 1×1×1 = 1 grid point. Mirrors β-1 baseline arm (sklearn temporal_ridge × smoothed_return × H10).
+  # Validates sweep-mode-specific code paths (manifest expansion + per-point config materialization +
+  # ${sweep.point_name} substitution + sweep_aggregate parent record + Phase Y composer in sweep mode)
+  # WITHOUT committing to ~3-5 hr full 12-arm run. Expected ~5-15 min compute.
   axes:
     - name: "model_type"
       values:
         - label: "temporal_ridge"
           overrides:
             model.model_type: temporal_ridge
-            # γ-1 LITE / #PY-86 fix (2026-05-09): sklearn-only params live ONLY here.
-            # Single-dict override replaces `model.params={}` default wholesale; TLOB
-            # arm value below intentionally OMITS this key so `_build_params_from_legacy`
-            # reconstructs from `tlob_*` flat fields. Routing: bare `model.params:`
-            # with dict value → sweep.py:443 `_BACK_COMPAT_TRAINER_PREFIXES` → trainer
-            # config-merge writes `cfg["model"]["params"] = <this dict>`.
+            # γ-1 LITE / #PY-86 fix (2026-05-09): sklearn-only params live here.
+            # Mirrors cycle5_multi_arm.yaml. Single-dict override replaces
+            # `model.params={}` default wholesale.
             model.params:
               alpha: 1.0
               features:
@@ -294,57 +300,22 @@ sweep:
                 rolling_windows: [3, 5, 10]
                 include_volatility: true
                 include_momentum: true
-        - label: "tlob"
-          overrides:
-            model.model_type: tlob
-            # No `model.params` override — TLOB arm relies on `_build_params_from_legacy`
-            # to reconstruct from `tlob_*` flat fields in the base trainer YAML.
 
     - name: "return_type"
       values:
-        - label: "point_return"
-          overrides:
-            data.labels.return_type: point_return
         - label: "smoothed_return"
           overrides:
             data.labels.return_type: smoothed_return
 
     - name: "horizon_value"
       values:
-        # γ-1 LITE / #PY-87 fix (2026-05-09): the bare `horizon_value:` field was
-        # COSMETIC — it routes to `concrete.stages.training.horizon_value` (used
-        # ONLY for output_dir naming) per sweep.py:89-95 + sweep.py:213, and does
-        # NOT propagate into `data.labels.primary_horizon_idx`. The trainer reads
-        # `primary_horizon_idx` directly from `LabelsConfig` (see
-        # lobtrainer/training/strategy.py:101-110 + lobtrainer/training/simple_trainer.py:179),
-        # so all 3 prior horizon arms silently sliced the H10 column from
-        # forward_prices[:, :, 0] regardless of `horizon_value` (empirically
-        # confirmed: 6 sklearn arms in the prior partial sweep produced only 2
-        # distinct experiment_provenance_hash values, both at H10).
-        #
-        # FIX: each value now overrides BOTH the cosmetic `horizon_value` (for
-        # output_dir naming consistency) AND the architecturally-meaningful
-        # `data.labels.primary_horizon_idx` (which actually drives label slicing
-        # + compatibility_fingerprint computation). Routing: `data.*` dotted →
-        # sweep.py:443 `_BACK_COMPAT_TRAINER_PREFIXES` → trainer config-merge
-        # writes `cfg["data"]["labels"]["primary_horizon_idx"] = <idx>`. Index
-        # values 0/1/2 correspond to horizons [10, 60, 300] per `LabelsConfig.horizons`
-        # at line 171 above.
-        #
-        # Followups documented in PHASE_P_BACKLOG: #PY-92 (trainer should fail-loud
-        # on conflict between data.horizon_idx + data.labels.primary_horizon_idx);
-        # #PY-88 (sklearn data-load-path defect at simple_trainer.py:94 keeps
-        # `return_type` axis cosmetic for sklearn even after this fix — deferred
-        # to separate cycle as data-path refactor).
+        # γ-1 LITE / #PY-87 fix (2026-05-09): bare `horizon_value:` is COSMETIC
+        # (output_dir naming only). MUST set `data.labels.primary_horizon_idx` for
+        # the trainer to actually slice the corresponding column from forward_prices.
+        # Mirrors cycle5_multi_arm.yaml. SMOKE has only H10 (idx=0 in horizons
+        # [10, 60, 300]); idx=0 matches the LabelsConfig default but the explicit
+        # override locks the contract for cross-manifest structural parity.
         - label: "H10"
           overrides:
             horizon_value: 10
             data.labels.primary_horizon_idx: 0
-        - label: "H60"
-          overrides:
-            horizon_value: 60
-            data.labels.primary_horizon_idx: 1
-        - label: "H300"
-          overrides:
-            horizon_value: 300
-            data.labels.primary_horizon_idx: 2
