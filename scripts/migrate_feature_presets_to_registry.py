@@ -125,8 +125,12 @@ def _locate_monorepo_root(script_path: Path) -> Path:
     """Walk up from this script to the HFT-pipeline-v2 monorepo root.
 
     The root is identified by the presence of ``contracts/pipeline_contract.toml``.
+
+    Phase α-1.3 / #PY-83-cluster (2026-05-10): use Path.absolute() not
+    Path.resolve() to preserve symlink-source lineage. Same defect class
+    as α-3 / #PY-79 in lob-model-trainer/feature_set_resolver.py:442.
     """
-    for parent in script_path.resolve().parents:
+    for parent in script_path.absolute().parents:
         if (parent / "contracts" / "pipeline_contract.toml").exists():
             return parent
     raise RuntimeError(

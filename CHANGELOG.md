@@ -12,6 +12,61 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ## [0.3.0-dev] — in progress
 
+### HYBRID Phase α-1.3 (2026-05-10) — caller-side cycle-detection invariant + α-3 walk-up class (#PY-83-cluster)
+
+**Fixed (#PY-83-cluster — α-1.3 follow-up to α-1.1 + α-1.2)**
+
+α-1.2 in lob-model-trainer flipped 4 sites in `merge.py` + `schema.py` to
+`.absolute()` for cycle-detection consistency. Adversarial cycle-level audit
+2026-05-10 (per Option D mandate) found **8 caller-side sites** in hft-ops
+that pass pre-`.resolve()`'d paths to `merge_mod.resolve_inheritance` —
+violating the α-1.2 "all sites must flip together" invariant. This commit
+flips the 8 sites:
+
+- `src/hft_ops/ledger/dedup.py:502` — `path.resolve()` → `.absolute()`
+  (caller-side of resolve_inheritance from `_resolve_trainer_inheritance`)
+- `src/hft_ops/ledger/dedup.py:556` — `(paths.trainer_dir / "configs").resolve()`
+  → `.absolute()` (trainer_configs root for inline trainer_config dispatch)
+- `src/hft_ops/stages/training.py:178` — exact mirror of dedup.py:502
+- `src/hft_ops/stages/training.py:249` — `(trainer_configs_root / p).resolve()`
+  → `.absolute()` (rewritten _base values re-enter resolve_inheritance)
+- `src/hft_ops/stages/training.py:401` — same pattern as dedup.py:556
+- `src/hft_ops/stages/contract_preflight.py:326` — exact mirror
+- `src/hft_ops/manifest/loader.py:531` — `Path(manifest_path).resolve()` →
+  `.absolute()` (α-3 walk-up class — scans ancestors for
+  `contracts/pipeline_contract.toml`; if manifest under symlinked checkout,
+  walk would jump off-tree)
+- `scripts/migrate_feature_presets_to_registry.py:129` — same α-3 walk-up
+  class in migration script
+
+**Why bundled together**: per Agent C 2026-05-10 audit recommendation, sites
+1-6 form a single tightly-coupled cluster (caller-side of α-1.2
+cycle-detection contract). Sites 7-8 share the α-3 walk-up class. Single
+atomic commit avoids partial-flip regression class.
+
+**Impact**: post-α-1.2, recursion inside `resolve_inheritance` correctly
+preserves symlink-source. But callers passing pre-`.resolve()`'d paths
+caused the cycle-detection key (line 135) to land in `_seen` as a deref'd
+path while subsequent recursion levels used `.absolute()` (preserved).
+For symlinked-configs deployments, this would silently break either
+cycle-detection or relative-base resolution. β-1 Cycle 4 RE-RUN succeeded
+because the user's deployment has symlinked `data/` (not `configs/`), but
+this latent defect would surface in Cycle 5 multi-arm sweeps via different
+manifest layouts.
+
+**Tests**: 800 passed, 31 warnings, 0 failures (no count change; existing
+tests cover the corrected behavior because no symlink in test fixtures).
+
+**Discovered by**: Agent C of Option D adversarial cycle audit 2026-05-10
+("Missed Path.resolve sites sweep"). Pre-impl design verified by Agent C
+itself (recommendation: single α-1.3 commit with all 8 sites). Mid-impl
++ pre-commit gates per saved feedback memory.
+
+**Remaining (a)-class sites — KEPT `.resolve()` by design**:
+`paths.canonical()` (escape hatch by design), `extraction_cache.py` cache
+keys, `feature_sets/producer.py` lineage manifests, `_testing.py`
+require_monorepo_root helper.
+
 ### HYBRID Phase α-1.1 (2026-05-10) — `paths.resolve()` symlink-deref defect (#PY-83) + α-1/α-2 catch-up
 
 **Fixed (#PY-83 — α-1.1 hotfix)**

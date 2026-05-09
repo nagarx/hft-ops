@@ -323,7 +323,11 @@ def preflight_trainer_config(
         from hft_ops.ledger.dedup import _load_trainer_merge_module
         merge_mod = _load_trainer_merge_module(paths)
         if merge_mod is not None:
-            cfg = merge_mod.resolve_inheritance(cfg, trainer_config_path.resolve())
+            # Phase α-1.3 / #PY-83-cluster (2026-05-10): use Path.absolute()
+            # not Path.resolve() — caller-side of α-1.2 cycle-detection
+            # invariant; mirrors hft-ops/stages/training.py:178 +
+            # ledger/dedup.py:502.
+            cfg = merge_mod.resolve_inheritance(cfg, trainer_config_path.absolute())
 
     model_block = cfg.get("model") or {}
     data_block = cfg.get("data") or {}

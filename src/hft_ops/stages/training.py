@@ -175,7 +175,11 @@ def _resolve_trainer_inheritance(
             "lobtrainer/config/merge.py.", config_path
         )
         return cfg
-    return merge_mod.resolve_inheritance(cfg, config_path.resolve())
+    # Phase α-1.3 / #PY-83-cluster (2026-05-10): use Path.absolute() not
+    # Path.resolve() — caller-side of α-1.2 cycle-detection invariant.
+    # resolve_inheritance internally uses .absolute() at merge.py:135 +
+    # :158/:160; caller MUST match for consistency.
+    return merge_mod.resolve_inheritance(cfg, config_path.absolute())
 
 
 def _apply_overrides(
@@ -246,7 +250,11 @@ def _absolutize_inline_base_paths(
             p = Path(value)
             if p.is_absolute():
                 return str(p)
-            return str((trainer_configs_root / p).resolve())
+            # Phase α-1.3 / #PY-83-cluster (2026-05-10): use .absolute() not
+            # .resolve() — these rewritten _base values re-enter
+            # resolve_inheritance cycle-detection at the next recursion level.
+            # Must preserve symlink-source per α-1.2 invariant.
+            return str((trainer_configs_root / p).absolute())
         if isinstance(value, list):
             return [_absolutize(v) for v in value]
         return value
@@ -398,7 +406,12 @@ class TrainingRunner:
             resolved_dir = config.paths.runs_dir / manifest.experiment.name
             resolved_dir.mkdir(parents=True, exist_ok=True)
             resolved_config = resolved_dir / "resolved_trainer_config.yaml"
-            trainer_configs_root = (config.paths.trainer_dir / "configs").resolve()
+            # Phase α-1.3 / #PY-83-cluster (2026-05-10): use .absolute() not
+            # .resolve() — trainer_configs_root propagates downstream into
+            # _absolutize_inline_base_paths and _materialize_inline_config →
+            # fake_config_path → resolve_inheritance, all of which must
+            # preserve symlink-source per α-1.2 cycle-detection invariant.
+            trainer_configs_root = (config.paths.trainer_dir / "configs").absolute()
             effective_config = _materialize_inline_config(
                 stage.trainer_config,
                 overrides,

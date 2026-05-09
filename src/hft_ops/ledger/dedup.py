@@ -499,7 +499,12 @@ def _load_trainer_config_resolved(
     # _base) and FileNotFoundError (missing base file) indicate a broken
     # config that MUST be fixed; silently swallowing them recreates the
     # ledger-conflation bug.
-    return merge_mod.resolve_inheritance(raw, path.resolve())
+    # Phase α-1.3 / #PY-83-cluster fix (2026-05-10): use Path.absolute()
+    # not Path.resolve() to preserve symlink-source lineage. resolve_inheritance
+    # internally uses .absolute() at merge.py:135 (cycle-detection key) +
+    # :158/:160 (recursive base path) — caller MUST match for the
+    # consistency invariant per α-1.2 ship rationale.
+    return merge_mod.resolve_inheritance(raw, path.absolute())
 
 
 def _resolve_inline_trainer_config(
@@ -553,7 +558,10 @@ def _resolve_inline_trainer_config(
     # _absolutize_inline_base_paths runtime convention). resolve_inheritance
     # resolves relative paths via `config_path.parent`, so we pass a
     # fictitious file path INSIDE trainer_configs so parent == trainer_configs.
-    trainer_configs = (paths.trainer_dir / "configs").resolve()
+    # Phase α-1.3 / #PY-83-cluster (2026-05-10): use .absolute() not .resolve()
+    # to preserve symlink-source. paths.trainer_dir already preserves; chained
+    # / operation + .absolute() is purely lexical (no symlink-deref).
+    trainer_configs = (paths.trainer_dir / "configs").absolute()
     fake_config_path = trainer_configs / "__inline_trainer_config__.yaml"
     # Hard errors propagate (cycle, depth, malformed _base)
     return merge_mod.resolve_inheritance(mutable, fake_config_path)

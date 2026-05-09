@@ -528,7 +528,13 @@ def load_manifest(
         yaml.YAMLError: If the YAML is malformed.
         ValueError: If required fields are missing.
     """
-    manifest_path = Path(manifest_path).resolve()
+    # Phase α-1.3 / #PY-83-cluster (2026-05-10): use Path.absolute() not
+    # Path.resolve() to preserve symlink-source lineage. The walk-up at
+    # line 547 below looks for `contracts/pipeline_contract.toml` in
+    # ancestors; if `manifest_path` is under a symlinked checkout dir,
+    # `.resolve()` derefs and walk-up jumps off-tree — same defect class
+    # as α-3 / #PY-79 in lob-model-trainer/feature_set_resolver.py:442.
+    manifest_path = Path(manifest_path).absolute()
     if not manifest_path.exists():
         raise FileNotFoundError(f"Manifest not found: {manifest_path}")
 
