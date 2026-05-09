@@ -1014,6 +1014,24 @@ def ledger_fingerprint_explain(
         "ablations cleanly. Malformed values fail-loud at parse time."
     ),
 )
+@click.option(
+    "--model-config-hash",
+    type=str,
+    default=None,
+    callback=_validate_content_hash_option,
+    help=(
+        "Filter by exact model_config_hash match (64 lowercase hex chars, "
+        "SHA-256). Phase Y / γ-1 LITE close-out (#PY-94, 2026-05-10): "
+        "surfaces every experiment with a specific model architecture + "
+        "hyperparameters (e.g., same TLOB hidden_dim/num_layers/num_heads/"
+        "dropout) regardless of data or features. Useful for "
+        "all-same-arch-different-data queries when comparing feature-set "
+        "ablations on identical model. Reads from "
+        "``record.training_config['model_config_hash']`` projected to "
+        "top-level by index_entry. Malformed values fail-loud at parse "
+        "time."
+    ),
+)
 @click.pass_context
 def ledger_list(
     ctx: click.Context,
@@ -1021,6 +1039,7 @@ def ledger_list(
     model_type: Optional[str],
     compatibility_fp: Optional[str],
     provenance_hash: Optional[str],
+    model_config_hash: Optional[str],
 ) -> None:
     """List all experiments in the ledger.
 
@@ -1036,6 +1055,13 @@ def ledger_list(
     same provenance hash. Different ANY of the 4 → different hash. Enables
     cross-experiment reproducibility queries:
     ``hft-ops ledger list --provenance-hash 43374f95...``
+
+    Phase Y / γ-1 LITE close-out (#PY-94, 2026-05-10) adds
+    ``--model-config-hash <hex>`` for filtering by the model architecture
+    + hyperparameters component alone (the model_config_hash slot of the
+    experiment_provenance_hash composition). Use to surface all
+    experiments using the same model arch+hyperparams regardless of
+    data: ``hft-ops ledger list --model-config-hash de47c0ef...``
     """
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
@@ -1046,6 +1072,7 @@ def ledger_list(
         model_type=model_type,
         compatibility_fingerprint=compatibility_fp,
         experiment_provenance_hash=provenance_hash,
+        model_config_hash=model_config_hash,
     )
 
     if not entries:

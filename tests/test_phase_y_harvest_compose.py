@@ -406,3 +406,101 @@ class TestExperimentLedgerProvenanceHashFilter:
         results = ledger.filter(experiment_provenance_hash="")
         assert len(results) == 1
         assert results[0]["experiment_id"] == "exp_legacy"
+
+
+# ============================================================================
+# Phase Y / γ-1 LITE close-out (#PY-94, 2026-05-10):
+# ExperimentLedger.filter(model_config_hash=...) exact-match.
+# Mirrors TestExperimentLedgerProvenanceHashFilter above; same 3-test
+# contract (signature lock + exact match + empty-string semantics).
+# ============================================================================
+
+
+class TestExperimentLedgerModelConfigHashFilter:
+    """ExperimentLedger.filter(model_config_hash=...) exact-match.
+
+    Mirrors the experiment_provenance_hash filter contract for the
+    arch-only sub-fingerprint. Closes the consumer-side gap surfaced by
+    γ-1 LITE empirical gate: hft-contracts shipped the top-level
+    projection (#PY-94 reframe), hft-ops needs the parallel filter kwarg
+    + Click option to expose the projection to operator queries.
+    """
+
+    def test_filter_signature_accepts_kwarg(self):
+        """Phase Y / γ-1 LITE close-out: ``model_config_hash`` kwarg
+        added to ExperimentLedger.filter alongside compatibility_fingerprint
+        + experiment_provenance_hash. Locks the public API surface so
+        removing it is a breaking change."""
+        from hft_ops.ledger.ledger import ExperimentLedger
+        import inspect
+        sig = inspect.signature(ExperimentLedger.filter)
+        assert "model_config_hash" in sig.parameters, (
+            "ExperimentLedger.filter MUST accept model_config_hash kwarg "
+            "for Phase Y / γ-1 LITE close-out ledger queries."
+        )
+        # Must be keyword-only with default None (matches V.A.4 + Phase Y patterns)
+        param = sig.parameters["model_config_hash"]
+        assert param.kind == inspect.Parameter.KEYWORD_ONLY
+        assert param.default is None
+
+    def test_filter_exact_match(self, tmp_path: Path):
+        """Filter by exact model_config_hash partitions the ledger
+        cleanly. Uses actual γ-1 LITE per-arm values for realism:
+        sklearn arms share `be40f8f0...`, TLOB arms share `de47c0ef...`.
+        """
+        from hft_ops.ledger.ledger import ExperimentLedger
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        ledger = ExperimentLedger(ledger_dir)
+
+        # Build minimal index entries with realistic γ-1 LITE values.
+        sklearn_mch = "be40f8f0c79bb207eddc766989c90b6cdf4ae31dde589e28d7ecea54e81022ff"
+        tlob_mch = "de47c0ef49abc0ef5d9d69efe1d4003a8b9551f24d5e6574b77f52fc041ecbb4"
+        ledger._index = [
+            {
+                "experiment_id": "ridge_arm_h10",
+                "model_config_hash": sklearn_mch,
+                "status": "completed",
+            },
+            {
+                "experiment_id": "ridge_arm_h60",
+                "model_config_hash": sklearn_mch,
+                "status": "completed",
+            },
+            {
+                "experiment_id": "tlob_arm_h10",
+                "model_config_hash": tlob_mch,
+                "status": "completed",
+            },
+        ]
+
+        # Filter by sklearn mch — both ridge arms match
+        results = ledger.filter(model_config_hash=sklearn_mch)
+        assert len(results) == 2
+        ids = {r["experiment_id"] for r in results}
+        assert ids == {"ridge_arm_h10", "ridge_arm_h60"}
+
+        # Filter by tlob mch — only one arm
+        results = ledger.filter(model_config_hash=tlob_mch)
+        assert len(results) == 1
+        assert results[0]["experiment_id"] == "tlob_arm_h10"
+
+        # No filter — all 3 pass through
+        results = ledger.filter()
+        assert len(results) == 3
+
+    def test_filter_empty_string_matches_records_without_hash(self, tmp_path: Path):
+        """Phase V.A.4 convention: explicit empty-string filter matches
+        records WITHOUT a populated hash (pre-Phase-Y / pre-γ-1 LITE
+        records that lack the top-level projection)."""
+        from hft_ops.ledger.ledger import ExperimentLedger
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        ledger = ExperimentLedger(ledger_dir)
+        ledger._index = [
+            {"experiment_id": "exp_legacy", "model_config_hash": ""},
+            {"experiment_id": "exp_new", "model_config_hash": "a" * 64},
+        ]
+        results = ledger.filter(model_config_hash="")
+        assert len(results) == 1
+        assert results[0]["experiment_id"] == "exp_legacy"

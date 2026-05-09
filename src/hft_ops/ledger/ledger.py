@@ -707,6 +707,7 @@ class ExperimentLedger:
         sweep_id: Optional[str] = None,
         compatibility_fingerprint: Optional[str] = None,
         experiment_provenance_hash: Optional[str] = None,
+        model_config_hash: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Filter index entries by criteria.
 
@@ -730,6 +731,17 @@ class ExperimentLedger:
                 cross-experiment composability queries when comparing
                 same-data-different-arch ablations). Same empty-string
                 semantics as compatibility_fingerprint.
+            model_config_hash: Phase Y / γ-1 LITE close-out (#PY-94,
+                2026-05-10) — exact 64-hex match on the model
+                architecture+hyperparams hash projected from
+                ``record.training_config["model_config_hash"]`` to the
+                index top-level by Phase Y γ-1 LITE close-out. Surfaces
+                every experiment with the same model architecture
+                (e.g., same TLOB hidden_dim/num_layers/num_heads/dropout)
+                regardless of data/features. Useful for "all
+                same-arch-different-data" queries when comparing
+                feature-set ablations on identical model. Same
+                empty-string semantics as compatibility_fingerprint.
         """
         results: List[Dict[str, Any]] = []
 
@@ -782,6 +794,16 @@ class ExperimentLedger:
             # validation, so non-conforming values surface as "" here.
             if experiment_provenance_hash is not None:
                 if entry.get("experiment_provenance_hash", "") != experiment_provenance_hash:
+                    continue
+
+            # Phase Y / γ-1 LITE close-out (#PY-94, 2026-05-10): exact-match
+            # filter on the model arch+hyperparams hash. Same empty-string
+            # semantics as compatibility_fingerprint above. The index_entry
+            # projection (experiment_record.py:642-674) reads from
+            # ``training_config["model_config_hash"]`` with CONTENT_HASH_RE
+            # validation; malformed values surface as "" here.
+            if model_config_hash is not None:
+                if entry.get("model_config_hash", "") != model_config_hash:
                     continue
 
             results.append(entry)
