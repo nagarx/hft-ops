@@ -115,6 +115,24 @@ def diff_experiments(
       the diff still surfaces — the caller can decide whether that's a
       meaningful provenance asymmetry (legacy record without harvest vs
       post-V.A.4 record with harvest).
+    - experiment_provenance_hash: Phase Y / γ-1 LITE / #PY-95 (2026-05-10) —
+      surfaces the 4-source composer fingerprint divergence (data_export_fp +
+      feature_set_content_hash + compatibility_fp + model_config_hash composed
+      via ``compute_experiment_provenance_hash``). Same Tuple-on-divergence
+      semantics as ``compatibility_fingerprint``. Closes #PY-95 inherited
+      from Phase Y deployment 2026-05-05 — pre-#PY-95 the diff surfaced
+      compat-fp divergence but stayed silent on the higher-level epH which
+      catches model-axis architecture drift compat-fp alone cannot.
+    - model_config_hash: Phase Y / γ-1 LITE / #PY-95 (2026-05-10) — surfaces
+      the model-axis identity divergence (filtered ``model.params`` SHA-256;
+      ``_LOSS_TUNING_KEYS`` denylist preserves stability under loss-tuning
+      hyperparam changes). Read from
+      ``(record.training_config or {}).get("model_config_hash")`` per the
+      Bundle Commit 1+2 nested-storage convention; surfaced as Tuple on
+      divergence. Use case: cross-experiment ablation queries via
+      ``ledger list --model-config-hash <hex>`` find re-runs of identical
+      arch on different data; ``diff`` between two such records will show
+      mch=None (matching) AND data-axis divergence in compat-fp.
 
     Args:
         record_a: First experiment record.
@@ -126,6 +144,8 @@ def diff_experiments(
           - config_diffs (list)
           - metric_diffs (list)
           - compatibility_fingerprint (None | Tuple[Optional[str], Optional[str]])
+          - experiment_provenance_hash (None | Tuple[Optional[str], Optional[str]])
+          - model_config_hash (None | Tuple[Optional[str], Optional[str]])
     """
     config_diffs: List[Tuple[str, Any, Any]] = []
     metric_diffs: List[Tuple[str, Any, Any, Any]] = []
@@ -179,12 +199,34 @@ def diff_experiments(
         (fp_a, fp_b) if fp_a != fp_b else None
     )
 
+    # Phase Y / γ-1 LITE / #PY-95 (2026-05-10): surface
+    # experiment_provenance_hash divergence (4-source composer fingerprint)
+    # as a first-class diff field. Mirrors compatibility_fingerprint pattern.
+    eph_a = getattr(record_a, "experiment_provenance_hash", None)
+    eph_b = getattr(record_b, "experiment_provenance_hash", None)
+    experiment_provenance_hash_diff: Optional[Tuple[Optional[str], Optional[str]]] = (
+        (eph_a, eph_b) if eph_a != eph_b else None
+    )
+
+    # Phase Y / γ-1 LITE / #PY-95 (2026-05-10): surface model_config_hash
+    # divergence (filtered model.params SHA-256). Read from nested
+    # training_config per Bundle Commit 1+2 storage convention; the
+    # top-level mirror in index_entry() is for fast-filter queries, but
+    # ground-truth nested value is what the composer reads.
+    mch_a = (record_a.training_config or {}).get("model_config_hash")
+    mch_b = (record_b.training_config or {}).get("model_config_hash")
+    model_config_hash_diff: Optional[Tuple[Optional[str], Optional[str]]] = (
+        (mch_a, mch_b) if mch_a != mch_b else None
+    )
+
     return {
         "experiment_a": record_a.experiment_id,
         "experiment_b": record_b.experiment_id,
         "config_diffs": config_diffs,
         "metric_diffs": metric_diffs,
         "compatibility_fingerprint": compatibility_fp_diff,
+        "experiment_provenance_hash": experiment_provenance_hash_diff,
+        "model_config_hash": model_config_hash_diff,
     }
 
 

@@ -84,7 +84,116 @@ class TestCompatibilityFingerprintDiff:
             "config_diffs",
             "metric_diffs",
             "compatibility_fingerprint",
+            # Phase Y / γ-1 LITE / #PY-95 (2026-05-10): also-additive
+            "experiment_provenance_hash",
+            "model_config_hash",
         ]:
             assert expected_key in result, f"Missing key: {expected_key}"
         assert result["experiment_a"] == "exp_a"
         assert result["experiment_b"] == "exp_b"
+
+
+# =============================================================================
+# Phase Y / γ-1 LITE / #PY-95 (2026-05-10): diff surfaces
+# experiment_provenance_hash + model_config_hash divergence
+# =============================================================================
+
+
+class TestExperimentProvenanceHashDiff:
+    """#PY-95 closure: diff surfaces 4-source composer fingerprint divergence."""
+
+    def test_matching_eph_yield_none(self):
+        a = ExperimentRecord(experiment_id="exp_a", experiment_provenance_hash=_HEX_A)
+        b = ExperimentRecord(experiment_id="exp_b", experiment_provenance_hash=_HEX_A)
+        result = diff_experiments(a, b)
+        assert result["experiment_provenance_hash"] is None
+
+    def test_differing_eph_yield_tuple(self):
+        a = ExperimentRecord(experiment_id="exp_a", experiment_provenance_hash=_HEX_A)
+        b = ExperimentRecord(experiment_id="exp_b", experiment_provenance_hash=_HEX_B)
+        result = diff_experiments(a, b)
+        assert result["experiment_provenance_hash"] == (_HEX_A, _HEX_B)
+
+    def test_both_eph_unset_yields_none(self):
+        """Both records carry None → match. Pre-Phase-Y records both
+        missing harvest."""
+        a = ExperimentRecord(experiment_id="exp_a")
+        b = ExperimentRecord(experiment_id="exp_b")
+        result = diff_experiments(a, b)
+        assert result["experiment_provenance_hash"] is None
+
+    def test_asymmetric_eph_yields_tuple(self):
+        """Legacy vs post-Phase-Y record → asymmetric divergence surfaced."""
+        a = ExperimentRecord(experiment_id="exp_a", experiment_provenance_hash=_HEX_A)
+        b = ExperimentRecord(experiment_id="exp_b")
+        result = diff_experiments(a, b)
+        assert result["experiment_provenance_hash"] == (_HEX_A, None)
+
+
+class TestModelConfigHashDiff:
+    """#PY-95 closure: diff surfaces model-axis identity divergence."""
+
+    def test_matching_mch_yields_none(self):
+        a = ExperimentRecord(
+            experiment_id="exp_a",
+            training_config={"model_config_hash": _HEX_A},
+        )
+        b = ExperimentRecord(
+            experiment_id="exp_b",
+            training_config={"model_config_hash": _HEX_A},
+        )
+        result = diff_experiments(a, b)
+        assert result["model_config_hash"] is None
+
+    def test_differing_mch_yields_tuple(self):
+        """Same data, different arch → mch differs → tuple surfaced.
+
+        Use case: cross-architecture-on-same-data ablation
+        (TLOB vs TemporalRidge on identical signals).
+        """
+        a = ExperimentRecord(
+            experiment_id="exp_a",
+            training_config={"model_config_hash": _HEX_A},
+        )
+        b = ExperimentRecord(
+            experiment_id="exp_b",
+            training_config={"model_config_hash": _HEX_B},
+        )
+        result = diff_experiments(a, b)
+        assert result["model_config_hash"] == (_HEX_A, _HEX_B)
+
+    def test_both_mch_missing_yields_none(self):
+        """training_config absent or lacking key on both → None."""
+        a = ExperimentRecord(experiment_id="exp_a", training_config={})
+        b = ExperimentRecord(experiment_id="exp_b", training_config={})
+        result = diff_experiments(a, b)
+        assert result["model_config_hash"] is None
+
+    def test_asymmetric_mch_yields_tuple(self):
+        """Legacy record (no mch) vs post-Phase-Y record (mch populated)."""
+        a = ExperimentRecord(
+            experiment_id="exp_a",
+            training_config={"model_config_hash": _HEX_A},
+        )
+        b = ExperimentRecord(experiment_id="exp_b", training_config={})
+        result = diff_experiments(a, b)
+        assert result["model_config_hash"] == (_HEX_A, None)
+
+    def test_unrelated_training_config_keys_ignored(self):
+        """Locks the mch extraction is independent of other training_config
+        keys — same mch = no divergence even with other diffs."""
+        a = ExperimentRecord(
+            experiment_id="exp_a",
+            training_config={"model_config_hash": _HEX_A, "lr": 0.001},
+        )
+        b = ExperimentRecord(
+            experiment_id="exp_b",
+            training_config={"model_config_hash": _HEX_A, "lr": 0.002},
+        )
+        result = diff_experiments(a, b)
+        # mch matches; surfaced via None
+        assert result["model_config_hash"] is None
+        # But config_diffs DOES surface lr divergence (existing surface)
+        assert any(
+            "lr" in str(d[0]).lower() for d in result["config_diffs"]
+        ), "config_diffs should surface lr divergence even when mch matches"

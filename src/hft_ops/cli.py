@@ -848,6 +848,40 @@ def diff(ctx: click.Context, id_a: str, id_b: str) -> None:
     else:
         console.print("  [dim]No metric differences[/dim]")
 
+    # Phase V.1 L2.2 + Phase Y / #PY-95 (2026-05-10): surface 3 trust-column
+    # fingerprint divergences. Each is None when records agree, Tuple when
+    # they differ. Empty section header omitted when all 3 agree (clean output
+    # for re-run/replay diffs that produce identical fingerprints).
+    fingerprint_rows = []
+    if diff_result.get("compatibility_fingerprint") is not None:
+        fa, fb = diff_result["compatibility_fingerprint"]
+        fingerprint_rows.append(
+            ("compatibility_fingerprint", fa or "(none)", fb or "(none)")
+        )
+    if diff_result.get("experiment_provenance_hash") is not None:
+        fa, fb = diff_result["experiment_provenance_hash"]
+        fingerprint_rows.append(
+            ("experiment_provenance_hash", fa or "(none)", fb or "(none)")
+        )
+    if diff_result.get("model_config_hash") is not None:
+        fa, fb = diff_result["model_config_hash"]
+        fingerprint_rows.append(
+            ("model_config_hash", fa or "(none)", fb or "(none)")
+        )
+    if fingerprint_rows:
+        console.print(f"\n[bold]Trust-column Fingerprint Divergence[/bold]")
+        table = Table()
+        table.add_column("Field")
+        table.add_column(f"A ({id_a[:20]})")
+        table.add_column(f"B ({id_b[:20]})")
+        for field, fa, fb in fingerprint_rows:
+            # Truncate hex fingerprints for readability (full value still
+            # available via record JSON if needed)
+            fa_disp = (fa[:16] + "...") if isinstance(fa, str) and len(fa) > 16 else str(fa)
+            fb_disp = (fb[:16] + "...") if isinstance(fb, str) and len(fb) > 16 else str(fb)
+            table.add_row(field, fa_disp, fb_disp)
+        console.print(table)
+
 
 @main.group()
 def ledger() -> None:
@@ -1131,6 +1165,21 @@ def ledger_show(ctx: click.Context, experiment_id: str) -> None:
         console.print(f"  Tags: {', '.join(record.tags)}")
     if record.notes:
         console.print(f"  Notes: {record.notes}")
+
+    # Phase V.A.4 + Phase Y + #PY-96 (2026-05-10): surface trust-column
+    # fingerprints when populated. Section omitted when all 3 are None
+    # (legacy pre-V.A.4 records).
+    compat_fp = getattr(record, "compatibility_fingerprint", None)
+    eph = getattr(record, "experiment_provenance_hash", None)
+    mch = (record.training_config or {}).get("model_config_hash")
+    if any([compat_fp, eph, mch]):
+        console.print(f"\n[bold]Trust-column Fingerprints[/bold]")
+        if compat_fp:
+            console.print(f"  compatibility_fingerprint:    {compat_fp[:16]}...")
+        if eph:
+            console.print(f"  experiment_provenance_hash:   {eph[:16]}...")
+        if mch:
+            console.print(f"  model_config_hash:            {mch[:16]}...")
 
     console.print(f"\n[bold]Provenance[/bold]")
     git = record.provenance.git

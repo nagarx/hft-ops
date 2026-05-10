@@ -12,6 +12,68 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ## [0.3.0-dev] — in progress
 
+### Phase Y / γ-1 LITE / #PY-95 + #PY-96 + #PY-97 (2026-05-10 evening) — `diff_experiments` + `ledger_show` trust-column surface + EXPERIMENT_GUIDE docs
+
+**Added (#PY-95 — `comparator.diff_experiments` 4-source provenance divergence)**
+
+- `src/hft_ops/ledger/comparator.py::diff_experiments` extended return dict
+  with 2 new keys mirroring the existing `compatibility_fingerprint`
+  pattern at L172-180:
+  - `experiment_provenance_hash`: 4-source composer fingerprint divergence.
+    `None` when records agree; `Tuple[Optional[str], Optional[str]]` when
+    they differ.
+  - `model_config_hash`: model-axis identity divergence (filtered
+    `model.params` SHA-256). Read from
+    `(record.training_config or {}).get("model_config_hash")` per the
+    Bundle Commit 1+2 nested-storage convention.
+
+**Added (#PY-96 — `cli.py::ledger_show` trust-column display)**
+
+- New "Trust-column Fingerprints" section displays compat-fp / epH / mch
+  when any populated (truncated to first 16 hex chars). Section omitted
+  for legacy pre-V.A.4 records carrying None.
+
+**Added (#PY-95 consumer — `cli.py::diff` trust-column divergence display)**
+
+- New "Trust-column Fingerprint Divergence" section in `hft-ops diff
+  <id_a> <id_b>` output displays only the fingerprints that differ
+  between the two records (sourced from `comparator.diff_experiments`
+  return). Section omitted when all 3 fingerprints agree.
+
+**Documentation (#PY-97 — `EXPERIMENT_GUIDE.md` trust-column queries)**
+
+- Rewrote "CompatibilityContract Fingerprint Filter" section as
+  "Trust-column Fingerprint Filters" covering all 3 fingerprints
+  (compat-fp + epH + mch) with example queries:
+  ```bash
+  hft-ops ledger list --compatibility-fp <64-hex>     # signal-boundary contract
+  hft-ops ledger list --provenance-hash <64-hex>      # 4-source composer identity
+  hft-ops ledger list --model-config-hash <64-hex>    # model arch + hyperparams
+  ```
+
+**Tests added (9 new tests in `tests/test_comparator_fingerprint_diff.py`)**
+
+- `TestExperimentProvenanceHashDiff` (4 tests): matching/differing/
+  both-unset/asymmetric divergence cases.
+- `TestModelConfigHashDiff` (5 tests): matching/differing/both-missing/
+  asymmetric/unrelated-keys-ignored cases.
+
+(File now has **14 tests total**: 5 pre-existing `TestCompatibilityFingerprintDiff`
++ 9 new — verified by `pytest --collect-only`.)
+
+**Test counts**: **811 passed + 1 deselected** (was 802 + 1 — net +9 tests).
+
+**Cross-cycle bundle context**
+
+Consumer-side bundle (sites in hft-ops) for the Phase Y / γ-1 LITE
+close-out triggered by lob-model-trainer's #PY-88 Phase 2 sklearn
+return_type axis closure. The 3-fingerprint trust-column display is
+symmetric with the post-Bundle-Commits-1+2 filter capability
+(`hft-ops ledger list --model-config-hash <hex>` shipped in commit
+`097e83c` 2026-05-10 morning).
+
+---
+
 ### HYBRID Phase α-1.3 (2026-05-10) — caller-side cycle-detection invariant + α-3 walk-up class (#PY-83-cluster)
 
 **Fixed (#PY-83-cluster — α-1.3 follow-up to α-1.1 + α-1.2)**

@@ -187,27 +187,60 @@ See `hft-metrics/CODEBASE.md` §14c for the primitive-level reference.
 
 ---
 
-## CompatibilityContract Fingerprint Filter (Phase V.A.4, 2026-04-21)
+## Trust-column Fingerprint Filters (Phase V.A.4 + Phase Y / γ-1 LITE, 2026-04-21 → 2026-05-10)
 
-Every experiment run through `hft-ops run` post-V.A.4 carries a
-64-hex SHA-256 `compatibility_fingerprint` computed over 11
-shape-determining signal-boundary fields (`contract_version`,
-`feature_count`, `window_size`, `feature_layout`, `data_source`,
-`label_strategy_hash`, `calibration_method`, `primary_horizon_idx`,
-`horizons`, `normalization_strategy`, `schema_version`). Query:
+Every experiment run through `hft-ops run` carries up to **three
+trust-column fingerprints** that surface different axes of producer
+identity for cross-experiment ablation queries:
+
+| Fingerprint | Axis covered | Phase |
+|---|---|---|
+| `compatibility_fingerprint` | Signal-boundary contract (11 fields: `contract_version`, `feature_count`, `window_size`, `feature_layout`, `data_source`, `label_strategy_hash`, `calibration_method`, `primary_horizon_idx`, `horizons`, `normalization_strategy`, `schema_version`) | V.A.4 (2026-04-21) |
+| `experiment_provenance_hash` | 4-source composer identity (`data_export_fp + feature_set_content_hash + compatibility_fp + model_config_hash`) | Phase Y (2026-05-05) |
+| `model_config_hash` | Model architecture + filtered hyperparams (excludes `_LOSS_TUNING_KEYS`) | Phase Y / γ-1 LITE (2026-05-10) |
+
+All three are 64-hex lowercase SHA-256. Query:
 
 ```bash
-# Surface every experiment produced against a specific contract version
+# Find every experiment produced against a specific signal-boundary contract:
 hft-ops ledger list --compatibility-fp <64-hex>
 
-# Pre-V.A.4 records project empty string; to find those:
+# Find every experiment with a specific 4-source composer identity (re-runs):
+hft-ops ledger list --provenance-hash <64-hex>
+
+# Find every experiment with the same model architecture (cross-data ablations):
+hft-ops ledger list --model-config-hash <64-hex>
+
+# Cross-axis: same arch, different data → mch matches AND compat-fp differs
+hft-ops ledger list --model-config-hash <hex_arch> | xargs -I{} ...
+
+# Pre-V.A.4 records project empty string for compat-fp; to find legacy:
 hft-ops ledger list --compatibility-fp ""
 ```
 
-The fingerprint is **NOT** a fingerprint for dedup (treatments only go
-into `compute_fingerprint`). It's an OBSERVATION surfaced as a
-ledger-query trust column. See root CLAUDE.md §"Module Technical Map"
-for the V.A.4 design rationale.
+**Inspection of a single record's fingerprints**:
+
+```bash
+hft-ops ledger show <experiment_id>
+# Outputs a "Trust-column Fingerprints" section listing all 3 fingerprints
+# (truncated to first 16 hex chars) when populated. Section omitted on
+# legacy pre-V.A.4 records carrying None.
+```
+
+**Diff between two experiments** (Phase V.1 L2.2 + Phase Y / #PY-95):
+
+```bash
+hft-ops diff <id_a> <id_b>
+# Outputs a "Trust-column Fingerprint Divergence" section listing only
+# the fingerprints that DIFFER between the two records. When all 3 agree,
+# the section is omitted (clean output for re-run/replay diffs).
+```
+
+The fingerprints are **NOT** fingerprints for dedup (treatments only go
+into `compute_fingerprint`). They are OBSERVATIONS surfaced as
+ledger-query trust columns. See root CLAUDE.md §"Module Technical Map"
+for the design rationale; see `hft-contracts/.../experiment_record.py`
+for `compute_experiment_provenance_hash` composer + sources.
 
 ---
 
