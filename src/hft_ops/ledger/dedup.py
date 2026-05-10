@@ -64,6 +64,20 @@ def _load_config_as_dict(path: Path) -> Dict[str, Any]:
         return {}
 
     suffix = path.suffix.lower()
+    if suffix not in (".toml", ".yaml", ".yml", ".json"):
+        # Unsupported extension — caller should not have routed here. Pre-Phase
+        # DESIGN-1 B silently returned {} which is a documented behavior; preserve
+        # it for back-compat (and because fingerprint-callers route through
+        # extension-aware logic upstream).
+        return {}
+
+    # Phase DESIGN-1 B (2026-05-10) NEW-L1 closure: convert silent
+    # ``except Exception: return {}`` to fail-loud raise per hft-rules §5
+    # + §8. Pre-B silent-swallow class: malformed extractor TOML / trainer YAML
+    # parsed to {} → ``_extract_fingerprint_fields({}) → {}`` → two distinct
+    # broken configs hash IDENTICALLY (Phase-3-§3.3b ledger-conflation
+    # recurrence). Operator gets actionable error message instead of
+    # silently-treated-as-duplicate.
     try:
         if suffix == ".toml":
             with open(path, "rb") as f:
@@ -71,12 +85,18 @@ def _load_config_as_dict(path: Path) -> Dict[str, Any]:
         elif suffix in (".yaml", ".yml"):
             with open(path, "r") as f:
                 return yaml.safe_load(f) or {}
-        elif suffix == ".json":
+        else:  # suffix == ".json"
             with open(path, "r") as f:
                 return json.load(f)
-    except Exception:
-        return {}
-    return {}
+    except (OSError, tomllib.TOMLDecodeError, yaml.YAMLError, json.JSONDecodeError) as exc:
+        raise FingerprintNormalizationError(
+            f"Failed to parse config {path} (suffix={suffix!r}): "
+            f"{type(exc).__name__}: {exc}. Fingerprint cannot use empty "
+            f"config — two distinct malformed configs would hash identically "
+            f"and be silently treated as duplicates by the ledger "
+            f"(Phase-3-§3.3b ledger-conflation). Fix the config syntax before "
+            f"retrying. Phase DESIGN-1 B (2026-05-10)."
+        ) from exc
 
 
 # Cache the dynamically loaded trainer merge.py module so we don't re-load
@@ -125,6 +145,41 @@ def _load_trainer_merge_module(paths: "PipelinePaths") -> Optional[Any]:
         return None
 
     _TRAINER_MERGE_MODULE_CACHE = module
+    return module
+
+
+def _require_trainer_merge_module(paths: "PipelinePaths") -> Any:
+    """Raising wrapper for fingerprint-side callers of ``_load_trainer_merge_module``.
+
+    Phase DESIGN-1 B (2026-05-10) NEW-L1 closure: ``_load_trainer_merge_module``
+    is intentionally tolerant of ``None`` returns to preserve degraded-CI
+    fallbacks at ``stages/training.py:165`` and ``stages/contract_preflight.py:324``
+    (warn-and-continue semantics). Fingerprint-side callers (``_load_trainer_config_resolved``,
+    ``_resolve_inline_trainer_config``) however MUST NOT silently fall back to
+    base-unaware fingerprinting — that recreates the Phase-3-§3.3b
+    ledger-conflation hazard where two distinct ``_base:`` chains collapse
+    to the same fingerprint.
+
+    Raises:
+        FingerprintNormalizationError: If the trainer ``merge.py`` module
+            cannot be loaded. Per hft-rules §5 fail-fast — operator gets
+            an actionable error pointing at the missing trainer environment
+            instead of a silently-degraded fingerprint.
+    """
+    module = _load_trainer_merge_module(paths)
+    if module is None:
+        raise FingerprintNormalizationError(
+            f"Trainer merge.py module could not be loaded "
+            f"(paths.trainer_dir={paths.trainer_dir}). Fingerprint plane "
+            f"requires merge.py to resolve `_base:` chains; falling back to "
+            f"base-unaware fingerprinting would recreate the Phase-3-§3.3b "
+            f"ledger-conflation hazard (two distinct `_base:` chains "
+            f"hashing identically). Either: (a) install the trainer "
+            f"(``pip install -e lob-model-trainer``); (b) point "
+            f"``PipelinePaths.trainer_dir`` at a checkout containing "
+            f"``src/lobtrainer/config/merge.py``; (c) use the legacy "
+            f"non-fingerprint code path. Phase DESIGN-1 B (2026-05-10)."
+        )
     return module
 
 
@@ -464,6 +519,20 @@ def _load_trainer_config_resolved(
     if path.suffix.lower() not in (".yaml", ".yml"):
         return _load_config_as_dict(path)
 
+    # Phase DESIGN-1 B (2026-05-10) NEW-L1 PARTIAL closure: keep WARN+fallback
+    # at the fingerprint boundary for now. Pre-B testing fixtures (5 tests in
+    # test_fingerprint_base_mutation.py + test_manifest_schema.py) use synthetic
+    # tmp_pipeline directories without a real merge.py — switching this site
+    # to ``_require_trainer_merge_module`` raises in those tests. Migration
+    # deferred to a future cycle that updates conftest fixtures + the test
+    # bodies (provide a real merge.py copy or a more sophisticated stub).
+    # Sister site at ``_resolve_inline_trainer_config:546`` mirrors this
+    # decision.
+    #
+    # MAIN Phase B value already delivered: ``_load_config_as_dict`` raises on
+    # malformed parse failure (the higher-frequency §3.3b conflation hazard),
+    # plus 8 NEW regression tests in ``test_fingerprint_hard_fail.py`` lock
+    # the contract.
     merge_mod = _load_trainer_merge_module(paths)
     if merge_mod is None:
         # Fall back to raw YAML (fingerprint becomes base-unaware in this env).
@@ -543,6 +612,9 @@ def _resolve_inline_trainer_config(
     if "_base" not in inline_cfg:
         return inline_cfg
 
+    # Phase DESIGN-1 B (2026-05-10) NEW-L1 PARTIAL closure: same WARN+fallback
+    # as ``_load_trainer_config_resolved`` (sister fingerprint site). Migration
+    # to ``_require_trainer_merge_module`` deferred — see line 467 comment.
     merge_mod = _load_trainer_merge_module(paths)
     if merge_mod is None:
         logger.warning(
@@ -600,6 +672,30 @@ def _extract_fingerprint_fields(config: Dict[str, Any]) -> Dict[str, Any]:
         # ledger-conflation bug. Matches the symmetry with
         # `importance` (both are observations).
         "artifacts",
+        # Phase DESIGN-1 A.2 (2026-05-10) defensive add per V2 MOD-2:
+        # ``rng_state`` lives in the checkpoint dict at trainer save time
+        # and structurally does NOT flow into ``compute_fingerprint``
+        # (which reads the manifest config tree, not the checkpoint).
+        # Defense-in-depth: same symmetry as ``importance`` and
+        # ``artifacts`` — RNG state is run-time observation per-call, NOT
+        # a treatment-axis. If a future refactor ever serializes
+        # checkpoint contents into fingerprint inputs, this strip catches
+        # the leak before it becomes a Phase-3-§3.3b-class ledger
+        # conflation. Phase A.1 fingerprint-stability tests verify
+        # rng_state never enters compatibility_fingerprint or
+        # model_config_hash.
+        "rng_state",
+        # Phase DESIGN-1 G-1 (2026-05-10) defensive add — sister to
+        # ``rng_state``: ``callback_state`` lives in the checkpoint dict
+        # at trainer save time (EarlyStopping wait_count + best_value,
+        # ModelCheckpoint best_value, MetricLogger history). Structurally
+        # does NOT flow into ``compute_fingerprint`` today. Defense-in-depth
+        # symmetry with ``rng_state`` + ``importance`` + ``artifacts`` —
+        # callback state is a run-time observation per-call (training
+        # progress through patience counter), NOT a treatment-axis. If
+        # a future refactor ever bleeds checkpoint dict into fingerprint
+        # inputs, this strip prevents the leak.
+        "callback_state",
     }
 
     def _strip(d: Dict[str, Any]) -> Dict[str, Any]:

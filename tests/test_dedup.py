@@ -198,6 +198,144 @@ class TestComputeFingerprint:
         # Positive check: non-artifacts treatment keys still present
         assert "data" in stripped, "Non-artifacts treatment keys must survive strip"
 
+    def test_rng_state_excluded_from_fingerprint(
+        self, sample_manifest_yaml: Path, tmp_pipeline: Path
+    ):
+        """Phase DESIGN-1 Phase E Site 2 (2026-05-10): lock the
+        fingerprint-vs-rng_state invariant. ``rng_state`` in checkpoint
+        dict is an OBSERVATION (Phase A.2 RNG state for cross-process
+        resume), NOT a TREATMENT.
+
+        Mirror of ``test_artifacts_field_excluded_from_fingerprint``
+        pattern. ``dedup.py:exclude_keys`` already includes
+        ``"rng_state"`` defensively (Phase A.2 V2 MOD-2 commit). This
+        test makes the defensive exclusion enforceable: accidental
+        removal during cleanup would silently break dedup (same trained
+        model + different rng_state → different fingerprints).
+
+        Per Wave 2.2 critique 2026-05-10: this is the load-bearing
+        structural lock. No other test in the suite exercises the strip
+        path for ``rng_state`` — without this test, an accidental
+        deletion of the ``"rng_state"`` line from ``exclude_keys`` would
+        be silent until a future refactor brought rng_state into
+        manifest-config-tree scope.
+        """
+        from hft_ops.ledger.dedup import _extract_fingerprint_fields
+
+        # Inject rng_state at multiple nest levels to exercise recursive
+        # strip logic. If exclude_keys entry for "rng_state" is removed,
+        # ANY of these would leak into the result.
+        config_with_rng_state = {
+            "name": "test_experiment",  # stripped (metadata)
+            "data": {"batch_size": 128},  # NOT stripped (treatment)
+            "rng_state": {  # MUST be stripped (observation)
+                "schema_version": 1,
+                "python": [0, 1, 2, 3],
+                "numpy": [0, [0, 0], 0, 0, 0],
+                "torch": "abcd",
+            },
+            "model": {
+                "type": "tlob",
+                "rng_state": {"deeply_nested": True},
+            },
+            "train": {
+                "epochs": 30,
+                "rng_state": "also_stripped",
+            },
+        }
+
+        stripped = _extract_fingerprint_fields(config_with_rng_state)
+
+        _assert_no_field_in_canonical_input(
+            stripped,
+            field_name="rng_state",
+            rationale=(
+                "rng_state is an observation (Phase A.2 RNG state for "
+                "cross-process resume), not a treatment. Including it "
+                "in the fingerprint breaks dedup (same trained model "
+                "+ different rng_state → different fingerprints). "
+                "Wave 2.2 mandate: deleting 'rng_state' from "
+                "exclude_keys MUST fail this test."
+            ),
+        )
+        # Positive checks: non-rng-state fields still present
+        assert "data" in stripped, "Non-rng-state treatment keys must survive strip"
+        assert "epochs" in stripped.get("train", {}), (
+            "Sibling keys under stripped-parent paths must survive"
+        )
+
+    def test_callback_state_excluded_from_fingerprint(
+        self, sample_manifest_yaml: Path, tmp_pipeline: Path
+    ):
+        """Phase DESIGN-1 Phase E Site 2 (2026-05-10): lock the
+        fingerprint-vs-callback_state invariant. ``callback_state`` in
+        checkpoint dict is an OBSERVATION (Phase G-1 callback state for
+        cross-process resume — EarlyStopping wait_count, ModelCheckpoint
+        best_value, MetricLogger history), NOT a TREATMENT.
+
+        Mirror of ``test_artifacts_field_excluded_from_fingerprint``
+        pattern. ``dedup.py:exclude_keys`` already includes
+        ``"callback_state"`` defensively (Phase G-1 sister-add to
+        rng_state). This test locks that defensive exclusion against
+        accidental removal during cleanup.
+
+        Without this test, removing ``"callback_state"`` from
+        ``exclude_keys`` would be silent until a future refactor brought
+        ``callback_state`` into manifest-config-tree scope (e.g.,
+        manifest-level callback config with state inheritance).
+        """
+        from hft_ops.ledger.dedup import _extract_fingerprint_fields
+
+        # Inject callback_state at multiple nest levels to exercise
+        # recursive strip logic. Mirrors the rng_state test exactly.
+        config_with_callback_state = {
+            "name": "test_experiment",  # stripped (metadata)
+            "data": {"batch_size": 128},  # NOT stripped (treatment)
+            "callback_state": {  # MUST be stripped (observation)
+                "EarlyStopping": {
+                    "best_value": 0.5,
+                    "best_epoch": 3,
+                    "wait_count": 1,
+                    "stopped": False,
+                },
+                "ModelCheckpoint": {
+                    "best_value": 0.5,
+                    "best_checkpoint_path": "/tmp/foo.pt",
+                },
+                "MetricLogger": {"history": [{"epoch": 0}, {"epoch": 1}]},
+            },
+            "model": {
+                "type": "tlob",
+                "callback_state": {"deeply_nested": True},
+            },
+            "train": {
+                "epochs": 30,
+                "callback_state": "also_stripped",
+            },
+        }
+
+        stripped = _extract_fingerprint_fields(config_with_callback_state)
+
+        _assert_no_field_in_canonical_input(
+            stripped,
+            field_name="callback_state",
+            rationale=(
+                "callback_state is an observation (Phase G-1 callback "
+                "state for cross-process resume), not a treatment. "
+                "Including it breaks dedup (same trained model + "
+                "different callback patience counter → different "
+                "fingerprints). Deleting 'callback_state' from "
+                "exclude_keys MUST fail this test."
+            ),
+        )
+        # Positive checks: non-callback-state fields still present
+        assert "data" in stripped, (
+            "Non-callback-state treatment keys must survive strip"
+        )
+        assert "epochs" in stripped.get("train", {}), (
+            "Sibling keys under stripped-parent paths must survive"
+        )
+
     def test_fingerprint_invariants_via_manifest_with_importance(
         self, sample_manifest_yaml: Path, tmp_pipeline: Path
     ):

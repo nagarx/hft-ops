@@ -260,3 +260,150 @@ class TestStubCleanupOnSuccess:
                     f"clobbered by the stub-cleanup. MUST preserve pre-existing "
                     f"entries — idempotent-only cleanup (Phase 6 6A.4)."
                 )
+
+
+# =============================================================================
+# Phase DESIGN-1 B (2026-05-10) NEW-L1 closure — malformed manifest fail-loud
+# =============================================================================
+
+
+class TestPhaseBMalformedConfigFailLoud:
+    """Phase DESIGN-1 B (2026-05-10): silent-swallow → fail-loud.
+
+    Pre-B: ``_load_config_as_dict`` returned ``{}`` on parse failure.
+    Two distinct broken configs hashed identically → silent ledger conflation
+    (Phase-3-§3.3b recurrence). Post-B: fail-loud with actionable message.
+    """
+
+    def test_malformed_toml_raises_fingerprint_normalization_error(self, tmp_path):
+        """Site 1: ``_load_config_as_dict`` raises on broken TOML."""
+        from hft_ops.ledger.dedup import (
+            FingerprintNormalizationError,
+            _load_config_as_dict,
+        )
+
+        broken_toml = tmp_path / "broken.toml"
+        broken_toml.write_text(
+            "[section\n  invalid syntax = no closing bracket\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(
+            FingerprintNormalizationError, match=r"Failed to parse config"
+        ):
+            _load_config_as_dict(broken_toml)
+
+    def test_malformed_yaml_raises(self, tmp_path):
+        """Site 1: same fail-loud for YAML."""
+        from hft_ops.ledger.dedup import (
+            FingerprintNormalizationError,
+            _load_config_as_dict,
+        )
+
+        broken_yaml = tmp_path / "broken.yaml"
+        # Tab-indent YAML is invalid (must be spaces)
+        broken_yaml.write_text("key:\n\t- not a valid yaml indent\n", encoding="utf-8")
+
+        with pytest.raises(FingerprintNormalizationError):
+            _load_config_as_dict(broken_yaml)
+
+    def test_malformed_json_raises(self, tmp_path):
+        """Site 1: same fail-loud for JSON."""
+        from hft_ops.ledger.dedup import (
+            FingerprintNormalizationError,
+            _load_config_as_dict,
+        )
+
+        broken_json = tmp_path / "broken.json"
+        broken_json.write_text('{"unclosed": ', encoding="utf-8")
+
+        with pytest.raises(FingerprintNormalizationError):
+            _load_config_as_dict(broken_json)
+
+    def test_two_distinct_broken_configs_dont_collide(self, tmp_path):
+        """Phase-3-§3.3b regression: two DIFFERENT broken configs MUST raise
+        separately (pre-B both returned {} → identical fingerprints)."""
+        from hft_ops.ledger.dedup import (
+            FingerprintNormalizationError,
+            _load_config_as_dict,
+        )
+
+        broken_a = tmp_path / "broken_a.toml"
+        broken_a.write_text("[unclosed_section\n", encoding="utf-8")
+        broken_b = tmp_path / "broken_b.toml"
+        broken_b.write_text("key = = = invalid\n", encoding="utf-8")
+
+        with pytest.raises(FingerprintNormalizationError):
+            _load_config_as_dict(broken_a)
+        with pytest.raises(FingerprintNormalizationError):
+            _load_config_as_dict(broken_b)
+        # Both raise — there is NO branch where they hash identically to {}.
+
+    def test_missing_path_still_returns_empty(self, tmp_path):
+        """Site 1: file-not-found path is documented soft case (preserved)."""
+        from hft_ops.ledger.dedup import _load_config_as_dict
+
+        missing = tmp_path / "does_not_exist.toml"
+        # path.exists() returns False → return {} (NOT a parse failure)
+        assert _load_config_as_dict(missing) == {}
+
+    def test_unsupported_extension_returns_empty(self, tmp_path):
+        """Site 1: unsupported suffix is documented soft case (preserved)."""
+        from hft_ops.ledger.dedup import _load_config_as_dict
+
+        weird = tmp_path / "config.xml"
+        weird.write_text("<not yaml or toml/>", encoding="utf-8")
+        # Suffix not in (.toml, .yaml, .yml, .json) → return {} (caller routing)
+        assert _load_config_as_dict(weird) == {}
+
+    def test_require_trainer_merge_module_raises_on_missing(self, tmp_path):
+        """Site 2: ``_require_trainer_merge_module`` raises when merge.py absent."""
+        from hft_ops.ledger.dedup import (
+            FingerprintNormalizationError,
+            _require_trainer_merge_module,
+        )
+
+        # Construct a paths-like object whose trainer_dir lacks src/lobtrainer/
+        class _StubPaths:
+            trainer_dir = tmp_path / "no-trainer-here"
+
+        # Clear cache to ensure fresh load attempt
+        from hft_ops.ledger import dedup as dedup_mod
+        old_cache = dedup_mod._TRAINER_MERGE_MODULE_CACHE
+        dedup_mod._TRAINER_MERGE_MODULE_CACHE = None
+        try:
+            with pytest.raises(
+                FingerprintNormalizationError,
+                match=r"Trainer merge.py module could not be loaded",
+            ):
+                _require_trainer_merge_module(_StubPaths())
+        finally:
+            dedup_mod._TRAINER_MERGE_MODULE_CACHE = old_cache
+
+    def test_load_trainer_merge_module_still_returns_optional(self, tmp_path):
+        """Confirm Option A: degraded-CI tolerant helper PRESERVED unchanged.
+
+        ``_load_trainer_merge_module`` (vs ``_require_*``) remains the
+        soft-fallback path used by ``stages/training.py:165`` and
+        ``stages/contract_preflight.py:324``. Phase B intentionally does
+        NOT touch this — only fingerprint-side callers raise.
+        """
+        from hft_ops.ledger.dedup import _load_trainer_merge_module
+
+        class _StubPaths:
+            trainer_dir = tmp_path / "no-trainer-here"
+
+        # Clear cache for fresh attempt
+        from hft_ops.ledger import dedup as dedup_mod
+        old_cache = dedup_mod._TRAINER_MERGE_MODULE_CACHE
+        dedup_mod._TRAINER_MERGE_MODULE_CACHE = None
+        try:
+            result = _load_trainer_merge_module(_StubPaths())
+            assert result is None, (
+                "_load_trainer_merge_module MUST still return None on "
+                "missing trainer (degraded-CI fallback). Phase B only "
+                "added a NEW raising wrapper; it did NOT change the "
+                "non-fingerprint callers' behavior."
+            )
+        finally:
+            dedup_mod._TRAINER_MERGE_MODULE_CACHE = old_cache
