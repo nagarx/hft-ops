@@ -14,11 +14,13 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import click
 from rich.console import Console
@@ -49,6 +51,161 @@ from hft_ops.stages.training import TrainingRunner
 from hft_ops.stages.validation import ValidationRunner
 
 console = Console()
+
+# cli-local module logger (Closure C harvest_errors WARN sink).
+_logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Phase Y trust-column harvester (Cluster Z Closure C, 2026-05-11)
+# ---------------------------------------------------------------------------
+#
+# Phase Y composes ``experiment_provenance_hash`` from 4 trust columns
+# harvested from the ``signal_export`` stage's ``captured_metrics``:
+#
+#   - ``feature_set_ref``           (Phase 4 4c.4)
+#   - ``compatibility_fingerprint`` (Phase V.A.4)
+#   - ``model_config_hash``         (Phase Y deployment 2026-05-05)
+#   - ``signal_export_output_dir``  (Phase V.1 L1.2)
+#
+# Pre-Cluster-Z the 4 harvest sites at ``cli.py:566/576/587/598`` each used
+# ``captured_metrics.get(key)`` + isinstance gate — and silently kept the
+# field as ``None`` on present-but-invalid input (wrong type / wrong
+# format / partial dict). Per hft-rules §8 ("never silently drop, clamp,
+# or fix data without recording diagnostics") + #PY-155 + #PY-115, that
+# silent-None policy caused Phase Y composer queries via
+# ``hft-ops ledger list --compatibility-fp`` and
+# ``--model-config-hash`` to silently miss records.
+#
+# Cluster Z Closure C consolidates the 4 sites into ONE
+# ``_harvest_trust_columns(captured_metrics)`` helper that distinguishes:
+#
+#   - key absent           → field stays ``None`` silently (valid: stage
+#                            skipped/disabled)
+#   - key present + valid  → field populated
+#   - key present + invalid → field stays ``None``, error appended to
+#                            ``.harvest_errors``, WARN logged. Record
+#                            still persists (observation-tier failure).
+#
+# ``_HarvestedTrustColumns`` is a **cli-local** dataclass, NOT a new
+# ``hft_contracts`` SSoT primitive. The 4 harvested fields ALREADY land
+# in their respective top-level ``ExperimentRecord`` schema fields
+# (``feature_set_ref``, ``compatibility_fingerprint``,
+# ``signal_export_output_dir``) and one nested field
+# (``training_config["model_config_hash"]``). The dataclass exists only
+# to consolidate the harvest pattern; ``ExperimentRecord`` schema is
+# unchanged. NO ``INDEX_SCHEMA_VERSION`` bump.
+#
+# Reuses ``hft_contracts.signal_manifest.CONTENT_HASH_RE`` (imported at
+# the top of this module) for 64-hex SHA-256 validation. ZERO new SSoT.
+
+
+@dataclass
+class _HarvestedTrustColumns:
+    """cli-local observation-tier trust-column harvest results.
+
+    Phase Y composer cross-experiment-comparability identity fields.
+    NOT persisted to a NEW schema field; the 4 fields land in
+    ``ExperimentRecord`` top-level slots (or nested ``training_config``
+    for ``model_config_hash``). ``harvest_errors`` lives transiently on
+    this dataclass + the WARN log; the record still persists.
+
+    Cluster Z Closure C (2026-05-11) — closes #PY-155.
+    """
+
+    feature_set_ref: Optional[Dict[str, str]] = None
+    compatibility_fingerprint: Optional[str] = None
+    model_config_hash: Optional[str] = None
+    signal_export_output_dir: Optional[str] = None
+    harvest_errors: List[str] = field(default_factory=list)
+
+
+def _harvest_trust_columns(
+    captured_metrics: Dict[str, Any],
+) -> _HarvestedTrustColumns:
+    """Validate-and-harvest 4 Phase Y trust columns from signal_export.
+
+    Distinguishes three input states for each key:
+
+    * absent — field stays ``None`` silently (valid: stage
+      skipped/disabled/legacy artifact).
+    * present + valid — field populated.
+    * present + invalid format — field stays ``None``, error appended to
+      ``.harvest_errors``. Caller MUST emit a WARN log; record still
+      persists (observation-tier failure).
+
+    Validators:
+
+    * ``feature_set_ref``: dict with string ``name`` AND ``content_hash``
+      fields (mirrors Phase 4 4c.4 signal_metadata schema).
+    * ``compatibility_fingerprint`` + ``model_config_hash``: 64-hex
+      SHA-256 strings via ``CONTENT_HASH_RE`` (canonical hft-contracts
+      regex, single source of truth — reused, NOT re-implemented).
+    * ``signal_export_output_dir``: non-empty string.
+
+    Args:
+        captured_metrics: ``StageResult.captured_metrics`` dict from the
+            ``signal_export`` stage runner. May be empty or partial.
+
+    Returns:
+        ``_HarvestedTrustColumns`` with populated fields + harvest_errors
+        list. Never raises — observation-tier failures degrade gracefully
+        with diagnostic in ``harvest_errors``.
+    """
+    out = _HarvestedTrustColumns()
+
+    # feature_set_ref: nested dict {name, content_hash} (Phase 4 4c.4).
+    raw_ref = captured_metrics.get("feature_set_ref")
+    if raw_ref is not None:
+        if isinstance(raw_ref, dict):
+            name = raw_ref.get("name")
+            content_hash = raw_ref.get("content_hash")
+            if isinstance(name, str) and isinstance(content_hash, str):
+                out.feature_set_ref = {
+                    "name": name,
+                    "content_hash": content_hash,
+                }
+            else:
+                out.harvest_errors.append(
+                    f"feature_set_ref dict has non-string name "
+                    f"({type(name).__name__}) or content_hash "
+                    f"({type(content_hash).__name__})"
+                )
+        else:
+            out.harvest_errors.append(
+                f"feature_set_ref not a dict (got "
+                f"{type(raw_ref).__name__})"
+            )
+
+    # compatibility_fingerprint + model_config_hash: 64-hex SHA-256.
+    # CONTENT_HASH_RE is the canonical hft-contracts regex — reused
+    # here for symmetry with the producer-side gate at
+    # ``stages/signal_export.py``.
+    for fld in ("compatibility_fingerprint", "model_config_hash"):
+        raw = captured_metrics.get(fld)
+        if raw is not None:
+            if isinstance(raw, str) and CONTENT_HASH_RE.match(raw):
+                setattr(out, fld, raw)
+            else:
+                out.harvest_errors.append(
+                    f"{fld} not a 64-hex SHA-256 string (got "
+                    f"{type(raw).__name__}, value={raw!r})"
+                )
+
+    # signal_export_output_dir: non-empty string (Phase V.1 L1.2 — the
+    # run-time-captured absolute path that closes manifest-move
+    # resilience).
+    raw_dir = captured_metrics.get("signal_export_output_dir")
+    if raw_dir is not None:
+        if isinstance(raw_dir, str) and raw_dir:
+            out.signal_export_output_dir = raw_dir
+        else:
+            out.harvest_errors.append(
+                f"signal_export_output_dir invalid (got "
+                f"{type(raw_dir).__name__}, value={raw_dir!r})"
+            )
+
+    return out
 
 
 def _validate_content_hash_option(
@@ -554,59 +711,49 @@ def _record_experiment(
             if key in extraction_captured:
                 cache_info[key] = extraction_captured[key]
 
-    # Phase 4 Batch 4c.4 (2026-04-16): harvest `feature_set_ref` from
-    # signal_export's captured_metrics (populated by
-    # `SignalExportRunner._harvest_feature_set_ref` from signal_metadata.json).
-    # None iff signal_export stage was skipped/failed OR the trainer did not
-    # use DataConfig.feature_set. ExperimentRecord stores None gracefully.
-    feature_set_ref: Optional[Dict[str, str]] = None
-    compatibility_fingerprint: Optional[str] = None  # Phase V.A.4 (2026-04-21)
-    signal_export_output_dir: Optional[str] = None   # Phase V.1 L1.2 (2026-04-21)
+    # Cluster Z Closure C (2026-05-11): trust-column harvester DRY.
+    #
+    # Pre-Cluster-Z this block had 4 inline ``captured_metrics.get(...)``
+    # + isinstance gates with NO observability on present-but-invalid
+    # input — silently degraded to ``None``, causing
+    # ``hft-ops ledger list --compatibility-fp`` /
+    # ``--model-config-hash`` queries to silently miss records (#PY-155
+    # sister of #PY-115).
+    #
+    # The 4 fields land in ``ExperimentRecord`` top-level slots
+    # (``feature_set_ref`` / ``compatibility_fingerprint`` /
+    # ``signal_export_output_dir``) and one nested slot
+    # (``training_config["model_config_hash"]`` per Phase Y deployment
+    # 2026-05-05). The cli-local ``_HarvestedTrustColumns`` dataclass
+    # consolidates the harvest pattern; ``ExperimentRecord`` schema is
+    # unchanged (NO ``INDEX_SCHEMA_VERSION`` bump).
+    trust = _HarvestedTrustColumns()
     if "signal_export" in results:
-        raw_ref = results["signal_export"].captured_metrics.get("feature_set_ref")
-        if isinstance(raw_ref, dict):
-            name = raw_ref.get("name")
-            content_hash = raw_ref.get("content_hash")
-            if isinstance(name, str) and isinstance(content_hash, str):
-                feature_set_ref = {"name": name, "content_hash": content_hash}
-        # Phase V.A.4: attach compatibility_fingerprint harvested by
-        # SignalExportRunner._harvest_compatibility_fingerprint. Validated
-        # 64-hex at the harvester boundary (CONTENT_HASH_RE gate); trust
-        # the string here without re-validating.
-        raw_fp = results["signal_export"].captured_metrics.get("compatibility_fingerprint")
-        if isinstance(raw_fp, str):
-            compatibility_fingerprint = raw_fp
-        # Phase Y deployment (2026-05-05): inject model_config_hash into
-        # training_config so compute_experiment_provenance_hash can read
-        # it during composition. Pre-Phase-Y, training_config was loaded
-        # from the resolved trainer YAML which lacks model_config_hash
-        # (the hash is computed POST-construction, lives only in checkpoint
-        # sidecars). Phase Y emits it in signal_metadata.json which the
-        # SignalExportRunner harvester reads back. CONTENT_HASH_RE gate
-        # already applied at harvester (signal_export.py); trust here.
-        raw_mch = results["signal_export"].captured_metrics.get("model_config_hash")
-        if isinstance(raw_mch, str):
-            # Mutate the local training_config dict — this dict is the
-            # one passed to ExperimentRecord(...) below, so the injection
-            # propagates into record.training_config["model_config_hash"]
-            # which is exactly what compute_experiment_provenance_hash reads.
-            training_config["model_config_hash"] = raw_mch
-        # Phase V.1 L1.2: attach resolved signal_export.output_dir captured
-        # at RUN TIME (not re-resolved from manifest post-hoc). Closes
-        # Agent 2 H1 manifest-move-resilience gap. Downstream tooling
-        # (statistical_compare adapter, ledger show) reads this directly.
-        raw_sig_dir = results["signal_export"].captured_metrics.get("signal_export_output_dir")
-        if isinstance(raw_sig_dir, str) and raw_sig_dir:
-            signal_export_output_dir = raw_sig_dir
+        trust = _harvest_trust_columns(
+            results["signal_export"].captured_metrics
+        )
+        if trust.harvest_errors:
+            _logger.warning(
+                "Trust-column harvest errors on experiment %s: %s",
+                experiment_id,
+                "; ".join(trust.harvest_errors),
+            )
+        # Phase Y composer reads ``training_config["model_config_hash"]``
+        # during ``compute_experiment_provenance_hash``. Inject the
+        # harvested 64-hex SHA into the local ``training_config`` dict
+        # so it propagates into ``record.training_config[...]`` below.
+        # CONTENT_HASH_RE gate already applied inside the harvester.
+        if trust.model_config_hash is not None:
+            training_config["model_config_hash"] = trust.model_config_hash
 
     record = ExperimentRecord(
         experiment_id=experiment_id,
         name=manifest.experiment.name,
         manifest_path=manifest.manifest_path,
         fingerprint=fingerprint,
-        feature_set_ref=feature_set_ref,
-        compatibility_fingerprint=compatibility_fingerprint,
-        signal_export_output_dir=signal_export_output_dir,
+        feature_set_ref=trust.feature_set_ref,
+        compatibility_fingerprint=trust.compatibility_fingerprint,
+        signal_export_output_dir=trust.signal_export_output_dir,
         provenance=provenance,
         contract_version=manifest.experiment.contract_version,
         training_config=training_config,
