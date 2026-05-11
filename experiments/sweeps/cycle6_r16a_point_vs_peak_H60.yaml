@@ -1,0 +1,370 @@
+# =============================================================================
+# R-16a: point_return vs peak_return @ H60 — 2-arm hedged sweep
+# =============================================================================
+#
+# Cycle 6 / R-16a: 2-arm hedged experiment cycle targeting the E8 root-cause
+# closure on v3p0 corpus. 2 primary research axes × baseline gate = 4 grid
+# points. Pairs with deferred R-16b (triple-barrier @ θ=breakeven) which
+# requires fresh corpus extraction (see PHASE_P_BACKLOG.md R-16 design notes).
+#
+# Grid (2 axes × Cartesian product = 4 arms):
+#   model_type   ∈ {temporal_ridge, tlob}                 (2)  — baseline gate
+#   return_type  ∈ {point_return, peak_return}            (2)  — primary axis
+#
+#   2 × 2 = 4 grid points.
+#
+# **WHY only 4 arms instead of 12?** γ-1 LITE 2026-05-10 already ran
+# 12-arm sweep (cycle5_multi_arm) with axes model_type × {point_return,
+# smoothed_return} × {H10, H60, H300}. The point_return × H60 arms (Ridge +
+# TLOB) are already in the ledger as baseline. R-16a adds the NEW science:
+# peak_return arm = dominant-magnitude composite (CLAUDE.md §Labeling
+# Strategies cites `LabelFactory.peak_return` is the Python name for what
+# Rust `MagnitudeGenerator::ReturnType::DominantReturn` produces; verified
+# 2026-05-11 by parity test fixture at `hft-contracts/tests/fixtures/
+# python_rust_parity/v1/labels.json` rtol=1e-12).
+#
+# Architecture pinning (identical to γ-1 LITE for cross-cycle replication
+# via #PY-4 ledger bridge once shipped; see #PY-68 note in cycle5_multi_arm.yaml):
+#   - data_dir:     e5_timebased_60s_v3p0 (136,902 sequences / 230 days)
+#   - feature_set:  nvda_short_term_98_src98_v1 (content_hash 122fe5cb...)
+#   - horizons:     [10, 60, 300] (pinned from v3p0 corpus exports)
+#   - primary_horizon_idx: 1 (H60 — the cost-aware tradeable horizon)
+#   - data.labels.source: forward_prices  (forces LabelFactory recomputation
+#     at trainer load-time so return_type axis is architecturally meaningful
+#     for BOTH PyTorch and sklearn paths post-#PY-88 closure)
+#
+# Hypotheses (declared BEFORE running per hft-rules §13):
+#
+#   REFRAMED H1 (PRIMARY — Agent B pre-impl caveat 2026-05-11): peak_return
+#      labels capture DIFFERENT information content than point_return at H60.
+#      Comparing test_ic against each arm's own label is TAUTOLOGICAL (each
+#      arm predicts its own label well by construction). The PRIMARY gate
+#      is BACKTEST P&L from OpraCalibratedCosts.deep_itm() — backtester
+#      executes point-to-point, so it is the only execution-aligned metric.
+#      Sub-claims:
+#        H1a: Peak vs point arms produce DIFFERENT backtest P&L at H60
+#             with BH FDR q-value < 0.10 across model_type axis (BH over
+#             K=2 paired comparisons: peak-vs-point within each of
+#             {temporal_ridge, tlob}).
+#        H1b: At least 1 arm produces |P&L| effect-size > the cost-gate
+#             noise floor (effect-size floor: median |prediction| or
+#             backtest P&L IQR > 1.4 bps Deep ITM breakeven).
+#      Refuting H1 = peak_return offers no tradeable enhancement vs
+#      point_return (closes a research direction).
+#      LABEL-EXECUTION MISMATCH CAVEAT: peak_return is forward-leaking
+#      (uses entire [t+1, t+60] window for max-magnitude); model trained
+#      on peak labels learns "where's the largest wiggle" not "what's the
+#      realized close." This is structurally similar to the smoothed-vs-
+#      point pathology that produced E8 root cause. R-16a accepts this
+#      risk explicitly + relies on the backtest P&L gate (execution-aligned)
+#      rather than test_ic (label-aligned) as the primary tradability test.
+#
+#   H2 (architecture invariance, baseline gate per hft-rules §13):
+#      temporal_ridge captures ≥80% of TLOB IC at H60 within return_type.
+#      Replicates CLAUDE.md §Validated Findings: "TemporalRidge captures
+#      91% of TLOB IC". Required by hft-rules §13 baseline gate.
+#
+#   H3 (cost-aware breakeven, hft-rules §13 cost gate): backtest test-set
+#      median |prediction| > 1.4 bps Deep ITM breakeven via
+#      `OpraCalibratedCosts.deep_itm()`. Both arms must clear this threshold
+#      for tradability claim. PRIOR per γ-1 LITE evidence: point_return
+#      × H60 produced test_ic ≈ 0.087-0.147 + DA ≈ 0.54 — borderline cost
+#      gate clearance. peak_return prediction magnitude likely LARGER (peak
+#      labels are larger in magnitude than point labels by construction),
+#      but larger predictions ≠ tradable edge (could be mechanical scale).
+#      Auto-applied by backtesting stage; ledger record's backtest_metrics
+#      block captures P&L per cost threshold.
+#
+# Decision-gate criteria (per hft-rules §13 — pre-declared with disambiguated
+# BH K_pairs and effect-size floor per Agent B pre-impl caveat):
+#   - GO: 4/4 arms produce records with all 4 experiment_provenance_hash
+#         components populated (data_dir + feature_set + compat_fp + mch).
+#         BH FDR-significant H1a result (q < 0.10) on BACKTEST P&L
+#         differences OVER K=2 PAIRED COMPARISONS (peak-vs-point within
+#         {ridge, tlob}). EFFECT-SIZE FLOOR: |Δ(backtest_P&L_peak −
+#         backtest_P&L_point)| > 0.5% on any arm (refuses 'statistically
+#         significant but practically meaningless' INDETERMINATE).
+#         At least 1 arm clears 1.4 bps breakeven (median |prediction| > 1.4).
+#   - REFUTE (still high-value): q > 0.10 on H1a OR effect-size < 0.5%
+#         on both arms. Documents peak_return as not-tradeable enhancement
+#         over point_return at H60 v3p0. Closes a research direction.
+#         Unblocks R-16b (triple-barrier @ θ=breakeven; execution-aligned
+#         design via Rust hft-labeling crate path-dependent first-hitting).
+#   - INDETERMINATE (POWER-LIMITED): q borderline (0.05-0.15) with effect-size
+#         in (0.1%, 0.5%) range. Trigger R-16a-extended (4 arms × 3 seeds
+#         per `seed_stability.yaml` template, ~6-15 hr) for power.
+#   - PIVOT: any arm fails InputContract preflight or label dispatch — root-
+#         cause + retry that single arm via `--rerun-failed`; do not re-run
+#         all 4 arms.
+#   - ABORT: ≥2 arms fail with the SAME error class (manifest-level systemic
+#         bug). Halt + adversarial-debug + revise manifest.
+#
+# POWER-LIMITED ACKNOWLEDGMENT (mandatory per Agent B pre-impl caveat —
+# documented in EXPERIMENT_INDEX entry post-run):
+#   - n_test ≈ 8085 samples per arm (33-day test split × ~245 sequences/day)
+#   - 1 seed per arm (seed=42 base). NO seed-variance characterization.
+#   - 4 arms = 2 paired comparisons → BH at q=0.10 effective threshold
+#     ≈ raw p_value < 0.05 for the most significant pair.
+#   - Power to detect Δic = 0.05: ~90%; Δic = 0.02: ~30-50%.
+#   - If R-16a result is INDETERMINATE (borderline q, small effect-size),
+#     plan R-16a-extended (multi-seed) per `seed_stability.yaml` template.
+#
+# Composability target: each arm produces a ledger record with all 4
+# experiment_provenance_hash sources populated (mirrors cycle5_multi_arm
+# Phase Y composability — empirically verified 12/12 populated 2026-05-10).
+#
+# Total expected wall-clock:
+#   TLOB arms (2): ~30-90 min/arm on MPS or CPU = 1-3 hr
+#   TemporalRidge arms (2): ~5-15 min/arm on CPU = 10-30 min
+#   Total serial: ~1.5-3.5 hr
+#   With --gpus 1 + parallel CPU sklearn: ~1-2 hr (TLOB serializes; Ridge
+#       arms run concurrent on CPU).
+#
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/cycle6_r16a_point_vs_peak_H60.yaml
+#   hft-ops sweep run     experiments/sweeps/cycle6_r16a_point_vs_peak_H60.yaml --gpus 1
+#   hft-ops sweep results experiments/sweeps/cycle6_r16a_point_vs_peak_H60.yaml
+#   hft-ops sweep compare experiments/sweeps/cycle6_r16a_point_vs_peak_H60.yaml \
+#       --metric test_ic --alpha 0.05
+#
+# Reference templates structurally borrowed from:
+#   - cycle5_multi_arm.yaml (PROVEN — shipped 2026-05-10; 12 arms; all known
+#     fixes inherited: #PY-86 sklearn params, #PY-87 horizon_value cosmetic,
+#     α-1.1 explicit checkpoint, #PY-88 closure for return_type sklearn axis)
+#
+# Adversarial considerations preserved in this manifest:
+#   #PY-68: γ-1 LITE 2026-05-10 records ARE canonical (post-orchestrator) →
+#     intra-R-16a pairwise compare is statistically clean. Cross-cycle compare
+#     vs γ-1 LITE remains blocked by #PY-4 (ledger bridge).
+#   #PY-71: NaN-poisoning hardening NOT YET shipped; v3p0 forward_prices.npy
+#     is 0% NaN per Phase O Cycle 1 producer-readiness audit + Wave 2-C
+#     2026-05-11 verification (0/480,200 feature cells). LATENT-safe for
+#     peak_return (path-dependent max-magnitude — same forward_prices base
+#     as point_return).
+#   #PY-88 (CLOSED 2026-05-10): sklearn return_type axis is architecturally
+#     meaningful (compat fingerprints differ across return_type for sklearn
+#     arms in γ-1 LITE — verified 6 distinct compat_fp for 12 arms = 2 distinct
+#     per (model, horizon) pair = return_type discrimination at sklearn).
+#
+# Last verified: 2026-05-11 — drafted post #PY-115 REFUTATION cycle.
+# =============================================================================
+
+experiment:
+  name: "cycle6_r16a_point_vs_peak_H60"
+  description: >
+    R-16a: 2-arm hedged experiment cycle (point_return vs peak_return at H60).
+    4 grid points (model_type × return_type) on v3p0 corpus. Tests whether
+    peak_return (dominant-magnitude composite — Python LabelFactory.peak_return
+    is bit-exact parity to Rust MagnitudeGenerator::DominantReturn) produces
+    higher test-set IC + directional accuracy than point_return at the cost-
+    aware tradeable horizon H60. Pairs with R-16b (triple-barrier @ θ=breakeven,
+    deferred pending fresh corpus extraction).
+  hypothesis: >
+    REFRAMED H1 (PRIMARY — Agent B pre-impl caveat 2026-05-11): peak_return
+    captures DIFFERENT information than point_return at H60. Comparing
+    test_ic against each arm's OWN labels is tautological. The PRIMARY gate
+    is BACKTEST P&L (execution-aligned via OpraCalibratedCosts.deep_itm()
+    point-to-point 0DTE Deep ITM). Sub-claims: H1a peak vs point arms
+    produce DIFFERENT backtest P&L with BH FDR q < 0.10 over K=2 paired
+    comparisons (peak-vs-point within each of {ridge, tlob}); H1b effect-
+    size floor |ΔP&L| > 0.5%; H1c at least 1 arm median |pred| > 1.4 bps.
+    Refuting H1 = closes a research direction (peak_return not tradeable
+    enhancement vs point_return at H60).
+    LABEL-EXECUTION MISMATCH CAVEAT: peak_return is forward-leaking
+    structurally similar to smoothed-vs-point pathology (E8 root cause).
+    R-16a relies on backtest P&L (execution-aligned) NOT test_ic (label-
+    aligned) as the tradability test.
+    H2 (BASELINE GATE): temporal_ridge captures ≥80% of TLOB IC within
+    return_type per CLAUDE.md §Validated Findings. Required by hft-rules §13.
+    H3 (COST GATE): backtest median |prediction| > 1.4 bps Deep ITM breakeven
+    per OpraCalibratedCosts.deep_itm(). Backtesting stage auto-applies.
+    POWER-LIMITED: 1 seed × 4 arms; if INDETERMINATE result, plan R-16a-
+    extended (4 arms × 3 seeds per seed_stability.yaml template).
+  contract_version: "3.0"
+  tags:
+    - nvda
+    - cycle6
+    - r16a
+    - regression
+    - hedged
+    - 2-arm
+    - v3p0
+    - sweep
+    - point_vs_peak
+    - phase-y-composability
+    - h60
+
+pipeline_root: ".."
+
+stages:
+  extraction:
+    enabled: true
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s_v3p0"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    trainer_config:
+      name: cycle6_r16a_base
+      description: "R-16a base; axes override model_type and data.labels.return_type. H60 pinned in base."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s_v3p0"
+        feature_count: 98
+        feature_set: nvda_short_term_98_src98_v1
+        labeling_strategy: regression
+        num_classes: 3
+        # Pin H60 at base level for both horizon_idx (legacy) and the
+        # canonical labels.primary_horizon_idx (#PY-87 fix).
+        horizon_idx: 1
+        labels:
+          source: forward_prices
+          return_type: point_return    # <- overridden by axis `return_type`
+          task: regression
+          horizons: [10, 60, 300]
+          primary_horizon_idx: 1       # H60 = index 1 of [10, 60, 300]
+          sample_weights: none
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob                # <- overridden by axis `model_type`
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        # TLOB-specific (ignored when model_type=temporal_ridge per dispatch).
+        # Inherits #PY-86 fix from cycle5_multi_arm: sklearn `params:` block
+        # lives ONLY on temporal_ridge axis value (see sweep.axes below).
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42
+        mixed_precision: false
+
+      output_dir: outputs/experiments/cycle6_r16a_base
+      log_level: INFO
+      tags: [cycle6, r16a, nvda, regression, hedged, 2-arm, v3p0, sweep]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_signals.py"
+    # α-1.1 / #PY-81 fix (inherited from cycle5_multi_arm.yaml — explicit
+    # checkpoint required since α-2 introduced fail-loud validate-time gate).
+    checkpoint: "${stages.training.output_dir}/checkpoints/final.pt"
+    split: test
+    output_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+    # signal_export REQUIRED so harvester populates compatibility_fingerprint
+    # + model_config_hash on each ledger record (composer sources 3/4 + 4/4).
+    # Combined with feature_set + data_dir_hash, all 4 experiment_provenance_
+    # hash sources are populated → Phase Y composability maintained.
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_regression_backtest.py"
+    # Agent A BLOCKER fix (pre-impl validation 2026-05-11): signals_dir
+    # REQUIRED. `run_regression_backtest.py:125` argparse `--signals` is
+    # required=True. Without this field, hft-ops/stages/backtesting.py:127
+    # silently omits `--signals` from cmd and subprocess fails with argparse
+    # error at runtime. cycle5_multi_arm had backtesting.enabled=false so
+    # this gap was never exposed; R-16a is FIRST sweep to enable backtesting,
+    # uncovering the latent wiring gap.
+    signals_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+    # Per CLAUDE.md "IBKR 0DTE Cost Model": OpraCalibratedCosts.deep_itm()
+    # ships with 1.4 bps round-trip breakeven (delta≈0.95). Backtester
+    # auto-applies cost gate via this default. PRIMARY gate per Agent B
+    # caveat (label-execution alignment): backtest P&L is the execution-
+    # aligned comparison metric — test_ic is intermediate diagnostic only.
+    extra_args:
+      - "--exchange"
+      - "XNAS"
+      - "--primary-horizon-idx"
+      - "1"          # H60 (matches primary_horizon_idx above)
+      - "--deep-itm"  # cost gate: 1.4 bps breakeven via OpraCalibratedCosts
+
+# =============================================================================
+# Sweep definition — 2 axes, 4 grid points, no cross-axis key conflicts:
+#   model_type        owns: model.model_type + (sklearn params on temporal_ridge)
+#   return_type       owns: data.labels.return_type
+#
+# Axis keys are disjoint per validate_sweep cross-axis conflict check
+# (sweep.py:179-199).
+# =============================================================================
+
+sweep:
+  name: "cycle6_r16a_point_vs_peak_H60"
+  strategy: "grid"
+  axes:
+    - name: "model_type"
+      values:
+        - label: "temporal_ridge"
+          overrides:
+            model.model_type: temporal_ridge
+            # γ-1 LITE / #PY-86 fix (2026-05-09): sklearn-only params live
+            # ONLY here. Single-dict override replaces `model.params={}`
+            # default wholesale; TLOB arm value below intentionally OMITS
+            # this key so `_build_params_from_legacy` reconstructs from
+            # `tlob_*` flat fields. Same alpha + features as γ-1 LITE for
+            # cross-cycle replication (#PY-4 ledger bridge pending).
+            model.params:
+              alpha: 1.0
+              features:
+                signal_indices: [85, 84, 86, 56, 45]
+                top_k_signals: 3
+                rolling_windows: [3, 5, 10]
+                include_volatility: true
+                include_momentum: true
+        - label: "tlob"
+          overrides:
+            model.model_type: tlob
+            # No `model.params` override — TLOB arm relies on
+            # `_build_params_from_legacy` to reconstruct from `tlob_*` flat
+            # fields in the base trainer YAML.
+
+    - name: "return_type"
+      values:
+        - label: "point_return"
+          overrides:
+            data.labels.return_type: point_return
+        - label: "peak_return"
+          overrides:
+            data.labels.return_type: peak_return
