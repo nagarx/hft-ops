@@ -1700,6 +1700,13 @@ def sweep_run(
     requested_stages = set(stages.split(",")) if stages else None
     completed = 0
     failed = 0
+    # Phase R-17 F6 (2026-05-11): #PY-127 closure — track skipped_dupes
+    # separately from formula-derived "not processed" (post-abort grid points
+    # that never entered the loop body). Pre-F6 the summary line at L1902
+    # used `len(experiments) - completed - failed` which conflates both
+    # categories under "Skipped (dupes)" — misleading when --on-failure=abort
+    # breaks the loop mid-sweep with un-processed grid points remaining.
+    skipped_dupes = 0
     # Phase 5 FULL-A Block 3: accumulate per-grid-point summaries for the
     # aggregate record written at loop end.
     child_summaries: list[dict] = []
@@ -1759,6 +1766,8 @@ def sweep_run(
                     "training_metrics": {},
                     "backtest_metrics": {},
                 })
+                # Phase R-17 F6: explicit counter for #PY-127 closure.
+                skipped_dupes += 1
                 continue
 
         # Resolve per-grid-point runtime values (no shared-state mutation).
@@ -1894,12 +1903,23 @@ def sweep_run(
         # Rebuild index so the aggregate record is visible to ledger.filter.
         _construct_ledger_or_exit(paths.ledger_dir, strict_index=False)._rebuild_index()
 
-    # Summary
+    # Summary — Phase R-17 F6 (2026-05-11): #PY-127 closure
+    # Pre-F6 formula `len(experiments) - completed - failed` conflated
+    # "skipped_dupes" with "not_processed" (post-abort grid points). F6 tracks
+    # `skipped_dupes` separately; "not_processed" derives only when --on-failure
+    # break exits before processing all grid points.
+    not_processed = len(experiments) - completed - failed - skipped_dupes
     console.print(f"\n[bold]{'='*60}[/bold]")
     console.print(f"[bold]Sweep complete: {sweep_name}[/bold]")
     console.print(f"  Completed: [green]{completed}[/green]")
     console.print(f"  Failed: [red]{failed}[/red]")
-    console.print(f"  Skipped (dupes): {len(experiments) - completed - failed}")
+    console.print(f"  Skipped (dupes): {skipped_dupes}")
+    if not_processed > 0:
+        # Phase R-17 F6: explicit category distinct from dupes.
+        # Happens when sweep aborts at first failure (continue_on_failure=False)
+        # OR an unexpected exception terminates the loop. Operator-visible
+        # signal that grid points were SCHEDULED but NEVER ATTEMPTED.
+        console.print(f"  [yellow]Not processed (aborted): {not_processed}[/yellow]")
     console.print(f"  Sweep ID: {sweep_id}")
 
 

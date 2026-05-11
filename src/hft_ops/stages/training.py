@@ -22,6 +22,11 @@ from hft_ops.config import OpsConfig
 from hft_ops.ledger.dedup import _load_trainer_merge_module
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.paths import PipelinePaths
+from hft_ops.stages._override_discipline import (
+    KNOWN_TRAINER_PREFIXES,
+    apply_override_loud,
+    validate_trainer_override_prefixes,
+)
 from hft_ops.stages.base import (
     _format_subprocess_failure,
     StageResult,
@@ -82,16 +87,35 @@ def _resolve_horizon_idx(
 def _apply_overrides_to_dict(
     cfg: Dict[str, Any],
     overrides: Dict[str, Any],
+    *,
+    validate_prefixes: bool = False,
+    source: str = "_apply_overrides_to_dict",
 ) -> Dict[str, Any]:
     """Apply dotted-key overrides to a config dict in-place.
 
     Args:
         cfg: Config dict to modify.
         overrides: Dict of dotted keys to values (e.g., {"data.data_dir": "/path"}).
+        validate_prefixes: Phase R-17 F5 (default False for back-compat). When
+            True, validates each override's first segment against
+            ``KNOWN_TRAINER_PREFIXES`` BEFORE applying any mutation (fail-fast
+            per hft-rules §5). Closes #PY-131 typo class for trainer-config
+            override paths. Production callers should pass ``True``; legacy
+            test fixtures with synthetic keys may keep default ``False``.
+        source: human-readable source for fail-loud error messages.
 
     Returns:
         The same dict (for chaining). Mutated in-place.
+
+    Raises:
+        UnknownOverrideKeyError: when ``validate_prefixes=True`` and any
+            override key has unknown top-level prefix (typo detection).
     """
+    # Phase R-17 F5: fail-fast prefix validation BEFORE any mutation,
+    # so partial-mutation-then-raise is impossible.
+    if validate_prefixes:
+        validate_trainer_override_prefixes(overrides, source=source)
+
     for dotted_key, value in overrides.items():
         parts = dotted_key.split(".")
         target = cfg
@@ -319,7 +343,12 @@ def _materialize_inline_config(
         fake_config_path = trainer_configs_root / "__inline_trainer_config__.yaml"
         cfg = _resolve_trainer_inheritance(cfg, fake_config_path, paths)
 
-    _apply_overrides_to_dict(cfg, overrides)
+    # Phase R-17 F5: production caller validates prefixes (mirror _apply_overrides path).
+    _apply_overrides_to_dict(
+        cfg, overrides,
+        validate_prefixes=True,
+        source="_materialize_inline_config",
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
@@ -390,13 +419,34 @@ class TrainingRunner:
             export_dir = config.paths.resolve(manifest.stages.extraction.output_dir)
             horizon_idx = _resolve_horizon_idx(stage.horizon_value, export_dir)
             if horizon_idx is not None:
-                overrides["data.horizon_idx"] = horizon_idx
+                # Phase R-17 F4 (2026-05-11): #PY-128 closure — replaced direct
+                # `overrides["data.horizon_idx"] = horizon_idx` with apply_override_loud.
+                # user_set_check=False during initial migration (WARN-only); Phase R-18
+                # promotes to True after manifest audit.
+                apply_override_loud(
+                    overrides,
+                    "data.horizon_idx",
+                    horizon_idx,
+                    source=(
+                        f"training.py:393 resolved from horizon_value="
+                        f"{stage.horizon_value} via export metadata"
+                    ),
+                    user_set_check=False,
+                )
                 result.captured_metrics["resolved_horizon_idx"] = horizon_idx
 
         output_dir = stage.output_dir
         if output_dir:
             output_dir = str(config.paths.resolve(output_dir))
-            overrides["output_dir"] = output_dir
+            # Phase R-17 F4 (2026-05-11): NEW-BUG-10 closure — sister site to L393.
+            # Replaces direct `overrides["output_dir"] = output_dir`.
+            apply_override_loud(
+                overrides,
+                "output_dir",
+                output_dir,
+                source=f"training.py:399 resolved from stage.output_dir={stage.output_dir}",
+                user_set_check=False,
+            )
 
         # Materialize effective config: inline path vs file path
         if stage.trainer_config is not None:

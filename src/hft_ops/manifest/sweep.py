@@ -442,6 +442,12 @@ def expand_sweep_with_axis_values(
                 first_seg, rest = key.split(".", 1)
                 if first_seg in _BACK_COMPAT_TRAINER_PREFIXES:
                     # Bare model.*/train.*/data.* → training.overrides[<key>]
+                    # Phase R-17 F5 / #PY-137: producer-side typo detection. The
+                    # _BACK_COMPAT_TRAINER_PREFIXES set already gates first-segment
+                    # validity at this point (model/train/data only); this passthrough
+                    # is therefore safe under the F5 first-segment validation
+                    # contract. Sub-key typo detection deferred to Phase R-18
+                    # (requires SafeBaseModel snapshot per Phase VI architecture).
                     merged_trainer_overrides[key] = v
                 elif first_seg == "training" and rest.startswith("overrides."):
                     # Explicit training.overrides.<trainer_key> → trainer YAML dict.
