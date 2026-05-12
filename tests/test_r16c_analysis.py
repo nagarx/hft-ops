@@ -409,3 +409,362 @@ class TestExceptionHierarchy:
             raise R16cH5InvariantError("ridge_peak: 2 distinct SHAs")
         except R16cAnalysisError as e:
             assert "ridge_peak" in str(e)
+
+
+# =============================================================================
+# #PY-180 close (2026-05-13): DOLLAR → FRACTION unit conversion at load boundary
+# =============================================================================
+
+
+class TestLoadPerTradePnlsUnitConversion:
+    """Lock the #PY-180 fix: _load_per_trade_pnls converts DOLLAR per-trade
+    arrays to FRACTION-of-capital at load boundary so downstream gates
+    (H1/H4) operate in fraction units consistent with manifest pre-registration.
+
+    Producer (lob-backtester/scripts/run_regression_backtest.py:139) dumps USD
+    per-trade pnls. Analyzer constants H1_MEAN_FLOOR=0.01 and H4_MEAN_FLOOR=-0.005
+    are fractional (+1.0% and -0.5%). Without the load-boundary conversion,
+    the analyzer would compare $4.05/trade dollar mean against 0.01 fraction
+    threshold → semantically wrong dispatch.
+    """
+
+    def test_dollar_to_fraction_conversion_default_capital(self, tmp_path):
+        from hft_ops.ledger.r16c_analysis import (
+            DEFAULT_INITIAL_CAPITAL,
+            _load_per_trade_pnls,
+        )
+        # Synthesize a DOLLAR-unit per-trade array
+        dollar_pnls = np.array([400.0, 600.0, -200.0, 1000.0, -50.0], dtype=np.float64)
+        path = tmp_path / "test_run__option_trade_pnls__deep_itm_1.4bps.npy"
+        np.save(path, dollar_pnls)
+
+        arr_frac = _load_per_trade_pnls(
+            pnls_dir=tmp_path,
+            run_name="test_run",
+            threshold_label="deep_itm_1.4bps",
+        )
+
+        # Expected: arr_frac = dollar_pnls / 100_000 (DEFAULT_INITIAL_CAPITAL)
+        expected = dollar_pnls / DEFAULT_INITIAL_CAPITAL
+        np.testing.assert_array_almost_equal(arr_frac, expected, decimal=12)
+        # Sanity: $400 / $100,000 = 0.004 = 0.4%
+        assert arr_frac[0] == pytest.approx(0.004)
+
+    def test_dollar_to_fraction_conversion_custom_capital(self, tmp_path):
+        from hft_ops.ledger.r16c_analysis import _load_per_trade_pnls
+        # If a future R-cycle uses initial_capital=$50,000, fraction should reflect that
+        dollar_pnls = np.array([500.0, -250.0, 1000.0], dtype=np.float64)
+        path = tmp_path / "custom_run__option_trade_pnls__deep_itm_1.4bps.npy"
+        np.save(path, dollar_pnls)
+
+        arr_frac = _load_per_trade_pnls(
+            pnls_dir=tmp_path,
+            run_name="custom_run",
+            threshold_label="deep_itm_1.4bps",
+            initial_capital=50_000.0,
+        )
+
+        # $500 / $50,000 = 0.01 = 1.0%
+        assert arr_frac[0] == pytest.approx(0.01)
+        # $-250 / $50,000 = -0.005 = -0.5%
+        assert arr_frac[1] == pytest.approx(-0.005)
+
+    def test_initial_capital_zero_raises(self, tmp_path):
+        from hft_ops.ledger.r16c_analysis import _load_per_trade_pnls
+        path = tmp_path / "run__option_trade_pnls__atm_5bps.npy"
+        np.save(path, np.array([1.0, 2.0]))
+        with pytest.raises(ValueError, match="initial_capital must be finite and > 0"):
+            _load_per_trade_pnls(
+                pnls_dir=tmp_path,
+                run_name="run",
+                threshold_label="atm_5bps",
+                initial_capital=0.0,
+            )
+
+    def test_initial_capital_negative_raises(self, tmp_path):
+        from hft_ops.ledger.r16c_analysis import _load_per_trade_pnls
+        path = tmp_path / "run__option_trade_pnls__atm_5bps.npy"
+        np.save(path, np.array([1.0, 2.0]))
+        with pytest.raises(ValueError, match="initial_capital must be finite and > 0"):
+            _load_per_trade_pnls(
+                pnls_dir=tmp_path,
+                run_name="run",
+                threshold_label="atm_5bps",
+                initial_capital=-100.0,
+            )
+
+    def test_initial_capital_nan_raises(self, tmp_path):
+        """NaN initial_capital MUST raise (pre-mid-impl-gate guard `<= 0` silently
+        passed NaN since NaN comparisons always return False; mid-impl gate Agent A
+        flagged as BLOCKING)."""
+        from hft_ops.ledger.r16c_analysis import _load_per_trade_pnls
+        path = tmp_path / "run__option_trade_pnls__atm_5bps.npy"
+        np.save(path, np.array([1.0, 2.0]))
+        with pytest.raises(ValueError, match="initial_capital must be finite and > 0"):
+            _load_per_trade_pnls(
+                pnls_dir=tmp_path,
+                run_name="run",
+                threshold_label="atm_5bps",
+                initial_capital=math.nan,
+            )
+
+    def test_initial_capital_inf_raises(self, tmp_path):
+        """Inf initial_capital MUST raise (pre-mid-impl-gate guard `<= 0` silently
+        passed Inf since `inf <= 0` is False → division produced 0.0 silently)."""
+        from hft_ops.ledger.r16c_analysis import _load_per_trade_pnls
+        path = tmp_path / "run__option_trade_pnls__atm_5bps.npy"
+        np.save(path, np.array([1.0, 2.0]))
+        with pytest.raises(ValueError, match="initial_capital must be finite and > 0"):
+            _load_per_trade_pnls(
+                pnls_dir=tmp_path,
+                run_name="run",
+                threshold_label="atm_5bps",
+                initial_capital=math.inf,
+            )
+
+    def test_initial_capital_negative_inf_raises(self, tmp_path):
+        """Negative-Inf initial_capital MUST raise (both finiteness AND positivity
+        checks fail; either alone is sufficient)."""
+        from hft_ops.ledger.r16c_analysis import _load_per_trade_pnls
+        path = tmp_path / "run__option_trade_pnls__atm_5bps.npy"
+        np.save(path, np.array([1.0, 2.0]))
+        with pytest.raises(ValueError, match="initial_capital must be finite and > 0"):
+            _load_per_trade_pnls(
+                pnls_dir=tmp_path,
+                run_name="run",
+                threshold_label="atm_5bps",
+                initial_capital=-math.inf,
+            )
+
+    def test_missing_file_returns_none_with_legitimate_skip(self, tmp_path):
+        # Behavior preservation: file missing + status not provided OR 'completed' → None
+        from hft_ops.ledger.r16c_analysis import _load_per_trade_pnls
+        result = _load_per_trade_pnls(
+            pnls_dir=tmp_path,
+            run_name="absent_run",
+            threshold_label="deep_itm_1.4bps",
+            record_status="completed",
+        )
+        assert result is None  # legitimate n_trades=0 skip
+
+    def test_missing_file_with_failed_status_raises(self, tmp_path):
+        # Behavior preservation: file missing + status='failed' → §8 fail-loud
+        from hft_ops.ledger.r16c_analysis import _load_per_trade_pnls
+        with pytest.raises(R16cIncompleteSweepError, match="SWEEP FAILURE"):
+            _load_per_trade_pnls(
+                pnls_dir=tmp_path,
+                run_name="failed_run",
+                threshold_label="deep_itm_1.4bps",
+                record_status="failed",
+            )
+
+
+# =============================================================================
+# Wave 2 Agent F gap closure (2026-05-13): _resolve_backtest_pnls_dir resolver
+# tests. PRE-CYCLE-4b ZERO tests existed for this 4-candidate fallback chain.
+# =============================================================================
+
+
+class TestResolveBacktestPnlsDir:
+    """Lock the 4-candidate resolver fallback chain.
+
+    Agent 2 mid-impl audit 2026-05-12 caught off-by-one walk-up arithmetic
+    that produced `outputs/outputs/backtests` doubled path. The current chain
+    (1) paths.backtester_dir / outputs / backtests (PRODUCTION),
+    (2) <root>/lob-backtester/outputs/backtests (TEST/MANUAL),
+    (3) sig_dir walk-up-5 / outputs / backtests (ALT LAYOUT),
+    (4) Path("outputs") / "backtests" (CWD FALLBACK).
+
+    Wave 2 Agent F flagged this resolver had ZERO tests despite being the
+    most fragile join point between producer-side dump location and
+    consumer-side analyzer load. These tests close that gap.
+    """
+
+    def _build_mock_paths(self, root: Path, backtester_dir):
+        """Mock PipelinePaths supporting .root and optional .backtester_dir."""
+        class MockPaths:
+            def __init__(self, r, bt):
+                self.root = r
+                if bt is not None:
+                    self.backtester_dir = bt
+        return MockPaths(root, backtester_dir)
+
+    def _build_mock_record_entry(self, signal_dir: Path):
+        """Mock record entry providing signal_dir for resolve_signal_dir."""
+        return {
+            "experiment_id": "test_exp",
+            "signal_export_output_dir": str(signal_dir),
+            "axis_values": {"model_type": "temporal_ridge", "return_type": "peak_return"},
+        }
+
+    def test_candidate_1_paths_backtester_dir_found(self, tmp_path, monkeypatch):
+        """Production case: orchestrator default path via paths.backtester_dir."""
+        from hft_ops.ledger.r16c_analysis import _resolve_backtest_pnls_dir
+        # Set up: backtester_dir/outputs/backtests exists
+        backtester_dir = tmp_path / "backtester"
+        target = backtester_dir / "outputs" / "backtests"
+        target.mkdir(parents=True)
+        sig_dir = tmp_path / "exp" / "signals" / "test"
+        sig_dir.mkdir(parents=True)
+        paths = self._build_mock_paths(tmp_path, backtester_dir)
+        # Mock resolve_signal_dir to return our sig_dir directly
+        monkeypatch.setattr(
+            "hft_ops.ledger.r16c_analysis.resolve_signal_dir",
+            lambda *args, **kwargs: sig_dir,
+        )
+        record = self._build_mock_record_entry(sig_dir)
+        result = _resolve_backtest_pnls_dir(record, ledger=None, paths=paths)
+        assert result == target
+
+    def test_candidate_2_explicit_lob_backtester_layout_found(self, tmp_path, monkeypatch):
+        """Test/manual case: <root>/lob-backtester/outputs/backtests when candidate 1 misses."""
+        from hft_ops.ledger.r16c_analysis import _resolve_backtest_pnls_dir
+        # Candidate 1 directory does NOT exist
+        # Candidate 2 directory EXISTS
+        target = tmp_path / "lob-backtester" / "outputs" / "backtests"
+        target.mkdir(parents=True)
+        sig_dir = tmp_path / "exp" / "signals" / "test"
+        sig_dir.mkdir(parents=True)
+        # backtester_dir set but its outputs/backtests does NOT exist
+        backtester_dir = tmp_path / "nonexistent_backtester"
+        paths = self._build_mock_paths(tmp_path, backtester_dir)
+        monkeypatch.setattr(
+            "hft_ops.ledger.r16c_analysis.resolve_signal_dir",
+            lambda *args, **kwargs: sig_dir,
+        )
+        record = self._build_mock_record_entry(sig_dir)
+        result = _resolve_backtest_pnls_dir(record, ledger=None, paths=paths)
+        assert result == target
+
+    def test_candidate_3_signal_dir_walkup_found(self, tmp_path, monkeypatch):
+        """Alternative layout: walking up 5 levels from signal_dir lands at root."""
+        from hft_ops.ledger.r16c_analysis import _resolve_backtest_pnls_dir
+        # signal_dir is at outputs/experiments/<point>/signals/test/
+        # parent.parent.parent.parent.parent => <root>
+        # then / outputs / backtests
+        sig_dir = tmp_path / "level5" / "outputs" / "experiments" / "point" / "signals" / "test"
+        sig_dir.mkdir(parents=True)
+        target = tmp_path / "level5" / "outputs" / "backtests"
+        target.mkdir(parents=True)
+        # Make sure candidates 1 + 2 DO NOT match
+        paths = self._build_mock_paths(tmp_path, None)  # no backtester_dir
+        monkeypatch.setattr(
+            "hft_ops.ledger.r16c_analysis.resolve_signal_dir",
+            lambda *args, **kwargs: sig_dir,
+        )
+        record = self._build_mock_record_entry(sig_dir)
+        result = _resolve_backtest_pnls_dir(record, ledger=None, paths=paths)
+        assert result == target
+
+    def test_all_candidates_miss_raises_actionable_error(self, tmp_path, monkeypatch):
+        """No candidate found → R16cIncompleteSweepError with searched-paths enumeration."""
+        from hft_ops.ledger.r16c_analysis import _resolve_backtest_pnls_dir
+        # NO candidate directories exist anywhere
+        sig_dir = tmp_path / "exp" / "signals" / "test"
+        sig_dir.mkdir(parents=True)
+        paths = self._build_mock_paths(tmp_path, None)
+        monkeypatch.setattr(
+            "hft_ops.ledger.r16c_analysis.resolve_signal_dir",
+            lambda *args, **kwargs: sig_dir,
+        )
+        record = self._build_mock_record_entry(sig_dir)
+        with pytest.raises(R16cIncompleteSweepError, match="no per-trade pnls directory found"):
+            _resolve_backtest_pnls_dir(record, ledger=None, paths=paths)
+
+    def test_resolver_error_message_lists_searched_paths(self, tmp_path, monkeypatch):
+        """Error message must enumerate all candidate paths for debuggability."""
+        from hft_ops.ledger.r16c_analysis import _resolve_backtest_pnls_dir
+        sig_dir = tmp_path / "exp" / "signals" / "test"
+        sig_dir.mkdir(parents=True)
+        backtester_dir = tmp_path / "bt"
+        paths = self._build_mock_paths(tmp_path, backtester_dir)
+        monkeypatch.setattr(
+            "hft_ops.ledger.r16c_analysis.resolve_signal_dir",
+            lambda *args, **kwargs: sig_dir,
+        )
+        record = self._build_mock_record_entry(sig_dir)
+        try:
+            _resolve_backtest_pnls_dir(record, ledger=None, paths=paths)
+            pytest.fail("Expected R16cIncompleteSweepError")
+        except R16cIncompleteSweepError as e:
+            msg = str(e)
+            # Each candidate path component should appear in error message
+            assert "outputs" in msg and "backtests" in msg
+            assert "Searched:" in msg
+            # Backtester_dir path should appear (candidate 1)
+            assert str(backtester_dir) in msg or "bt" in msg
+
+
+# =============================================================================
+# #PY-180 close: empirical smoke-test reproduction on R-16a fixtures
+# =============================================================================
+
+
+class TestPy180SmokeOnR16aFixtures:
+    """Verify #PY-180 fix on actual R-16a per-trade .npy fixtures.
+
+    The Sub-cycle 4b smoke-test produced REFUTE verdict on R-16a Ridge×Peak
+    deep_itm_1.4bps cell. Post-fix, the same REFUTE must reproduce because
+    H1(b) bootstrap CI bound is sign-invariant (CI crosses zero in DOLLAR
+    units IFF it crosses zero in FRACTION units — unit conversion preserves
+    sign).
+
+    Locked here as a regression test: if a future change to load-time
+    conversion breaks the empirical REFUTE reproduction, this test fails.
+    """
+
+    FIXTURE_DIR = Path(__file__).parent.parent.parent / "lob-backtester" / "outputs" / "backtests" / "r16a_smoke_test"
+
+    def test_r16a_ridge_peak_deep_itm_loads_to_fraction(self):
+        """R-16a Ridge×Peak deep_itm_1.4bps loaded post-fix: DOLLAR mean ~$4.05 → FRACTION ~0.0000405."""
+        from hft_ops.ledger.r16c_analysis import _load_per_trade_pnls
+        if not self.FIXTURE_DIR.exists():
+            pytest.skip(f"R-16a smoke fixtures not present at {self.FIXTURE_DIR}")
+
+        arr = _load_per_trade_pnls(
+            pnls_dir=self.FIXTURE_DIR,
+            run_name="R-16a_ridge_peak_H60_smoke",
+            threshold_label="deep_itm_1.4bps",
+        )
+        assert arr is not None, "expected R-16a ridge×peak deep_itm_1.4bps fixture"
+        # Verify mean is small fraction (dollar mean ~$4.05 → fraction ~4.05e-5)
+        mean_frac = float(np.mean(arr))
+        # Sanity-check fraction units: |mean| should be << 1 (it's a small per-trade fraction)
+        assert abs(mean_frac) < 0.01, (
+            f"Expected fraction-of-capital units; mean_frac={mean_frac:.6f} is too large. "
+            f"Pre-fix this would be ~$4.05 (DOLLAR units)."
+        )
+        # Empirical R-16a result: ~$4.05 / $100,000 = ~4.05e-5
+        # Allow loose tolerance since exact value depends on bootstrap fixture
+        assert -0.001 < mean_frac < 0.001, (
+            f"Expected very small fractional mean (~4e-5 from R-16a); got {mean_frac:.6f}"
+        )
+
+    def test_r16a_ridge_peak_ci_crosses_zero_refute(self):
+        """Empirical reproduction of Sub-cycle 4b REFUTE verdict at fraction units."""
+        from hft_ops.ledger.r16c_analysis import (
+            _load_per_trade_pnls,
+            _pooled_block_bootstrap_mean_ci,
+        )
+        if not self.FIXTURE_DIR.exists():
+            pytest.skip(f"R-16a smoke fixtures not present at {self.FIXTURE_DIR}")
+        arr = _load_per_trade_pnls(
+            pnls_dir=self.FIXTURE_DIR,
+            run_name="R-16a_ridge_peak_H60_smoke",
+            threshold_label="deep_itm_1.4bps",
+        )
+        if arr is None or len(arr) < 10:
+            pytest.skip("R-16a fixture too small for bootstrap CI")
+        mean_pooled, ci_lo, ci_hi, n_nonfinite, bl_used = _pooled_block_bootstrap_mean_ci(
+            arr, n_bootstraps=10000, seed=42,
+        )
+        # REFUTE requires CI crosses zero
+        assert ci_lo < 0 < ci_hi, (
+            f"Expected CI to cross zero (REFUTE per Sub-cycle 4b empirical); "
+            f"got ci_lo={ci_lo:.6e}, ci_high={ci_hi:.6e}"
+        )
+        # CI bounds should be SMALL fractions (sub-percent magnitudes)
+        assert abs(ci_lo) < 0.01 and abs(ci_hi) < 0.01, (
+            f"Expected fraction-unit CI bounds (sub-1%); got "
+            f"ci_lo={ci_lo:.4f}, ci_hi={ci_hi:.4f}"
+        )

@@ -73,6 +73,17 @@ def main() -> int:
         help="Bootstrap RNG seed for reproducibility. Default: 42.",
     )
     parser.add_argument(
+        "--initial-capital", type=float, default=100_000.0,
+        help="Backtester initial capital (USD) for DOLLAR→FRACTION conversion "
+             "at the per-trade-pnls load boundary (#PY-180 close, 2026-05-13). "
+             "Default 100_000.0 matches producer-side hardcoded "
+             "lob-backtester/scripts/run_regression_backtest.py:158 + manifest "
+             "schema.py:205 BacktestParams.initial_capital default. Override "
+             "if your sweep manifest used a non-default initial_capital "
+             "(#PY-181 follow-up will persist this to backtest record summary "
+             "for automatic discovery).",
+    )
+    parser.add_argument(
         "--json", dest="json_output", action="store_true",
         help="Emit JSON instead of human-readable table.",
     )
@@ -104,6 +115,7 @@ def main() -> int:
             paths=paths,
             n_bootstrap=args.n_bootstrap,
             bootstrap_seed=args.seed,
+            initial_capital=args.initial_capital,
         )
     except R16cIncompleteSweepError as e:
         print(f"ERROR (exit 3): {e}", file=sys.stderr)

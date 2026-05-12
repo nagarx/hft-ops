@@ -145,10 +145,26 @@ class BacktestRunner:
         cmd.extend(["--position-size", str(params.position_size)])
         cmd.extend(["--max-spread-bps", str(params.spread_bps)])
 
+        # #PY-180 hardening (2026-05-13): explicitly pass --output-dir to close
+        # Wave 2 Agent F finding (producer-side dump location "works by accident").
+        # Pre-fix: scripts default to "outputs/backtests/" (CWD-relative); subprocess
+        # cwd=paths.backtester_dir → lands at <backtester_dir>/outputs/backtests/
+        # IFF nobody changes the script default OR the cwd. Explicit absolute path
+        # removes the silent dependency on those two invariants.
+        # Per-trade .npy files dumped via `atomic_write_npy` post-Sub-cycle-4a
+        # (de99f45) land at `<output_dir>/{run_name}__option_trade_pnls__{label}.npy`
+        # for downstream R-16c analyzer ingestion.
+        cmd.extend([
+            "--output-dir",
+            str(config.paths.backtester_dir / "outputs" / "backtests"),
+        ])
+
         # Pass-through for script-specific args (readability `--min-agreement`
         # / `--min-confidence`, regression `--zero-dte` / `--commission`, all
         # exchange overrides, etc.). Operators set these explicitly in
-        # manifest YAML's `stages.backtesting.extra_args`.
+        # manifest YAML's `stages.backtesting.extra_args`. extra_args is AFTER
+        # the standard flags so operators can override `--output-dir` per-arm
+        # if needed (rare; the explicit standard path is the recommended default).
         cmd.extend(stage.extra_args)
 
         script_basename = Path(stage.script).name

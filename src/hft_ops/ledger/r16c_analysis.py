@@ -54,9 +54,12 @@ the manual analysis pipeline pre-registered in the R-16c manifest L154-180.
 - Reuses ``hft_metrics._sanitize.assert_finite_array`` for §8 fail-loud.
 
 6 fail-loud invariants (per Agent H verdict 2026-05-12; Agent H E9
-AVG-CROSS-CHECK deferred to #PY-180 follow-up cycle — analyzer-side
-unit-consistency rework will compute aggregate option_return_pct from
-per-trade .npy + cross-check against JSON summary):
+AVG-CROSS-CHECK deferred to `R-16c-analyzer-v2` follow-up cycle — the
+#PY-180 close (2026-05-13) addresses the H1(a)/H4 unit-mismatch via
+load-time DOLLAR→FRACTION conversion in ``_load_per_trade_pnls``;
+AVG-CROSS-CHECK (analyzer-side aggregate option_return_pct recomputation
++ cross-check against producer JSON summary) is a separate concern about
+producer/consumer aggregate consistency, scoped to the follow-up cycle):
 
 1. FILE-COUNT: expected_records × 8_thresholds .npy files (modulo n_trades=0)
 2. FINITENESS: assert_finite_array(opt_trade_pnls) per cell
@@ -113,6 +116,13 @@ H4_MEAN_FLOOR: float = -0.005  # -0.5%
 N_BOOTSTRAP_DEFAULT: int = 10_000
 N_BLOCKS_MIN: int = 5
 DEFAULT_BOOTSTRAP_SEED: int = 42
+
+# #PY-180 close (2026-05-13): producer-side `lob-backtester/scripts/run_regression_backtest.py:158`
+# hardcodes initial_capital=100_000.0 USD. The producer dumps DOLLAR per-trade pnls;
+# consumer-side analyzer MUST convert to FRACTION-of-capital units at load time to align
+# with H1_MEAN_FLOOR=0.01 (1.0%) + H4_MEAN_FLOOR=-0.005 (-0.5%) fractional thresholds.
+# Single conversion-point at `_load_per_trade_pnls` (D1 design verified by 3 pre-impl agents).
+DEFAULT_INITIAL_CAPITAL: float = 100_000.0
 
 # R-16c expected grid points (per manifest: 2 model_type × 2 return_type
 # × 10 seed = 40). Used for incomplete-sweep detection.
@@ -420,7 +430,7 @@ def _resolve_backtest_pnls_dir(
     Layout (per Agent 2 mid-impl audit 2026-05-12 ground-truth verification):
 
     - Orchestrator runs backtester subprocess with ``cwd=config.paths.backtester_dir``
-      (``hft-ops/src/hft_ops/stages/backtesting.py:160``). Backtester default
+      (``hft-ops/src/hft_ops/stages/backtesting.py:176``). Backtester default
       ``--output-dir "outputs/backtests/"`` is CWD-relative, so per-trade files
       land at ``<backtester_dir>/outputs/backtests/{run_name}__option_trade_pnls__{label}.npy``.
 
@@ -467,7 +477,7 @@ def _resolve_backtest_pnls_dir(
         f"R-16a's pre-Sub-cycle-4a backtests had NO per-trade dump (de99f45 ships "
         f"the producer-side fix); re-run backtests to populate. Orchestrator "
         f"runs backtester with cwd=config.paths.backtester_dir per "
-        f"hft-ops/src/hft_ops/stages/backtesting.py:160."
+        f"hft-ops/src/hft_ops/stages/backtesting.py:176."
     )
 
 
@@ -477,10 +487,27 @@ def _load_per_trade_pnls(
     threshold_label: str,
     *,
     record_status: Optional[str] = None,
+    initial_capital: float = DEFAULT_INITIAL_CAPITAL,
 ) -> Optional[np.ndarray]:
-    """Load one per-trade pnls array. Returns ``None`` if the file is absent
-    AND the record status is consistent with "no trades met threshold"
-    (legitimate n_trades=0 per ``run_regression_backtest.py:126`` guard).
+    """Load one per-trade pnls array, converting DOLLAR units → FRACTION of capital.
+
+    Producer (``lob-backtester/scripts/run_regression_backtest.py:139``) dumps
+    raw USD per-trade pnls via ``atomic_write_npy``. Consumer-side analyzer
+    requires FRACTION-of-capital units to align with H1/H4 fractional floors
+    (``H1_MEAN_FLOOR=0.01`` = +1.0%, ``H4_MEAN_FLOOR=-0.005`` = -0.5%). This
+    function performs the conversion at the unit boundary so all downstream
+    computations (pooled bootstrap CI, drop-top-K, _classify_verdict) operate
+    in fraction-of-capital units consistent with manifest pre-registration.
+
+    #PY-180 close (2026-05-13): pre-fix, the analyzer compared DOLLAR per-trade
+    means (~$0.45-$50) to FRACTION thresholds (0.01) producing semantically
+    wrong dispatch on H1(a) + H4 gates, plus render bug at lines 815-818
+    rendering "$X*100" as fake-percent. Load-time conversion fixes 12 sites
+    at single source.
+
+    Returns ``None`` if the file is absent AND the record status is
+    consistent with "no trades met threshold" (legitimate n_trades=0 per
+    ``run_regression_backtest.py:126`` guard).
 
     Per Agent 1 + Agent 2 mid-impl audit 2026-05-12 (Fix H2/§8):
     distinguishes (a) producer skipped dump because n_trades=0 (LEGITIMATE,
@@ -499,12 +526,34 @@ def _load_per_trade_pnls(
             + file missing → §8 fail-loud raise. Default None preserves
             permissive behavior for analyzer callers that don't have status
             handy.
+        initial_capital: Backtester initial capital (USD). Loaded array is
+            divided by this to produce FRACTION-of-capital per-trade values.
+            Default ``DEFAULT_INITIAL_CAPITAL=100_000.0`` matches all R-series
+            experiments (producer-side hardcoded at ``run_regression_backtest.py:158``).
+            Future experiments with different initial_capital MUST pass the
+            actual value explicitly (separate #PY-181 will persist this to
+            backtest record summary for automatic discovery).
 
     Raises:
         R16cIncompleteSweepError: if file is missing AND record_status
             indicates the arm did not complete successfully (Agent H E1 +
             Agent 2 #4 distinguishing legitimate-skip vs sweep-failure).
+        ValueError: if initial_capital <= 0 (division-by-zero / sign-flip guard).
     """
+    # Mid-impl gate post-fix (2026-05-13): extend guard to reject NaN + Inf.
+    # Pre-fix `initial_capital <= 0` silently passed `math.nan` (NaN ≤ 0 == False)
+    # and `math.inf` (inf ≤ 0 == False), producing all-NaN or all-0.0 fraction
+    # arrays respectively → silent unit corruption. `math.isfinite()` first
+    # catches both before any silent-arithmetic path. Per hft-rules §2 + §5 + §8.
+    if not math.isfinite(initial_capital) or initial_capital <= 0:
+        raise ValueError(
+            f"_load_per_trade_pnls: initial_capital must be finite and > 0, "
+            f"got {initial_capital!r}. Per #PY-180 design: this value is used "
+            f"to normalize DOLLAR per-trade pnls to FRACTION of capital. "
+            f"Non-finite (NaN/Inf) or non-positive values would produce "
+            f"silently-wrong fractional returns (NaN→all-NaN, Inf→all-zero, "
+            f"≤0→sign-flip or div-by-zero)."
+        )
     fname = f"{run_name}__option_trade_pnls__{threshold_label}.npy"
     path = pnls_dir / fname
     if not path.exists():
@@ -520,7 +569,9 @@ def _load_per_trade_pnls(
     arr = np.load(path)
     # Agent H invariant 2: FINITENESS fail-loud per §8
     assert_finite_array(arr, name=f"r16c.{run_name}.{threshold_label}")
-    return arr
+    # #PY-180 close (2026-05-13): DOLLAR → FRACTION of capital at load boundary
+    arr_frac = arr / initial_capital
+    return arr_frac
 
 
 def analyze_r16c_sweep(
@@ -530,6 +581,7 @@ def analyze_r16c_sweep(
     *,
     n_bootstrap: int = N_BOOTSTRAP_DEFAULT,
     bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED,
+    initial_capital: float = DEFAULT_INITIAL_CAPITAL,
 ) -> Tuple[Dict[Tuple[str, str, str], R16cCellResult], DecisionGateOutcome]:
     """Analyze an R-16c sweep + render verdict.
 
@@ -540,6 +592,12 @@ def analyze_r16c_sweep(
         paths: ``PipelinePaths`` for output-dir resolution.
         n_bootstrap: Bootstrap iterations per cell. Default 10000.
         bootstrap_seed: RNG seed for reproducibility. Default 42.
+        initial_capital: Backtester initial capital (USD) used for
+            DOLLAR→FRACTION normalization at the per-trade-pnls load boundary
+            (#PY-180 close). Default matches producer-side hardcoded
+            ``run_regression_backtest.py:158``. Future R-cycles with
+            non-default capital MUST pass explicitly (#PY-181 will
+            persist to backtest record summary).
 
     Returns:
         ``(cell_results, outcome)`` — dict keyed by ``(model_type, return_type,
@@ -662,6 +720,7 @@ def analyze_r16c_sweep(
                     run_name=str(run_name),
                     threshold_label=threshold_label,
                     record_status=record_status,
+                    initial_capital=initial_capital,
                 )
                 if arr is not None and len(arr) > 0:
                     per_seed_arrays.append(arr)
