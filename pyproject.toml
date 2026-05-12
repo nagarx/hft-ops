@@ -45,7 +45,12 @@ dependencies = [
     # tail-padding bug-fix gap but left this v0.1.7 consumer-contract gap
     # open; tightening to `>=0.1.7` closes both. numpy pulled in
     # transitively through hft-metrics (leaf package with numpy>=1.24).
-    "hft-metrics>=0.1.7",
+    # >=0.1.9 after Cluster Z extension (Sub-cycle 1 2026-05-12): block_bootstrap_ci
+    # extended to 4-tuple with n_nonfinite_replaced counter (mirrors v0.1.7 pairwise
+    # pattern). hft-ops doesn't directly consume the 4-tuple but stays aligned with
+    # the producer floor — pre-v0.1.9 installs could hit BREAKING API change via
+    # transitive dependency (trainer + evaluator both pin >=0.1.9).
+    "hft-metrics>=0.1.9",
 ]
 
 [project.optional-dependencies]
