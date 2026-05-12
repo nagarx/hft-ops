@@ -1,0 +1,433 @@
+# =============================================================================
+# R-16c: multi-seed power analysis on R-16a's Ridge × Peak +2.84% finding
+# =============================================================================
+#
+# Cycle 7 / R-16c: 3-axis sweep extending R-16a with seed-variance characterization.
+# Authorized by user 2026-05-12 (HYBRID PATH post Cluster Z Extension v0.1.9 ship).
+# Cycle 6 R-16a was 4-arm point_return vs peak_return at H60 with SINGLE seed (=42)
+# per arm. R-16a's Ridge × Peak × deep_itm_1.4bps cell produced best_option_return_pct
+# = +2.84% which the prior validation cycle (Wave 3 Agent B re-derivation 2026-05-11)
+# rigorously corrected to p ≈ 0.74 (mean across 8 thresholds = -0.34% NEGATIVE).
+# R-16c adds N=10 seeds × 4 arms to ANSWER definitively: is +2.84% noise or signal?
+#
+# Grid (3 axes × Cartesian product = 40 grid points):
+#   model_type   ∈ {temporal_ridge, tlob}                 (2)  — baseline gate
+#   return_type  ∈ {point_return, peak_return}            (2)  — primary axis
+#   train.seed   ∈ {42, 43, 44, 45, 46, 47, 48, 49, 50, 51}  (10)  — seed variance
+#
+#   2 × 2 × 10 = 40 grid points.
+#
+# **CRITICAL ARCHITECTURAL ASYMMETRY** (verified ground-truth `simple_trainer.py:
+# 911-972` + `temporal_ridge.py:100-104` + Phase A.3 REDESIGN docstring):
+#
+#   - **TemporalRidge**: closed-form `(X^T X + αI)^{-1} X^T y` with NO `random_state`
+#     argument. RNG-FREE at fit + predict time. Different `train.seed` produces
+#     BIT-EXACT IDENTICAL predictions on same data. 10 Ridge × Point records
+#     will be byte-identical at the predicted_returns.npy SHA level; same for
+#     10 Ridge × Peak records. **This is an expected architectural invariant
+#     per Phase A.3 REDESIGN.** The redundant Ridge runs serve as a determinism
+#     verification (positive finding) rather than seed-variance characterization.
+#     Compute cost is negligible (~10 sec × 8 redundant Ridge runs ≈ 80 sec).
+#
+#   - **TLOB (PyTorch)**: torch + numpy + python RNG via Phase DESIGN-1 A.1+A.2
+#     `set_seed`. Different seeds produce genuinely-different predictions.
+#     10 TLOB × {Point,Peak} records are the LOAD-BEARING seed-variance data
+#     for R-16c's F7 refutation test.
+#
+# Architecture pinning (identical to R-16a for cross-cycle replication):
+#   - data_dir:     e5_timebased_60s_v3p0 (136,902 sequences / 230 days)
+#   - feature_set:  nvda_short_term_98_src98_v1 (content_hash 122fe5cb...)
+#   - horizons:     [10, 60, 300] (pinned from v3p0 corpus exports)
+#   - primary_horizon_idx: 1 (H60 — the cost-aware tradeable horizon)
+#   - data.labels.source: forward_prices
+#   - extraction.enabled: false (v3p0 corpus already on disk per Phase O Cycle 1)
+#
+# =============================================================================
+# PRE-REGISTERED HYPOTHESES (per hft-rules §13 — committed BEFORE running any seed)
+# =============================================================================
+#
+#   H1 PRIMARY (F7 falsification — pre-registered with rigorous Wave-3-corrected math):
+#
+#     Treatment: Ridge × Peak × H60 at FIXED threshold deep_itm_1.4bps.
+#     N seeds: 10 (but Ridge is deterministic → effectively 1 distinct run).
+#
+#     H0 (null — F7 is noise):
+#         (a) Ridge × Peak pooled-per-trade bootstrap CI on per-trade P&L
+#             AT deep_itm_1.4bps crosses zero, OR
+#         (b) Mean OptRet across 8 thresholds < 0%, OR
+#         (c) Drop-top-5 OptRet ≤ -0.5%
+#
+#     H1 (alternative — F7 is genuine alpha — THREE-CONJUNCTIVE):
+#         (a) Mean OptRet at deep_itm_1.4bps > +1.0%, AND
+#         (b) Pooled per-trade P&L bootstrap CI lower bound > 0%, AND
+#         (c) Mean drop-top-5 OptRet across seeds > 0%
+#
+#     Per X2 pre-impl audit 2026-05-12: H1 is conjunctive. ANY ONE of (a),
+#     (b), (c) failing = REFUTATION. The drop-top-5 gate is Wave 3 Agent A's
+#     outlier-robustness test (top 5 trades = 123.2% of return at single-seed
+#     R-16a per prior cycle's COMPREHENSIVE_VALIDATION_AUDIT §3).
+#
+#   H2 BASELINE GATE (per hft-rules §13):
+#
+#     TemporalRidge captures ≥80% of TLOB IC within each return_type at H60.
+#     Replicates CLAUDE.md §Validated Findings "TemporalRidge captures 91%
+#     of TLOB IC". R-16a empirical: Ridge×Peak test_ic = 0.0775 vs TLOB×Peak
+#     test_ic = -0.0125 (NEGATIVE — TLOB counter-predicts peak labels).
+#     Note: H2 is REFUTED for peak_return arm by R-16a empirical (Ridge
+#     test_ic > TLOB test_ic for peak labels). R-16c expects this asymmetry
+#     to PERSIST across 10 TLOB seeds (TLOB×Peak mean test_ic remains
+#     negative or near-zero).
+#
+#   H3 COST GATE (per hft-rules §13):
+#
+#     Backtest median |prediction| > 1.4 bps Deep ITM breakeven per
+#     OpraCalibratedCosts.deep_itm(). Backtesting stage auto-applies.
+#     Cleared in R-16a single-seed for both Ridge×Peak and TLOB×Peak.
+#
+#   H4 NEGATIVE CONTROL (cherry-pick avoidance):
+#
+#     R-16a's +2.84% was MAX across 8 thresholds — confirmed cherry-pick
+#     (mean across 8 thresholds = -0.34% per Wave 3 Agent B). R-16c locks
+#     threshold to deep_itm_1.4bps BEFORE running. Negative control:
+#     compute mean OptRet across ALL 8 thresholds × N seeds (~80 cells for
+#     Ridge×Peak — but Ridge is deterministic so effectively 8 cells).
+#     If H1 GO but mean across 8 thresholds < 0, report BOTH numbers and
+#     mark RESULT AS "deep_itm-only finding; cherry-pick across thresholds".
+#
+#   H5 ARCHITECTURAL INVARIANT (Phase A.3 REDESIGN lock):
+#
+#     Ridge × {Point,Peak} × N seeds produces N bit-exact-identical
+#     predicted_returns.npy files. Compatibility_fingerprint identical
+#     across seeds within each (model, return_type) cell. Confirms
+#     `temporal_ridge.py:102` (`Ridge(alpha=...)` no random_state) is
+#     truly seed-independent. If ANY two Ridge records of same
+#     (model, return_type) cell produce DIFFERENT predicted_returns.npy
+#     SHA, that's a SHIP-BLOCKER for Phase A.3 REDESIGN (sklearn
+#     determinism claim refuted) → ABORT immediately.
+#
+# =============================================================================
+# DECISION GATE (committed BEFORE running)
+# =============================================================================
+#
+#   GO (F7 REPLICATED AS ALPHA):
+#     All three of H1 conjunctive (a) + (b) + (c) at the deep_itm_1.4bps cell
+#     AND H4 (mean across 8 thresholds) > -0.5%
+#     AND H5 satisfied (Ridge bit-exact across seeds within each cell)
+#
+#   REFUTE (F7 WAS NOISE — high-value finding):
+#     Any one of H1 (a) FAILS (mean OptRet ≤ 0% or ≤ +1%)
+#     OR H1 (b) FAILS (pooled CI crosses zero or upper bound < +0.5%)
+#     OR H1 (c) FAILS (drop-top-5 < -0.5%)
+#     Closes the peak_return-as-alpha research direction.
+#     Unblocks R-16b (triple-barrier @ θ=breakeven) with cleaner priors.
+#
+#   INDETERMINATE (low power — trigger R-16c-extended):
+#     Mean OptRet in (0%, +1%) range with pooled CI crossing zero
+#     AND drop-top-5 in (-0.5%, 0%) range
+#     → Plan R-16c-extended: increase N seeds to 20, OR shift to
+#       R-16b prerequisite work (label-redesign cycle).
+#
+#   ABORT (architectural ship-blocker):
+#     H5 fails (Ridge non-deterministic across seeds within cell)
+#     → Halt + adversarial-debug Phase A.3 REDESIGN invariant + revise.
+#
+# =============================================================================
+# COMPUTE-COST ESTIMATE (per X1 ground-truth from R-16a ledger durations)
+# =============================================================================
+#
+#   Per-arm wall-clock (verified empirical R-16a):
+#     Ridge × Point:  ~10 sec  (fit + predict + signal_export + backtest)
+#     Ridge × Peak:   ~7 sec
+#     TLOB × Point:   ~230 sec (4 min)
+#     TLOB × Peak:    ~229 sec
+#
+#   R-16c total (40 arms × ~2-min average due to dominant TLOB serialization):
+#     Pessimistic serial: 4 arms × 10 seeds × ~120 sec = ~80 min
+#     With --gpus 1 + sklearn parallel: ~50-60 min realistic
+#
+# =============================================================================
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/cycle7_r16c_multi_seed_r16a.yaml
+#   hft-ops sweep run     experiments/sweeps/cycle7_r16c_multi_seed_r16a.yaml --gpus 1
+#   hft-ops sweep results experiments/sweeps/cycle7_r16c_multi_seed_r16a.yaml
+#
+#   ANALYSIS: `hft-ops sweep compare` is NOT applicable (per X2 audit
+#   2026-05-12: _STATISTIC_FN_REGISTRY is val_ic-only; F7 finding is OptRet-
+#   level; unpaired-labels rejects cross-return_type comparison).
+#
+#   Manual analysis pipeline `scripts/analyze_r16c.py` is a FOLLOW-UP
+#   DELIVERABLE authored after sweep completion (cannot be operationally
+#   tested before sweep produces 40 ledger records). The pre-registered
+#   analysis logic (locked BEFORE sweep run):
+#     1. Load 40 training records + 40 backtest records from ledger
+#     2. For Ridge × Peak (the F7 cell at deep_itm_1.4bps):
+#        - Verify H5 invariant: all 10 Ridge × Peak predicted_returns.npy
+#          files MUST have identical SHA-256 (Phase A.3 REDESIGN lock)
+#        - Pooled per-trade bootstrap CI on ~702 trades (use ANY 1 of 10
+#          Ridge×Peak records since H5 implies identity; use
+#          hft_metrics.bootstrap.block_bootstrap_ci v0.1.9 4-tuple)
+#        - Compute per-arm drop-top-5 OptRet
+#     3. For TLOB × Peak (genuine seed variance):
+#        - 10 distinct predicted_returns.npy → 10 per-seed OptRet values
+#        - Pooled per-trade bootstrap CI across concatenated 10-seed trades
+#          (~7,000 trades; well-powered)
+#        - Per-seed drop-top-5 → mean across 10 seeds
+#     4. H4 negative control: mean OptRet across 8 thresholds per arm
+#     5. Apply three-conjunctive H1 (mean > +1% AND CI > 0 AND drop-top-5 > 0)
+#     6. Decision gate: GO / REFUTE / INDETERMINATE / ABORT per L108-132
+#
+#   Pending follow-up sub-cycle authorization to author analysis script
+#   + dispatch its own mid-impl + pre-commit adversarial gates.
+# =============================================================================
+
+experiment:
+  name: "cycle7_r16c_multi_seed_r16a"
+  description: >
+    R-16c: 3-axis multi-seed power analysis on R-16a's Ridge × Peak +2.84%
+    finding (model_type × return_type × seed = 2 × 2 × 10 = 40 records).
+    Authorized 2026-05-12 by user post Cluster Z Extension v0.1.9 ship.
+    Tests F7 falsification via three-conjunctive H1 + drop-top-5 sensitivity
+    + 8-threshold mean negative control. Ridge arms are EXPECTED bit-exact
+    identical across seeds (Phase A.3 REDESIGN invariant); TLOB arms provide
+    genuine seed-variance characterization.
+  hypothesis: >
+    H1 PRIMARY (F7 falsification — three-conjunctive at deep_itm_1.4bps):
+    mean OptRet > +1% AND pooled CI > 0 AND drop-top-5 > 0%.
+    H2 BASELINE: TemporalRidge captures ≥80% TLOB IC within return_type
+    (R-16a empirical refutes for peak_return arm; R-16c verifies persistence
+    across seeds). H3 COST: median |pred| > 1.4 bps. H4 NEGATIVE CONTROL:
+    mean OptRet across 8 thresholds (cherry-pick avoidance). H5 INVARIANT:
+    Ridge × N-seed produces bit-exact identical results (Phase A.3 lock).
+    REFUTE if any H1 conjunctive fails. INDETERMINATE triggers R-16c-extended
+    (N=20). ABORT if H5 fails (architectural ship-blocker).
+  contract_version: "3.0"
+  tags:
+    - nvda
+    - cycle7
+    - r16c
+    - regression
+    - multi_seed
+    - r16a_extended
+    - v3p0
+    - sweep
+    - phase_y_composability
+    - h60
+    - f7_falsification
+    - cluster_z_validation
+
+pipeline_root: ".."
+
+stages:
+  # EXTRACTION DISABLED per R-16a pattern: v3p0 corpus already on disk;
+  # avoids #PY-84 orchestrator partial_failure-as-fatal hazard.
+  # See R-16a manifest lines 200-219 for full rationale.
+  extraction:
+    enabled: false
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s_v3p0"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    # Match R-16a's manifest-level H60 wiring. Note: R-16a's comment cites
+    # "#PY-127 architectural fix candidate" but doc-alignment audit 2026-05-12
+    # found backlog drift — #PY-127 cosmetic counter fix is CLOSED (Phase R-17
+    # v2 F6 commit c539082); the actual horizon_value→horizon_idx auto-derive
+    # candidate is referenced in #PY-128 family. Manifest comment kept for
+    # R-16a-precedent traceability; defer reconciliation to a separate doc
+    # hygiene cycle.
+    horizon_value: 60
+    trainer_config:
+      name: cycle7_r16c_base
+      description: "R-16c base; axes override model_type + return_type + train.seed. H60 pinned in base."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s_v3p0"
+        feature_count: 98
+        feature_set: nvda_short_term_98_src98_v1
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 1
+        labels:
+          source: forward_prices
+          return_type: point_return    # <- overridden by axis `return_type`
+          task: regression
+          horizons: [10, 60, 300]
+          primary_horizon_idx: 1       # H60 = index 1 of [10, 60, 300]
+          sample_weights: none
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob                # <- overridden by axis `model_type`
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        # TLOB-specific (inherits R-16a base; ignored when model_type=temporal_ridge).
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42                       # <- overridden by axis `train.seed`
+        mixed_precision: false
+
+      output_dir: outputs/experiments/cycle7_r16c_base
+      log_level: INFO
+      tags: [cycle7, r16c, nvda, regression, multi_seed, v3p0, sweep]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_signals.py"
+    # α-1.1 / #PY-81 fix: explicit checkpoint required since α-2 introduced
+    # fail-loud validate-time gate.
+    checkpoint: "${stages.training.output_dir}/checkpoints/final.pt"
+    split: test
+    output_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_regression_backtest.py"
+    signals_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+    # Per H4 negative control: backtester sweeps all 8 cost thresholds
+    # internally; analysis script extracts deep_itm_1.4bps cell + computes
+    # mean across all 8. NOTE: --primary-horizon-idx 1 IS passed for Phase II
+    # validation. Per X3 audit 2026-05-12 + #PY-176 PARTIAL verdict:
+    #   - REFUTED for R-16a's actual 1-D execution path (trainer pre-slices
+    #     to 1-D before export; backtester strategy hardcoded primary_horizon_
+    #     idx=0 is dormant no-op when predicted_returns.npy is 1-D).
+    #   - CONFIRMED-LATENT for future paths emitting 2-D predicted_returns.npy
+    #     (script-level arg-flow gap at run_regression_backtest.py:261 + :194
+    #     means future 2-D writers would silently backtest H10).
+    # R-16a's predicted_returns.npy shape verified `(8085,)` 1-D + std≈96 bps
+    # (peak×H60 magnitude) — confirms H60 was used. R-16c inherits this
+    # invariant since same trainer path produces 1-D predictions for H60.
+    extra_args:
+      - "--exchange"
+      - "XNAS"
+      - "--primary-horizon-idx"
+      - "1"          # H60 (matches primary_horizon_idx above; dormant per #PY-176)
+      - "--deep-itm" # cost gate: 1.4 bps breakeven via OpraCalibratedCosts
+
+# =============================================================================
+# Sweep definition — 3 axes, 40 grid points, no cross-axis key conflicts.
+#
+# Axis keys are disjoint per validate_sweep cross-axis conflict check
+# (sweep.py:179-199):
+#   model_type  owns: model.model_type + (sklearn params on temporal_ridge)
+#   return_type owns: data.labels.return_type
+#   train_seed  owns: train.seed
+#
+# Per X1 finding 1.3 (CRITICAL): seed axis MUST be spelled `train.seed:` not
+# bare `seed:`. `seed` is NOT in `_MANIFEST_LEVEL_TRAINING_FIELDS` at
+# `sweep.py:89-95`; bare `seed:` would fall through to synthetic-test-key
+# path. Match `seed_stability.yaml:166-180` precedent.
+#
+# Per X1 finding 8: label regex `[a-zA-Z0-9_-]+` (sweep.py:58). Labels
+# `seed_42`, `seed_43`, ..., `seed_51` are ASCII compliant.
+# =============================================================================
+
+sweep:
+  name: "cycle7_r16c_multi_seed_r16a"
+  strategy: "grid"
+  axes:
+    - name: "model_type"
+      values:
+        - label: "temporal_ridge"
+          overrides:
+            model.model_type: temporal_ridge
+            # γ-1 LITE / #PY-86 fix (2026-05-09) inherited from R-16a:
+            # sklearn-only params live ONLY here. Same alpha + features as
+            # R-16a for cross-cycle replication + H5 invariant test.
+            model.params:
+              alpha: 1.0
+              features:
+                signal_indices: [85, 84, 86, 56, 45]
+                top_k_signals: 3
+                rolling_windows: [3, 5, 10]
+                include_volatility: true
+                include_momentum: true
+        - label: "tlob"
+          overrides:
+            model.model_type: tlob
+            # No `model.params` override — TLOB relies on
+            # `_build_params_from_legacy` to reconstruct from `tlob_*`.
+
+    - name: "return_type"
+      values:
+        - label: "point_return"
+          overrides:
+            data.labels.return_type: point_return
+        - label: "peak_return"
+          overrides:
+            data.labels.return_type: peak_return
+
+    - name: "train_seed"
+      values:
+        - label: "seed_42"
+          overrides:
+            train.seed: 42
+        - label: "seed_43"
+          overrides:
+            train.seed: 43
+        - label: "seed_44"
+          overrides:
+            train.seed: 44
+        - label: "seed_45"
+          overrides:
+            train.seed: 45
+        - label: "seed_46"
+          overrides:
+            train.seed: 46
+        - label: "seed_47"
+          overrides:
+            train.seed: 47
+        - label: "seed_48"
+          overrides:
+            train.seed: 48
+        - label: "seed_49"
+          overrides:
+            train.seed: 49
+        - label: "seed_50"
+          overrides:
+            train.seed: 50
+        - label: "seed_51"
+          overrides:
+            train.seed: 51
