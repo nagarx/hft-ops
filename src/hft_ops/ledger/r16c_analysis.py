@@ -464,7 +464,7 @@ def _resolve_backtest_pnls_dir(
     if backtester_dir is not None:
         candidates.append(Path(backtester_dir) / "outputs" / "backtests")
     candidates.extend([
-        paths.root / "lob-backtester" / "outputs" / "backtests",
+        paths.pipeline_root / "lob-backtester" / "outputs" / "backtests",
         sig_dir.parent.parent.parent.parent.parent / "outputs" / "backtests",
         Path("outputs") / "backtests",
     ])
@@ -582,6 +582,8 @@ def analyze_r16c_sweep(
     n_bootstrap: int = N_BOOTSTRAP_DEFAULT,
     bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED,
     initial_capital: float = DEFAULT_INITIAL_CAPITAL,
+    allow_partial: bool = False,
+    min_grid_points: int = EXPECTED_GRID_POINTS,
 ) -> Tuple[Dict[Tuple[str, str, str], R16cCellResult], DecisionGateOutcome]:
     """Analyze an R-16c sweep + render verdict.
 
@@ -614,12 +616,23 @@ def analyze_r16c_sweep(
         r for r in records
         if r.get("record_type") not in ("sweep_aggregate", "sweep_failure")
     ]
-    if len(grid_records) < EXPECTED_GRID_POINTS:
+    effective_threshold = min_grid_points if allow_partial else EXPECTED_GRID_POINTS
+    if len(grid_records) < effective_threshold:
         raise R16cIncompleteSweepError(
-            f"analyze_r16c_sweep: expected {EXPECTED_GRID_POINTS} grid records; "
+            f"analyze_r16c_sweep: expected {effective_threshold} grid records; "
             f"got {len(grid_records)} for sweep_id={sweep_id}. Re-run failed "
             f"arms or accept PARTIAL banner via separate explicit invocation. "
             f"Per Agent H E7 §8 fail-loud."
+        )
+    if allow_partial and len(grid_records) < EXPECTED_GRID_POINTS:
+        import warnings as _warnings
+        _warnings.warn(
+            f"PARTIAL R-16c analysis: {len(grid_records)}/{EXPECTED_GRID_POINTS} "
+            f"grid records (allow_partial=True). Reduced sample-per-cell may "
+            f"widen bootstrap CI. Document rationale "
+            f"(typical cause: cross-sweep dedup against earlier sweep records).",
+            UserWarning,
+            stacklevel=2,
         )
 
     # Group records into cells {(model_type, return_type): [records...]}

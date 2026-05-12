@@ -87,6 +87,19 @@ def main() -> int:
         "--json", dest="json_output", action="store_true",
         help="Emit JSON instead of human-readable table.",
     )
+    parser.add_argument(
+        "--allow-partial", action="store_true",
+        help="Allow analysis with fewer than 40 grid records (e.g., when "
+             "seed_42 was deduped against an earlier sweep). Caller must "
+             "document the rationale in the EXPERIMENT_INDEX/BACKTEST_INDEX "
+             "entry per hft-rules §13. Per-cell bootstrap CI may widen with "
+             "reduced sample-per-cell.",
+    )
+    parser.add_argument(
+        "--min-grid-points", type=int, default=36,
+        help="Minimum grid record count when --allow-partial. Default 36 "
+             "(36/40 = 10%% missing — typical cross-sweep dedup case).",
+    )
     args = parser.parse_args()
 
     from hft_ops.ledger.ledger import ExperimentLedger
@@ -105,7 +118,7 @@ def main() -> int:
     else:
         paths = PipelinePaths.auto_detect()
 
-    ledger_root = args.ledger_root or (paths.root / "hft-ops" / "ledger")
+    ledger_root = args.ledger_root or (paths.pipeline_root / "hft-ops" / "ledger")
     ledger = ExperimentLedger(ledger_root)
 
     try:
@@ -116,6 +129,8 @@ def main() -> int:
             n_bootstrap=args.n_bootstrap,
             bootstrap_seed=args.seed,
             initial_capital=args.initial_capital,
+            allow_partial=args.allow_partial,
+            min_grid_points=args.min_grid_points,
         )
     except R16cIncompleteSweepError as e:
         print(f"ERROR (exit 3): {e}", file=sys.stderr)

@@ -1,0 +1,32 @@
+/Users/knight/code_local/HFT-pipeline-v2/hft-ops/scripts/analyze_r16c.py:125: UserWarning: PARTIAL R-16c analysis: 36/40 grid records (allow_partial=True). Reduced sample-per-cell may widen bootstrap CI. Document rationale (typical cause: cross-sweep dedup against earlier sweep records).
+  cell_results, outcome = analyze_r16c_sweep(
+==============================================================================
+  R-16c Multi-Seed Power Analysis — VERDICT: REFUTE
+==============================================================================
+
+Exit code: 1
+
+Gate outcomes:
+  H1a (mean > +1.0%):       FAIL  (+0.00%)
+  H1b (pooled CI > 0):              FAIL  CI=(-0.00%, +0.01%)
+  H1c (drop-top-5 > 0):             PASS  (+0.00%)
+  H4 (mean across 8 thresh >-0.5%): PASS  (+0.00%)
+  H5 (Ridge bit-exact invariant):   PASS
+
+Reasons:
+  - H1a FAIL: mean OptRet=0.0000 ≤ +0.0100
+  - H1b FAIL: CI=(-0.0000, 0.0001); lower ≤ 0
+  - H1c PASS: drop-top-5 mean=0.0000 > 0
+  - H4 PASS: mean across 8 thresholds=0.0000 > -0.0050
+
+Per-cell summary (Ridge × Peak focus — F7 target):
+  threshold               n_seeds  n_trades      mean                     CI     drop5
+  deep_itm_1.4bps               1       702    +0.00%          (-0.00,+0.01)    +0.00%
+  itm_2bps                      1       685    -0.00%          (-0.01,+0.00)    -0.00%
+  itm_3bps                      1       648    -0.00%          (-0.01,+0.00)    -0.00%
+  atm_5bps                      1       500    -0.01%          (-0.01,+0.00)    -0.00%
+  high_conv_8bps                1       303    +0.00%          (-0.01,+0.01)    +0.01%
+  very_high_10bps               1       225    +0.00%          (-0.01,+0.01)    +0.01%
+  ultra_conv_15bps              1       125    +0.01%          (-0.01,+0.03)    +0.01%
+  max_conv_20bps                1        80    +0.01%          (-0.02,+0.03)    +0.02%
+==============================================================================
