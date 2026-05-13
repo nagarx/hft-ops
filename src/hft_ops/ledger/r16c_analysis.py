@@ -281,7 +281,14 @@ def _pooled_block_bootstrap_mean_ci(
     estimate = float(np.mean(arr))
     rng = np.random.RandomState(seed)
     alpha = 1.0 - ci
-    n_blocks = max(1, n // block_length)
+    # 2026-05-13 #PY-186 closure (sister site of hft-metrics/bootstrap.py:213):
+    # ceiling division matches pairwise.py:297 + hft-metrics v0.1.10. Old floor
+    # `n // block_length` produced indices SHORT of n when `n % block_length != 0`,
+    # narrowing the bootstrap distribution → false-positive significance. Ceiling
+    # over-produces + `[:n]` trim restores moving-block-bootstrap semantic.
+    # R-16c (702 trades, block=9, remainder 0) → ceil == floor → REFUTE verdict
+    # unchanged. R-16d may have different n; ceiling future-proofs.
+    n_blocks = max(1, math.ceil(n / block_length))
 
     boot_stats = np.empty(n_bootstraps, dtype=np.float64)
     n_nonfinite_replaced = 0

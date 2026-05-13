@@ -2807,19 +2807,51 @@ def _update_pinned(
     add: Optional[str] = None,
     remove: Optional[str] = None,
 ) -> None:
-    """Update ``_PINNED.json`` atomically via hft_contracts.atomic_io."""
+    """Update ``_PINNED.json`` atomically via hft_contracts.atomic_io.
+
+    #PY-187 closure (2026-05-13) — fail-loud + backup-rotate on corrupt
+    pin file per hft-rules §8 "never silently drop, clamp, or fix data".
+    Pre-fix: a corrupt `_PINNED.json` was silently swallowed
+    (``except (OSError, json.JSONDecodeError): pass``) → ``pinned``
+    defaulted to ``set()`` → the unconditional ``atomic_write_json`` that
+    followed OVERWROTE the corrupt file with an empty set, silently
+    wiping every operator-pinned cache key. The next LRU GC then reclaimed
+    them. No log, no error, no recovery path.
+
+    Post-fix: on parse failure, rotate the corrupt file to
+    ``_PINNED.json.corrupt.<UTC-timestamp>`` and raise ``ClickException``.
+    Operator workflow: inspect the rotated file, decide to delete (to
+    start fresh) or manually re-pin needed keys, then re-run the
+    pin/unpin command against the now-clean state.
+    """
     import json
 
     from hft_contracts.atomic_io import atomic_write_json
 
     cache_root.mkdir(parents=True, exist_ok=True)
     pin_file = cache_root / "_PINNED.json"
-    pinned = set()
+    pinned: set = set()
     if pin_file.exists():
         try:
             pinned = set(json.loads(pin_file.read_text()).get("pinned_keys", []))
-        except (OSError, json.JSONDecodeError):
-            pass
+        except (OSError, json.JSONDecodeError) as exc:
+            # Backup-rotate then fail-loud — never silently wipe pinned keys.
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            backup_path = pin_file.with_name(f"_PINNED.json.corrupt.{ts}")
+            try:
+                pin_file.rename(backup_path)
+                rotation_note = f"Corrupt file rotated to {backup_path.name}."
+            except OSError as rename_exc:
+                rotation_note = (
+                    f"(Could not rotate corrupt file: {type(rename_exc).__name__}: "
+                    f"{rename_exc}; original left in place at {pin_file.name})"
+                )
+            raise click.ClickException(
+                f"{pin_file.name} is corrupt ({type(exc).__name__}: {exc}). "
+                f"{rotation_note} Inspect the rotated/corrupt file and either "
+                f"delete it (to start fresh) or manually merge before re-running "
+                f"the pin/unpin command."
+            ) from exc
     if add:
         pinned.add(add)
     if remove:
