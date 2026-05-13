@@ -1,0 +1,410 @@
+# =============================================================================
+# R-16d: Horizon-axis sweep on v3p0 (model × label × horizon, 12 cells)
+# =============================================================================
+#
+# Cycle 8 / R-16d: 3-axis horizon-decay validation. Authorized by user
+# 2026-05-13 (post Backlog Hygiene Bundle ship) following 7-agent prep round
+# + 2 pre-impl design agents.
+#
+# Grid (3 axes × Cartesian product = 12 grid points):
+#   model_type   ∈ {temporal_ridge, tlob}                 (2)  — baseline gate axis (H2)
+#   return_type  ∈ {point_return, smoothed_return}        (2)  — label-execution axis (E8)
+#   horizon      ∈ {H10, H60, H300}                       (3)  — horizon-decay axis (H1)
+#
+#   2 × 2 × 3 = 12 grid points.
+#
+# **WHY {point_return, smoothed_return} (NOT peak_return)?**
+#   - R-16c REFUTE 2026-05-13: TLOB × peak_return COUNTER-PREDICTS at H60
+#     (mean=+0.0047% vs +1.0% gate; 11 stat-sig NEGATIVE cells). Peak is
+#     forward-leaking (uses entire [t+1, t+h] window for max-magnitude).
+#   - smoothed_return is CLAUDE.md's HIGH-IC arm (R²=0.464, IC=0.677 at H10).
+#     Testing point_return tests label-execution-mismatch (E8 root cause:
+#     model predicts smoothing residual, NOT point direction).
+#
+# **WHY 3 horizons (including H300)?**
+#   - User-selected preview cited {H10, H60, H300}; H300 included for
+#     completeness despite CLAUDE.md noting H300 not tradeable.
+#   - H300 = 60s × 300 = 18000s = 5 HOURS per Agent D 2026-05-13 math finding
+#     (NOT 5 min). v3p0 corpus exports forward_prices.npy with cols for
+#     [10, 60, 300] horizons. Analyzer will flag low-tradability cells.
+#   - 3 days fail-loud per hft-rules §8: 20250703 / 20251128 / 20251224
+#     (short half-sessions; H300 needs 311 prices, sessions only 209).
+#     v3p0 corpus already emits 230 days (post-fail-loud).
+#
+# **WHY single seed (NOT multi-seed)?**
+#   - R-16d primary question: horizon-decay (H1). NOT seed-variance (R-16c).
+#   - Ridge is RNG-FREE closed-form (Phase A.3 REDESIGN). H5 invariant
+#     verifies bit-exact across cells (sanity check).
+#   - TLOB single-seed limits power on PER-CELL test_ic but adequate for
+#     CROSS-CELL horizon-decay test (which is the primary H1 hypothesis).
+#   - If R-16d INDETERMINATE: trigger R-16d-extended with multi-seed.
+#
+# Architecture pinning (identical to R-16a + R-16c for cross-cycle replication):
+#   - data_dir:     e5_timebased_60s_v3p0 (136,902 sequences / 230 days)
+#   - feature_set:  nvda_short_term_98_src98_v1 (content_hash 122fe5cb...)
+#   - horizons:     [10, 60, 300] (pinned from v3p0 corpus exports)
+#   - data.labels.source: forward_prices (forces LabelFactory recomputation
+#     at trainer load-time per #PY-88 closure — sklearn arms RNG-FREE)
+#   - extraction.enabled: false (v3p0 corpus already on disk per Phase O Cycle 1)
+#
+# =============================================================================
+# PRE-REGISTERED HYPOTHESES (per hft-rules §13 — committed BEFORE running)
+# =============================================================================
+#
+#   H1 PRIMARY (HORIZON DECAY):
+#
+#     For each (model_type × return_type) arm (4 arms total):
+#       test_ic(H10) > test_ic(H60) AND test_ic(H60) > test_ic(H300)
+#     (strict monotonic decay across horizons)
+#
+#     GO: ≥3/4 arms exhibit strict monotonic decay
+#     REFUTE: <2/4 arms exhibit monotonic decay
+#     INDETERMINATE: 2/4 arms exhibit decay
+#
+#     Note: H300 IC may be very small / noisy; ranking H10 > H60 is the
+#     PRIMARY tradeable claim. H60 > H300 is secondary (low-tradability arm).
+#
+#   H2 BASELINE GATE (per hft-rules §13):
+#
+#     For each (return_type × horizon) cell (6 cells):
+#       test_ic(temporal_ridge) ≥ 0.80 × test_ic(tlob)
+#
+#     Replicates CLAUDE.md "TemporalRidge captures 91% of TLOB IC".
+#     Failure within a (label, horizon) cell flags that combination as
+#     non-Ridge-tractable (needs TLOB's transformer for that regime).
+#
+#     PASS-THRESHOLD: ≥4/6 cells satisfy ratio ≥ 0.80.
+#
+#   H3 COST GATE (per hft-rules §13):
+#
+#     For each arm: backtest median |prediction| > 1.4 bps Deep ITM
+#     breakeven via OpraCalibratedCosts.deep_itm(). Auto-applied by
+#     backtester. Per-arm result tagged "cost_clear" or "below_breakeven".
+#
+#     PASS-THRESHOLD: ≥2/4 arms (per horizon) clear breakeven.
+#
+#   H4 NEGATIVE CONTROL (cherry-pick avoidance):
+#
+#     For each arm: mean OptRet across 8 cost thresholds > -0.5%.
+#     Mirrors R-16c convention; same H4_MEAN_FLOOR = -0.005.
+#     PASS-THRESHOLD: ≥2/4 arms clear floor at H10.
+#
+#   H5 ARCHITECTURAL INVARIANT (Phase A.3 REDESIGN lock):
+#
+#     Ridge × (label × horizon) cells produce predicted_returns.npy with
+#     IDENTICAL SHA-256 across hypothetical seed re-runs (sklearn Ridge is
+#     RNG-FREE per `temporal_ridge.py:100-104`). Single-seed R-16d makes
+#     this trivial WITHIN a cell; CROSS-CELL Ridge bit-exactness across
+#     horizon dimension confirms the RNG-FREE invariant survives axis
+#     activation. Failure = ABORT (Phase A.3 REDESIGN refuted).
+#
+#   H6 LABEL-EXECUTION ALIGNMENT (E8 closure test):
+#
+#     For point_return vs smoothed_return arms at SAME (model, horizon):
+#       point_return_ic / smoothed_return_ic ratio
+#     If ratio << 1 (e.g., < 0.1): confirms E8 finding that smoothed
+#     labels are NOT execution-aligned (CLAUDE.md banner: "DA=48.3% on
+#     point returns; model captures smoothing residual R²=45% NOT point
+#     R²=0.02%").
+#     INFORMATIONAL — does not gate verdict.
+#
+# =============================================================================
+# DECISION GATE (committed BEFORE running)
+# =============================================================================
+#
+#   GO (Horizon-decay validated on v3p0):
+#     H1 ≥3/4 arms monotonic decay
+#     AND H2 ≥4/6 cells satisfy Ridge ≥ 0.80 × TLOB ratio
+#     AND H4 ≥2/4 arms clear -0.5% floor at H10
+#     AND H5 satisfied (Ridge bit-exact across horizon cells)
+#
+#   REFUTE (No horizon-decay signal):
+#     H1 <2/4 arms exhibit decay
+#     Closes horizon-decay-as-alpha direction for v3p0.
+#     Unblocks alternative research (e.g., feature-axis sweep, ablation).
+#
+#   INDETERMINATE (Power-limited):
+#     2/4 arms exhibit decay with borderline cells
+#     → Plan R-16d-extended: 4 seeds × 12 cells = 48 records for power.
+#
+#   ABORT (Architectural ship-blocker):
+#     H5 fails (Ridge non-deterministic across cells within (label, horizon))
+#     → Halt + adversarial-debug Phase A.3 REDESIGN + revise.
+#
+# =============================================================================
+# COMPUTE-COST ESTIMATE (per empirical R-16a/R-16c ledger durations)
+# =============================================================================
+#
+#   Per-arm wall-clock (verified empirical):
+#     Ridge × any horizon:   ~10 sec   (fit + predict + export + backtest)
+#     TLOB × any horizon:    ~230 sec  (4 min — MPS training dominates)
+#
+#   R-16d total (12 cells = 6 Ridge + 6 TLOB):
+#     Pessimistic serial: 6 × 10s + 6 × 230s ≈ 24 min
+#     Backtest: 12 × 120s ≈ 24 min (8-threshold sweep per arm)
+#     Total: ~50 min wall-clock
+#
+#   Well within ~80 min compute budget per Wave 2E preview.
+#
+# =============================================================================
+# DORMANT-INFRA ACTIVATION (NEW science enabled by recent infra)
+# =============================================================================
+#
+#   #PY-186 v0.1.10 ceiling fix (shipped 2026-05-13): variable trade counts
+#     per (horizon, threshold) cell will produce DIFFERENT n_blocks; R-16d
+#     is the first sweep to exercise the fixed ceiling math at scale.
+#
+#   #PY-189 LATENT auto-discover (shipped 2026-05-13, commit ec54293): Both
+#     Ridge + TLOB pre-slice to 1-D at exporter.py:421-456 (per Agent B
+#     SB-2 ground-truth verification). So #PY-189 is NOT activated by
+#     R-16d (would need HMHP-R arm for 2-D activation). Backtester relies
+#     on auto-discover from signal_metadata.primary_horizon_idx for the
+#     CONSISTENCY check — NOT for the actual horizon slicing.
+#
+#   Phase Y composer (INDEX_SCHEMA_VERSION 1.6.0): R-16c verified 6 distinct
+#     compat_fp from 2 return_types × 3 horizons (cycle5 baseline). R-16d
+#     should produce ≥6 distinct compat_fp from (return_type × horizon)
+#     combinations (12 cells / 2 models = 6 unique data-axis combinations).
+#
+# =============================================================================
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/cycle8_r16d_horizon_axis.yaml
+#   hft-ops sweep run     experiments/sweeps/cycle8_r16d_horizon_axis.yaml --gpus 1
+#   hft-ops sweep results experiments/sweeps/cycle8_r16d_horizon_axis.yaml
+#
+#   ANALYSIS: `scripts/analyze_r16d.py` is the dedicated analyzer wrapper
+#   (authored alongside this manifest per Phase B.3/B.4). Library:
+#   `hft_ops.ledger.r16d_analysis.analyze_r16d_sweep`.
+#
+# =============================================================================
+
+experiment:
+  name: "cycle8_r16d_horizon_axis"
+  description: >
+    R-16d: 3-axis horizon-decay sweep on v3p0 (model_type × return_type ×
+    horizon = 2 × 2 × 3 = 12 records). Authorized 2026-05-13 post Backlog
+    Hygiene Bundle ship. Tests horizon-decay hypothesis (H1 strict monotonic
+    test_ic(H10) > test_ic(H60) > test_ic(H300)) + baseline gate (H2) +
+    cost gate (H3) + negative control (H4) + Ridge bit-exact invariant (H5)
+    + label-execution alignment diagnostic (H6 E8 closure).
+  hypothesis: >
+    H1 PRIMARY (HORIZON DECAY): For each (model × label) arm, test_ic
+    monotonically decays H10 > H60 > H300. GO if ≥3/4 arms decay strictly.
+    REFUTE closes horizon-decay-as-alpha for v3p0.
+    H2 BASELINE: temporal_ridge captures ≥80% TLOB IC within (label, horizon).
+    Pass ≥4/6 cells.
+    H3 COST: backtest median |prediction| > 1.4 bps Deep ITM. Auto-applied.
+    H4 NEGATIVE CONTROL: mean OptRet across 8 thresholds > -0.5% at ≥2/4
+    arms at H10.
+    H5 ARCHITECTURAL INVARIANT: Ridge bit-exact across cells (Phase A.3
+    REDESIGN lock).
+    H6 LABEL-EXECUTION DIAGNOSTIC: point/smoothed IC ratio per (model,
+    horizon) cell tests CLAUDE.md E8 finding (informational).
+    Single-seed (seed=42); R-16d-extended if INDETERMINATE.
+  contract_version: "3.0"
+  tags:
+    - nvda
+    - cycle8
+    - r16d
+    - regression
+    - horizon_axis
+    - v3p0
+    - sweep
+    - phase_y_composability
+    - horizon_decay
+    - e8_closure
+    - hardening_bundle_validation
+
+pipeline_root: ".."
+
+stages:
+  # EXTRACTION DISABLED per R-16a/R-16c pattern: v3p0 corpus already on disk;
+  # avoids #PY-84 orchestrator partial_failure-as-fatal hazard.
+  # See R-16a manifest L200-219 for full rationale.
+  extraction:
+    enabled: false
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s_v3p0"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    # NOTE: horizon_value NOT set at manifest level — overridden per-cell by
+    # horizon axis. Base trainer_config pins H10 (idx 0) as default; axis
+    # overrides shift horizon_idx + primary_horizon_idx + horizon_value
+    # together (3 coupled fields per SB-5 ground-truth from sweep.py:89-95).
+    trainer_config:
+      name: cycle8_r16d_base
+      description: "R-16d base; 3 axes override model_type + return_type + horizon (H10 default). Single seed=42."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s_v3p0"
+        feature_count: 98
+        feature_set: nvda_short_term_98_src98_v1
+        labeling_strategy: regression
+        num_classes: 3
+        # Pin H10 default (overridden per-cell by horizon axis below at L401-419
+        # — sweep dispatches data.horizon_idx + data.labels.primary_horizon_idx
+        # + manifest-level horizon_value triplet per cell).
+        horizon_idx: 0
+        labels:
+          source: forward_prices
+          return_type: point_return    # <- overridden by axis `return_type`
+          task: regression
+          horizons: [10, 60, 300]
+          primary_horizon_idx: 0       # <- overridden by axis `horizon` (L401-419)
+          sample_weights: none
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob                # <- overridden by axis `model_type`
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        # TLOB-specific (ignored when model_type=temporal_ridge per dispatch).
+        # Inherits #PY-86 fix from cycle5_multi_arm: sklearn `params:` block
+        # lives ONLY on temporal_ridge axis value (see sweep.axes below).
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42                       # Single seed; R-16d-extended adds variance
+        mixed_precision: false
+
+      output_dir: outputs/experiments/cycle8_r16d_base
+      log_level: INFO
+      tags: [cycle8, r16d, nvda, regression, horizon_axis, v3p0, sweep]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_signals.py"
+    # α-1.1 / #PY-81 fix: explicit checkpoint required since α-2 introduced
+    # fail-loud validate-time gate. Inherited from R-16a/R-16c.
+    checkpoint: "${stages.training.output_dir}/checkpoints/final.pt"
+    split: test
+    output_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_regression_backtest.py"
+    signals_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+    # Phase B.1 auto-discover (commit ec54293 2026-05-13): backtester
+    # auto-discovers `effective_primary_horizon_idx` from signal_metadata
+    # when --primary-horizon-idx flag is OMITTED. R-16d horizon axis varies
+    # primary_horizon_idx per cell (0, 1, 2 for H10, H60, H300), so we MUST
+    # omit the flag and rely on auto-discover. Each cell's signal_metadata
+    # carries data.labels.primary_horizon_idx (per-cell override) which
+    # backtester reads at L222-254. Per #PY-189 LATENT note: Ridge + TLOB
+    # both pre-slice to 1-D before export, so #PY-189 propagation gap is
+    # dormant in R-16d (would activate only with 2-D HMHP-R export).
+    extra_args:
+      - "--exchange"
+      - "XNAS"
+      - "--deep-itm"  # cost gate: 1.4 bps breakeven via OpraCalibratedCosts
+
+# =============================================================================
+# Sweep definition — 3 axes, 12 grid points, no cross-axis key conflicts.
+#
+# Axis keys are disjoint per validate_sweep cross-axis conflict check
+# (sweep.py:179-199):
+#   model_type  owns: model.model_type + (sklearn params on temporal_ridge)
+#   return_type owns: data.labels.return_type
+#   horizon     owns: data.horizon_idx + data.labels.primary_horizon_idx
+#                     + horizon_value (3 coupled overrides per SB-5)
+#
+# Per X1 finding 1.3 from R-16c (CRITICAL): manifest-level fields like
+# `horizon_value:` MUST be addressed bare; `data.horizon_idx` (dotted) maps
+# to trainer_config.data.horizon_idx. Both forms must coexist for the
+# horizon axis to fully shift cell semantics.
+# =============================================================================
+
+sweep:
+  name: "cycle8_r16d_horizon_axis"
+  strategy: "grid"
+  axes:
+    - name: "model_type"
+      values:
+        - label: "temporal_ridge"
+          overrides:
+            model.model_type: temporal_ridge
+            # γ-1 LITE / #PY-86 fix: sklearn-only params live ONLY here.
+            # Same alpha + features as R-16a/R-16c for cross-cycle replication.
+            model.params:
+              alpha: 1.0
+              features:
+                signal_indices: [85, 84, 86, 56, 45]
+                top_k_signals: 3
+                rolling_windows: [3, 5, 10]
+                include_volatility: true
+                include_momentum: true
+        - label: "tlob"
+          overrides:
+            model.model_type: tlob
+            # No `model.params` override — TLOB relies on
+            # `_build_params_from_legacy` to reconstruct from `tlob_*` flat fields.
+
+    - name: "return_type"
+      values:
+        - label: "point_return"
+          overrides:
+            data.labels.return_type: point_return
+        - label: "smoothed_return"
+          overrides:
+            data.labels.return_type: smoothed_return
+
+    - name: "horizon"
+      values:
+        - label: "H10"
+          overrides:
+            data.horizon_idx: 0
+            data.labels.primary_horizon_idx: 0
+            horizon_value: 10
+        - label: "H60"
+          overrides:
+            data.horizon_idx: 1
+            data.labels.primary_horizon_idx: 1
+            horizon_value: 60
+        - label: "H300"
+          overrides:
+            data.horizon_idx: 2
+            data.labels.primary_horizon_idx: 2
+            horizon_value: 300

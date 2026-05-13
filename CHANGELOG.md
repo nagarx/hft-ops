@@ -12,6 +12,63 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ## [0.3.0-dev] — in progress
 
+### R-16d Horizon-Axis Sweep (2026-05-13) — Cycle 8 / Phase B authoring
+
+**Added — R-16d sweep authoring (12 grid points, horizon-decay validation)**
+
+- `experiments/sweeps/cycle8_r16d_horizon_axis.yaml` — NEW 3-axis sweep
+  manifest: 2 models × 2 labels × 3 horizons = 12 grid points × 1 seed.
+  Cell space: `{temporal_ridge, tlob} × {point_return, smoothed_return} ×
+  {H10, H60, H300}`. Drops `peak_return` per R-16c REFUTE 2026-05-13;
+  drops multi-seed since horizon-decay is primary question (Ridge RNG-FREE).
+  Pre-registered 6-gate decision matrix: H1 PRIMARY (horizon decay,
+  ≥3/4 arms monotonic) + H2 BASELINE (Ridge ≥ 0.80 × TLOB IC, ≥4/6 cells)
+  + H3 COST (auto via OpraCalibratedCosts) + H4 NEGATIVE CONTROL (mean
+  OptRet across 8 thresholds > -0.5%, ≥2/4 arms at H10) + H5 ARCHITECTURAL
+  (NEW R-16d-specific — Ridge × horizon must produce DISTINCT
+  `predicted_returns.npy` SHAs; tests horizon-axis-activation invariant;
+  FAIL = ABORT, horizon axis cosmetic, same bug class as closed #PY-87/#PY-88)
+  + H6 LABEL-EXECUTION DIAGNOSTIC (E8 closure test, informational).
+  Backtester OMITS `--primary-horizon-idx` per Phase B.1 auto-discover
+  (commit `ec54293`); each cell's signal_metadata carries
+  `data.labels.primary_horizon_idx` (per-cell override at L401-419).
+  Compute estimate: ~50 min wall-clock (6 Ridge × 10s + 6 TLOB × 230s
+  + 12 × ~120s backtest).
+- `src/hft_ops/ledger/r16d_analysis.py` — NEW ~700 LOC analyzer library.
+  FROM-IMPORT strategy reusing 11 R-16c shared symbols
+  (`CANONICAL_THRESHOLD_LABELS`, `_pooled_block_bootstrap_mean_ci`,
+  `_drop_top_k_by_abs_per_seed`, `_resolve_backtest_pnls_dir`,
+  `_load_per_trade_pnls`, plus 4 constants + 3 exception classes). NEW
+  for R-16d: `EXPECTED_GRID_POINTS=12`, `EXPECTED_CELLS` 3-tuple keyed by
+  `(model_type, return_type, horizon_value)`, `R16dCellResult` (adds
+  `horizon_value` + `test_ic` fields), `R16dArmDecayResult` (per-arm
+  horizon-decay diagnostic), `R16dBaselineCellResult` (per-cell H2),
+  `R16dDecisionGateOutcome` 5-gate verdict, `_verify_h5_horizon_distinct`
+  (NEW R-16d-specific invariant testing horizon-axis activation),
+  `_extract_test_ic` (defensive fallback chain), `_classify_verdict_r16d`
+  (4-way verdict matrix), `analyze_r16d_sweep` (main entry).
+  Activates DORMANT INFRA from prior cycles: #PY-186 v0.1.10 ceiling fix
+  (variable trade counts per horizon-cell exercise the bootstrap CI
+  correctness), Phase Y composer at horizon-axis density (expected 6+
+  distinct compat_fp from 2 return_types × 3 horizons),
+  `_pooled_block_bootstrap_mean_ci` 3rd consumer threshold (note: still
+  R-16c-local; documented near-duplicate flagged in r16d module docstring).
+- `scripts/analyze_r16d.py` — NEW ~130 LOC CLI wrapper mirroring
+  `scripts/analyze_r16c.py` precedent. Standalone per #PY-121 (cli.py
+  god-object) + #PY-167 (LOC ratchet) anti-ratchets. Exit codes:
+  0 GO / 1 REFUTE-INDET / 2 ABORT / 3 INCOMPLETE.
+- `tests/test_r16d_analysis.py` — NEW 28 tests across 7 test classes:
+  constants invariants (8) + `_verify_h5_horizon_distinct` (4) +
+  `_extract_test_ic` fallback chain (6) + `_classify_verdict_r16d` 5-gate
+  matrix (6) + dataclass invariants (3) + render_verdict smoke (1).
+  All pass; zero regressions across full hft-ops suite (988 → 1016).
+- **R-16d does NOT activate #PY-189 LATENT** — both Ridge + TLOB pre-slice
+  to 1-D at `lob-model-trainer/.../exporter.py:421-456` per ground-truth.
+  HMHP-R would be required for 2-D activation. Manifest explicitly
+  documents this; manifest does NOT claim "exercises #PY-189".
+
+**Test delta**: hft-ops 988 → **1016 pass** (+28 NEW). Zero regressions.
+
 ### Backlog Hygiene Bundle (2026-05-13) — #PY-191 + #PY-93-PARTIAL
 
 **Changed (#PY-93-PARTIAL — xgboost_lob preflight constraint table sync)**
