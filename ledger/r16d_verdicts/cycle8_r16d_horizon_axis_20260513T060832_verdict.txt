@@ -1,0 +1,35 @@
+==============================================================================
+  R-16d Horizon-Axis Sweep Analysis — VERDICT: INDETERMINATE
+==============================================================================
+
+Exit code: 1
+
+Gate outcomes:
+  H1 PRIMARY (horizon decay):       FAIL  (2/4 arms decay)
+  H2 BASELINE (Ridge ≥ 0.80 TLOB):  PASS  (6/6 cells)
+  H3 COST (median |pred| > 1.4 bps):PASS  (4/4 arms)
+  H4 NEGATIVE CONTROL (mean > -0.5%):PASS  (4/4 arms at H10)
+  H5 ARCH (Ridge × horizon distinct):PASS  (2/2 Ridge arms)
+
+Reasons:
+  - H1 INDETERMINATE: 2/4 arms decay (borderline). Trigger R-16d-extended N=4 seeds × 12 cells.
+  - H2 PASS: 6/6 cells satisfy Ridge ≥ 0.8 × TLOB.
+  - H4 PASS: 4/4 arms at H10 clear mean OptRet floor -0.005.
+  - H3 PASS: 4/4 arms at H10 cleared backtest cost gate.
+
+Per-arm horizon-decay (H1 PRIMARY):
+  arm                                    IC(H10)    IC(H60)   IC(H300)      decay
+  temporal_ridge__point_return           +0.0179    +0.1473    +0.0466          ✗
+  temporal_ridge__smoothed_return        +0.3289    +0.1557    +0.0711 ✓ monotonic
+  tlob__point_return                     +0.0130    +0.0570    +0.0399          ✗
+  tlob__smoothed_return                  +0.3790    +0.1445    +0.0637 ✓ monotonic
+
+Per-cell baseline (H2 — Ridge / TLOB ratio):
+  return_type         horizon   IC(Ridge)    IC(TLOB)    ratio   pass
+  point_return       H10          +0.0179     +0.0130    1.377      ✓
+  point_return       H60          +0.1473     +0.0570    2.585      ✓
+  point_return       H300         +0.0466     +0.0399    1.168      ✓
+  smoothed_return    H10          +0.3289     +0.3790    0.868      ✓
+  smoothed_return    H60          +0.1557     +0.1445    1.077      ✓
+  smoothed_return    H300         +0.0711     +0.0637    1.116      ✓
+==============================================================================

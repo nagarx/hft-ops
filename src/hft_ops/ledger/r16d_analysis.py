@@ -497,13 +497,20 @@ def analyze_r16d_sweep(
                 f"missing model_type/return_type/horizon_value in axis_values + "
                 f"training_config (rt={rt!r}, mt={mt!r}, horizon={horizon!r})."
             )
-        # Coerce horizon to int (axis values may be strings)
+        # Coerce horizon to int (axis values may be strings or labels like 'H10').
+        # Sweep stores axis LABEL (e.g., 'H10', 'H60', 'H300') in axis_values["horizon"],
+        # not the override value. Strip leading 'H' if present then coerce.
+        if isinstance(horizon, str) and horizon.upper().startswith("H"):
+            horizon_stripped = horizon[1:]
+        else:
+            horizon_stripped = horizon
         try:
-            horizon = int(horizon)
+            horizon = int(horizon_stripped)
         except (TypeError, ValueError):
             raise R16dIncompleteSweepError(
                 f"analyze_r16d_sweep: record {r.get('experiment_id', '<unknown>')} "
-                f"horizon value {horizon!r} is not coercible to int."
+                f"horizon value {horizon!r} is not coercible to int (tried "
+                f"H-prefix strip → {horizon_stripped!r})."
             )
         key = (str(mt), str(rt), horizon)
         if key in cells_records:
