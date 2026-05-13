@@ -277,6 +277,151 @@ class TestVerifyH5BitExact:
 
 
 # =============================================================================
+# h5_bit_exact field contract (Phase A hygiene fix 2026-05-13)
+# =============================================================================
+
+
+class TestH5BitExactContract:
+    """Lock h5_bit_exact field as Optional[bool] per docstring at r16c_analysis.py:196.
+
+    Pre-Phase-A code at r16c_analysis.py:751 + :782 used
+    ``(model_type == "temporal_ridge" and h5_invariant_ok)`` which evaluates to
+    bool ``False`` for TLOB. This violated the dataclass docstring contract
+    "Ridge cells only; None for TLOB" and would silently mislead downstream
+    consumers (e.g., ``if cell.h5_bit_exact is None`` filters). Phase A hygiene
+    cycle 2026-05-13 fixed both sites to ``(None if model_type != "temporal_ridge"
+    else h5_invariant_ok)``. These tests lock the corrected contract.
+    """
+
+    def test_h5_bit_exact_field_typing_is_optional_bool(self):
+        """Field annotation must be Optional[bool] per dataclass."""
+        from typing import Optional, get_type_hints
+        hints = get_type_hints(R16cCellResult)
+        assert hints["h5_bit_exact"] == Optional[bool], (
+            f"R16cCellResult.h5_bit_exact must be Optional[bool]; "
+            f"got {hints['h5_bit_exact']}"
+        )
+
+    def test_ridge_cell_h5_bit_exact_accepts_true(self):
+        """Ridge cell with h5_invariant_ok=True → field is bool True."""
+        cell = R16cCellResult(
+            arm_label="temporal_ridge__point_return",
+            threshold_label="deep_itm_1.4bps",
+            n_seeds=1, n_total_trades=100,
+            mean_opt_ret=0.0, ci_low=-0.001, ci_high=0.001,
+            n_nonfinite_replaced=0, block_length_used=9,
+            drop_top5_per_seed=(0.0,), drop_top5_mean=0.0,
+            h5_bit_exact=True,
+            insufficient_data=False,
+        )
+        assert cell.h5_bit_exact is True
+        assert isinstance(cell.h5_bit_exact, bool)
+
+    def test_ridge_cell_h5_bit_exact_accepts_false(self):
+        """Ridge cell with h5_invariant_ok=False → field is bool False (genuine failure)."""
+        cell = R16cCellResult(
+            arm_label="temporal_ridge__peak_return",
+            threshold_label="deep_itm_1.4bps",
+            n_seeds=1, n_total_trades=100,
+            mean_opt_ret=0.0, ci_low=-0.001, ci_high=0.001,
+            n_nonfinite_replaced=0, block_length_used=9,
+            drop_top5_per_seed=(0.0,), drop_top5_mean=0.0,
+            h5_bit_exact=False,
+            insufficient_data=False,
+        )
+        assert cell.h5_bit_exact is False
+        assert isinstance(cell.h5_bit_exact, bool)
+
+    def test_tlob_cell_h5_bit_exact_must_be_none_not_false(self):
+        """TLOB cell — h5_bit_exact MUST be None per docstring (NOT False).
+
+        Defense-in-depth against pre-Phase-A bug at r16c_analysis.py:751+782
+        where TLOB cells emitted h5_bit_exact=False instead of None.
+        """
+        cell = R16cCellResult(
+            arm_label="tlob__peak_return",
+            threshold_label="deep_itm_1.4bps",
+            n_seeds=8, n_total_trades=5775,
+            mean_opt_ret=-0.0001, ci_low=-0.0002, ci_high=0.0,
+            n_nonfinite_replaced=0, block_length_used=9,
+            drop_top5_per_seed=(-0.0001,) * 8, drop_top5_mean=-0.0001,
+            h5_bit_exact=None,
+            insufficient_data=False,
+        )
+        assert cell.h5_bit_exact is None
+        # Explicit defense: not False (the pre-Phase-A bug value).
+        assert cell.h5_bit_exact is not False
+
+    def test_outcome_to_json_dict_serializes_none_h5_bit_exact_as_null(self):
+        """JSON round-trip: TLOB cell h5_bit_exact=None must serialize as JSON null.
+
+        Verifies outcome_to_json_dict + json.dumps + json.loads round-trip
+        preserves None (not coerced to False or stripped from the dict).
+        """
+        import json
+        tlob_cell = R16cCellResult(
+            arm_label="tlob__peak_return",
+            threshold_label="deep_itm_1.4bps",
+            n_seeds=8, n_total_trades=5775,
+            mean_opt_ret=-0.0001, ci_low=-0.0002, ci_high=0.0,
+            n_nonfinite_replaced=0, block_length_used=9,
+            drop_top5_per_seed=(-0.0001,) * 8, drop_top5_mean=-0.0001,
+            h5_bit_exact=None,
+            insufficient_data=False,
+        )
+        outcome = DecisionGateOutcome(
+            verdict="REFUTE",
+            h1_mean_ok=False, h1_ci_ok=False, h1_drop_top5_ok=False,
+            h4_negative_control_ok=True, h5_invariant_ok=True,
+            h1_mean_observed=0.0, h1_ci_low_observed=-0.001, h1_ci_high_observed=0.001,
+            h1_drop_top5_observed=0.0, h4_mean_observed=0.0,
+            h5_failed_cells=tuple(),
+            reasons=("test",),
+            exit_code=1,
+        )
+        cell_results = {("tlob", "peak_return", "deep_itm_1.4bps"): tlob_cell}
+        json_dict = outcome_to_json_dict(outcome, cell_results)
+        cell_key = "tlob__peak_return__deep_itm_1.4bps"
+        assert json_dict["cell_results"][cell_key]["h5_bit_exact"] is None
+        # JSON round-trip preserves None as null.
+        json_str = json.dumps(json_dict)
+        decoded = json.loads(json_str)
+        assert decoded["cell_results"][cell_key]["h5_bit_exact"] is None
+
+    def test_outcome_to_json_dict_serializes_ridge_h5_bit_exact_as_bool(self):
+        """JSON round-trip: Ridge cell h5_bit_exact=True must serialize as JSON true."""
+        import json
+        ridge_cell = R16cCellResult(
+            arm_label="temporal_ridge__point_return",
+            threshold_label="deep_itm_1.4bps",
+            n_seeds=1, n_total_trades=100,
+            mean_opt_ret=0.0, ci_low=-0.001, ci_high=0.001,
+            n_nonfinite_replaced=0, block_length_used=9,
+            drop_top5_per_seed=(0.0,), drop_top5_mean=0.0,
+            h5_bit_exact=True,
+            insufficient_data=False,
+        )
+        outcome = DecisionGateOutcome(
+            verdict="REFUTE",
+            h1_mean_ok=False, h1_ci_ok=False, h1_drop_top5_ok=False,
+            h4_negative_control_ok=True, h5_invariant_ok=True,
+            h1_mean_observed=0.0, h1_ci_low_observed=-0.001, h1_ci_high_observed=0.001,
+            h1_drop_top5_observed=0.0, h4_mean_observed=0.0,
+            h5_failed_cells=tuple(),
+            reasons=("test",),
+            exit_code=1,
+        )
+        cell_results = {("temporal_ridge", "point_return", "deep_itm_1.4bps"): ridge_cell}
+        json_dict = outcome_to_json_dict(outcome, cell_results)
+        cell_key = "temporal_ridge__point_return__deep_itm_1.4bps"
+        assert json_dict["cell_results"][cell_key]["h5_bit_exact"] is True
+        # JSON round-trip preserves True as true.
+        json_str = json.dumps(json_dict)
+        decoded = json.loads(json_str)
+        assert decoded["cell_results"][cell_key]["h5_bit_exact"] is True
+
+
+# =============================================================================
 # _classify_verdict — 4-way decision-gate logic (per manifest L108-132)
 # =============================================================================
 
@@ -581,10 +726,17 @@ class TestResolveBacktestPnlsDir:
     """
 
     def _build_mock_paths(self, root: Path, backtester_dir):
-        """Mock PipelinePaths supporting .root and optional .backtester_dir."""
+        """Mock PipelinePaths supporting .pipeline_root and optional .backtester_dir.
+
+        Phase A hygiene 2026-05-13: corrected from .root to .pipeline_root to
+        match the production PipelinePaths attribute (paths.py:25). The
+        original MockPaths from #PY-184 cycle used .root which never matched
+        the production code path at r16c_analysis.py:467 (paths.pipeline_root).
+        Test-side regression closed simultaneously with Phase A code hygiene.
+        """
         class MockPaths:
             def __init__(self, r, bt):
-                self.root = r
+                self.pipeline_root = r
                 if bt is not None:
                     self.backtester_dir = bt
         return MockPaths(root, backtester_dir)

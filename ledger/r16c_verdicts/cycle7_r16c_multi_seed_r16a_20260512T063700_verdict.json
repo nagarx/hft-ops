@@ -224,7 +224,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 18,
       "drop_top5_mean": -5.641438843898514e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__point_return__itm_2bps": {
@@ -236,7 +236,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 17,
       "drop_top5_mean": -4.80171852846157e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__point_return__itm_3bps": {
@@ -248,7 +248,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 14,
       "drop_top5_mean": -3.629461063031995e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__point_return__atm_5bps": {
@@ -260,7 +260,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 9,
       "drop_top5_mean": -2.2931835555178674e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__point_return__high_conv_8bps": {
@@ -272,7 +272,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 0,
       "drop_top5_mean": NaN,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": true
     },
     "tlob__point_return__very_high_10bps": {
@@ -284,7 +284,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 0,
       "drop_top5_mean": NaN,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": true
     },
     "tlob__point_return__ultra_conv_15bps": {
@@ -296,7 +296,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 0,
       "drop_top5_mean": NaN,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": true
     },
     "tlob__point_return__max_conv_20bps": {
@@ -308,7 +308,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 0,
       "drop_top5_mean": NaN,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": true
     },
     "tlob__peak_return__deep_itm_1.4bps": {
@@ -320,7 +320,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 18,
       "drop_top5_mean": -5.61389327607941e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__peak_return__itm_2bps": {
@@ -332,7 +332,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 18,
       "drop_top5_mean": -6.0016832308352063e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__peak_return__itm_3bps": {
@@ -344,7 +344,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 18,
       "drop_top5_mean": -6.206697853566932e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__peak_return__atm_5bps": {
@@ -356,7 +356,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 18,
       "drop_top5_mean": -6.078616256644452e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__peak_return__high_conv_8bps": {
@@ -368,7 +368,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 18,
       "drop_top5_mean": -6.233557688055245e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__peak_return__very_high_10bps": {
@@ -380,7 +380,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 17,
       "drop_top5_mean": -6.172437693427819e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__peak_return__ultra_conv_15bps": {
@@ -392,7 +392,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 11,
       "drop_top5_mean": -6.589992508877544e-05,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     },
     "tlob__peak_return__max_conv_20bps": {
@@ -404,7 +404,7 @@
       "n_nonfinite_replaced": 0,
       "block_length_used": 5,
       "drop_top5_mean": -0.00010128152209023635,
-      "h5_bit_exact": false,
+      "h5_bit_exact": null,
       "insufficient_data": false
     }
   }

@@ -748,7 +748,7 @@ def analyze_r16c_sweep(
                     n_nonfinite_replaced=0, block_length_used=0,
                     drop_top5_per_seed=tuple(),
                     drop_top5_mean=float("nan"),
-                    h5_bit_exact=(model_type == "temporal_ridge" and h5_invariant_ok),
+                    h5_bit_exact=(None if model_type != "temporal_ridge" else h5_invariant_ok),
                     insufficient_data=True,
                 )
                 continue
@@ -779,7 +779,7 @@ def analyze_r16c_sweep(
                 block_length_used=bl_used,
                 drop_top5_per_seed=per_seed_drops,
                 drop_top5_mean=drop_top5_mean,
-                h5_bit_exact=(model_type == "temporal_ridge" and h5_invariant_ok),
+                h5_bit_exact=(None if model_type != "temporal_ridge" else h5_invariant_ok),
                 insufficient_data=insufficient,
             )
 

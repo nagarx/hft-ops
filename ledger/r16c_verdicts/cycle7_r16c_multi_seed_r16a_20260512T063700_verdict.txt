@@ -1,5 +1,3 @@
-/Users/knight/code_local/HFT-pipeline-v2/hft-ops/scripts/analyze_r16c.py:125: UserWarning: PARTIAL R-16c analysis: 36/40 grid records (allow_partial=True). Reduced sample-per-cell may widen bootstrap CI. Document rationale (typical cause: cross-sweep dedup against earlier sweep records).
-  cell_results, outcome = analyze_r16c_sweep(
 ==============================================================================
   R-16c Multi-Seed Power Analysis — VERDICT: REFUTE
 ==============================================================================
