@@ -153,6 +153,25 @@ _INPUT_CONTRACTS_RAW: Dict[str, Dict[str, Any]] = {
         "min_sequence_length": 4,
         "compatible_sources": ["any"],
     },
+    "xgboost_lob": {
+        # 2026-05-13 — close forward-drift detected by
+        # `test_table_covers_live_registry` (lob-models commit `ef17bb4`,
+        # 2026-05-09: registered `xgboost_lob` via Phase VI snapshot
+        # architecture but this hft-ops constraint table was not synced
+        # per the CLAUDE.md Change-Coordination Checklist row "Add a new
+        # model architecture". Values mirror live
+        # `lobmodels.ModelRegistry.get('xgboost_lob').input_contract`
+        # exactly (see `lob-models/src/lobmodels/registry/_snapshot.json`
+        # entry "xgboost_lob"). The snapshot field `requires_sequence`
+        # is not represented in `_INPUT_CONTRACTS_RAW` schema (only
+        # `min_features`, `max_features`, `min_sequence_length`,
+        # `compatible_sources` per L80-83 docstring); the sequence
+        # requirement is captured by `min_sequence_length`.
+        "min_features": 1,
+        "max_features": None,
+        "min_sequence_length": 1,
+        "compatible_sources": ["any"],
+    },
 }
 
 # Phase V.1 L2.4 public-facing frozen view. `MappingProxyType` creates a

@@ -12,6 +12,35 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ## [0.3.0-dev] — in progress
 
+### Backlog Hygiene Bundle (2026-05-13) — #PY-191 + #PY-93-PARTIAL
+
+**Changed (#PY-93-PARTIAL — xgboost_lob preflight constraint table sync)**
+
+- `src/hft_ops/stages/contract_preflight.py::_INPUT_CONTRACTS_RAW` adds
+  `xgboost_lob` entry mirroring live
+  `lobmodels.ModelRegistry.get('xgboost_lob').input_contract`.
+  lob-models commit `ef17bb4` registered the model 2026-05-09 via Phase VI
+  snapshot architecture but this constraint table was not synced per the
+  CLAUDE.md Change-Coordination Checklist row "Add a new model architecture".
+  Closes the forward-drift `test_table_covers_live_registry` failure that
+  4 prior cycles cited as "pre-existing #PY-93 xgboost_lob registry preflight
+  failure UNRELATED".
+- **STATUS:CLOSED-PARTIAL** — symptom-only. Architectural root cause
+  (wire `ParamOwnership.validate` at `lobmodels/registry/core.py:281`)
+  remains OPEN as Sub-cycle 5 candidate per PHASE_P_BACKLOG #PY-93.
+- **Test delta**: `TestConstraintTableSanity::test_table_covers_live_registry`
+  4/5 → 5/5 PASS. Full hft-ops suite: 987 pass + 1 fail → 988 pass + 0 fail.
+
+**Removed (#PY-191 dedup site — orphan hashlib import)**
+
+- `src/hft_ops/ledger/dedup.py:16` — orphan `import hashlib` removed.
+  Zero callers post-#PY-41 closure 2026-05-07 (`hft_contracts.canonical_hash`
+  SSoT migration). Companion site at
+  `hft-feature-evaluator/src/hft_evaluator/pipeline.py:22` closed in
+  parallel commit. **Test delta**: zero new tests (cosmetic).
+
+---
+
 ### Phase Y / γ-1 LITE / #PY-95 + #PY-96 + #PY-97 (2026-05-10 evening) — `diff_experiments` + `ledger_show` trust-column surface + EXPERIMENT_GUIDE docs
 
 **Added (#PY-95 — `comparator.diff_experiments` 4-source provenance divergence)**

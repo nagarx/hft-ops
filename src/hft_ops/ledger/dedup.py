@@ -13,7 +13,6 @@ intentional re-runs (the user can override the dedup check).
 from __future__ import annotations
 
 import functools
-import hashlib
 import json
 import logging
 import sys
