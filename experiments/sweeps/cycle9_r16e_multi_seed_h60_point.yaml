@@ -1,0 +1,428 @@
+# =============================================================================
+# R-16e EXTENDED: multi-seed IC + H60-HOLD backtest on R-16d's Ridge × Point × H60
+# =============================================================================
+#
+# Cycle 9 / R-16e: 3-axis sweep extending R-16d's INDETERMINATE finding with
+# (a) multi-seed IC variance characterization AND (b) NEW H60-hold backtest
+# (matched to prediction horizon — closes the H10-hold gap in R-16d).
+#
+# Authorized by user 2026-05-13 late night (Hybrid-lean Phase 2 cycle close)
+# AFTER Wave 4 3-agent Phase 2.a pre-impl design gate surfaced CRITICAL gap:
+# R-16d backtested ALL 12 cells at H10-HOLD uniformly. The "Ridge×Point×H60
+# IC=0.147 Ratio=2.585 vs TLOB" headline finding is IC PREDICTIVE
+# CORRELATION ONLY — tradeability at matched H60-hold remains UNVERIFIED.
+#
+# R-16e EXTENDED closes BOTH research gaps in one cycle:
+#   1. Multi-seed CI on H60-LABEL test_ic (IC stability validation)
+#   2. NEW H60-HOLD backtest config via `--hold-events 60` extra_arg
+#      (tradeability validation at execution-aligned hold time)
+#
+# Grid (3 axes × Cartesian product = 40 grid points):
+#   model_type   ∈ {temporal_ridge, tlob}                       (2)  — baseline gate (R-16d Ratio=2.585 verify)
+#   return_type  ∈ {point_return, smoothed_return}              (2)  — E8 label-execution diagnostic (H6)
+#   train.seed   ∈ {42, 43, 44, 45, 46, 47, 48, 49, 50, 51}    (10)  — seed variance
+#
+#   2 × 2 × 10 = 40 grid points.
+#
+# Phase Y composability expectations (verified empirical R-16c precedent):
+#   - 22 unique experiment_provenance_hash values
+#     (Ridge×{Point,Smoothed} → 2 unique post-dedup across 20 Ridge runs;
+#     TLOB × {Point,Smoothed} × 10 seeds → 20 distinct epH)
+#   - 2 unique compatibility_fingerprint (1 per return_type axis at H60)
+#   - 2 unique model_config_hash (Ridge vs TLOB)
+#
+# **CRITICAL CROSS-CYCLE DEDUP HAZARD** (mid-impl gate 2026-05-13 finding):
+#   R-16d (cycle8_r16d_horizon_axis_20260513T060832) already produced 4
+#   training records for Ridge × {point_return, smoothed_return} × H60 (seed_42
+#   single-seed). Phase Y `compute_fingerprint` reads
+#   {data_export_fp, feature_set_content_hash, compatibility_fp, model_config_hash}
+#   — NONE of which depend on backtest config (`--hold-events 60`).
+#   `cli_parallel_sweep.py:117-135` `check_duplicate` SKIPS the entire grid
+#   point on fingerprint match (no training, no signal_export, no backtest).
+#   Without intervention, ALL 20 Ridge cells in R-16e would dedupe against
+#   R-16d's 2 Ridge records, SKIPPING the NEW --hold-events 60 backtest run.
+#
+#   **OPERATIONAL REQUIREMENT**: launch with `--force` flag to override dedup:
+#       hft-ops sweep run cycle9_r16e_multi_seed_h60_point.yaml --gpus 1 --force
+#   This produces 40 NEW records on disk (Ridge bit-exact across seeds via
+#   Phase A.3 REDESIGN; TLOB genuinely distinct) PLUS 40 NEW backtest runs
+#   with --hold-events 60 config. ~3 min wasted compute on redundant Ridge
+#   training (closed-form is cheap; acceptable cost for ~80 min NEW backtest
+#   value at H60-hold).
+#
+#   Alternative considered: modify cycle9_r16e fingerprint via tag-axis
+#   injection to differentiate from R-16d. REJECTED — would obscure
+#   architectural identity (same training, different downstream stage).
+#   --force is the correct architectural escape hatch per `cli_parallel_sweep.py:117`
+#   `if not force:` guard.
+#
+# **CRITICAL ARCHITECTURAL ASYMMETRY** (Phase A.3 REDESIGN):
+#   - **TemporalRidge**: closed-form `(X^T X + αI)^{-1} X^T y` — RNG-FREE.
+#     20 Ridge runs produce 2 distinct outputs (1 per return_type), 18 dedupes.
+#     This is an expected architectural invariant — H4 verifies it.
+#   - **TLOB (PyTorch)**: torch + numpy + python RNG via DESIGN-1 A.1+A.2.
+#     20 distinct TLOB runs produce genuine seed-variance for power analysis.
+#
+# Architecture pinning (identical to R-16d + R-16c for cross-cycle replication):
+#   - data_dir:     e5_timebased_60s_v3p0 (136,902 sequences / 230 days)
+#   - feature_set:  nvda_short_term_98_src98_v1 (content_hash 122fe5cb...)
+#   - horizons:     [10, 60, 300] (pinned from v3p0 corpus exports)
+#   - primary_horizon_idx: 1 (H60 — the cost-aware tradeable horizon)
+#   - data.labels.source: forward_prices
+#   - extraction.enabled: false (v3p0 corpus already on disk per Phase O Cycle 1)
+#
+# =============================================================================
+# PRE-REGISTERED HYPOTHESES (per hft-rules §13 — committed BEFORE running any seed)
+# =============================================================================
+#
+#   H1 PRIMARY (tradeability validation at H60-HOLD):
+#
+#     Treatment: Ridge × Point × H60 at FIXED threshold deep_itm_1.4bps with
+#     H60-HOLD backtest config (`--hold-events 60`). NEW vs R-16d which used
+#     H10-HOLD for ALL 12 cells.
+#
+#     H0 (null — H60 IC is real but not tradeable at matched hold):
+#         (a) Ridge × Point × H60-hold pooled per-trade bootstrap CI crosses zero, OR
+#         (b) Mean OptRet < 0% across 8 thresholds (cherry-pick negative)
+#
+#     H1 (alternative — H60 IC validates to tradeable edge):
+#         (a) Ridge × Point × H60-hold pooled per-trade bootstrap CI > 0 at α=0.05
+#             (lower bound > 0%), AND
+#         (b) Mean OptRet across 8 thresholds > 0% (no cherry-pick),
+#             AND
+#         (c) IC stability: per-seed test_ic CI lower bound > 0.05 (rejects noise floor)
+#
+#   H2 BASELINE (Ridge vs TLOB IC ratio at H60 — verify R-16d Ratio=2.585):
+#
+#     Treatment: paired bootstrap CI on Ridge_ic / TLOB_ic across seeds.
+#     R-16d single-seed Ratio = 2.585. Multi-seed verification:
+#     H0: Ratio CI lower bound ≤ 1.0 (Ridge does NOT dominate TLOB)
+#     H1: Ratio CI lower bound > 1.5 (Ridge robustly dominates TLOB)
+#
+#     Note: Ridge is bit-exact across seeds, so this becomes Ridge IC (single
+#     value) divided by TLOB IC (mean of 10 seeds with CI). The "ratio CI"
+#     reflects ONLY TLOB seed variance.
+#
+#   H3 COST GATE (per hft-rules §13):
+#
+#     Backtest median |prediction| > 1.4 bps Deep ITM breakeven per
+#     OpraCalibratedCosts.deep_itm(). Auto-applied by backtester.
+#
+#   H4 ARCHITECTURAL INVARIANT (Phase A.3 REDESIGN lock — same as R-16c):
+#
+#     Ridge × {Point, Smoothed} × 10 seeds produces 10 bit-exact-identical
+#     predicted_returns.npy files per (model, return_type) cell. SHA-256
+#     across 10 Ridge × Point × H60 records MUST be identical. Same for
+#     10 Ridge × Smoothed × H60 records. Confirms `temporal_ridge.py:102`
+#     `Ridge(alpha=...)` no random_state is truly seed-independent. ABORT
+#     if any two within-cell SHAs differ.
+#
+#   H6 LABEL-EXECUTION DIAGNOSTIC (E8 root-cause validation at H60):
+#
+#     R-16d found: BOTH smoothed-return arms produce SIGNIFICANTLY NEGATIVE
+#     backtests at H10-hold despite highest test_ic (0.33-0.38). This was
+#     interpreted as CLAUDE.md E8 ("model predicts smoothing residual NOT
+#     point direction"). R-16e tests if E8 holds at H60-HOLD (matched to
+#     label horizon):
+#
+#     H0 (null — smoothed advantage at H60-hold is real):
+#         Smoothed arm mean OptRet (H60-hold) > Point arm mean OptRet (H60-hold)
+#         OR smoothed arm CI > 0
+#
+#     H1 (E8 confirmed at H60-hold — smoothed still negative despite matched hold):
+#         BOTH smoothed × {Ridge, TLOB} arms produce mean OptRet ≤ 0% at
+#         H60-hold, MEANING E8 is structural NOT artifact of hold-mismatch.
+#
+#     This is the canonical test for whether CLAUDE.md E8 is a hold-time
+#     artifact (would explain via matched H60-hold) or a label-distribution
+#     artifact (would persist at any hold). Implications for Triple-Barrier
+#     experiment design.
+#
+# =============================================================================
+# DECISION GATE (committed BEFORE running)
+# =============================================================================
+#
+#   GO (R-16d's Ratio=2.585 IS TRADEABLE at H60-hold):
+#     H1 (a) Ridge × Point × H60-hold CI > 0
+#     AND H1 (b) mean across 8 thresholds > 0
+#     AND H1 (c) per-seed test_ic CI lower bound > 0.05
+#     AND H4 satisfied (Ridge bit-exact within each cell)
+#
+#   REFUTE (Ratio=2.585 was IC-only; NOT tradeable):
+#     Any H1 (a) (b) (c) fails
+#     CLOSES the Ridge×Point×H60-as-alpha research direction.
+#     Unblocks pivot to Option C (Triple-Barrier label experiment) OR
+#     Option E (feature ablation — different research axis).
+#
+#   INDETERMINATE (low power — borderline at α=0.05):
+#     H1 (a) borderline (CI crosses zero by < 1% margin) AND H1 (b) > 0
+#     → Plan R-16e-extended N=20 seeds + 30-day walk-forward.
+#
+#   ABORT (architectural ship-blocker):
+#     H4 fails (Ridge non-deterministic across seeds within cell)
+#     → Halt + adversarial-debug Phase A.3 REDESIGN invariant.
+#
+# =============================================================================
+# COMPUTE-COST ESTIMATE
+# =============================================================================
+#
+#   Per-arm wall-clock (empirical R-16d for H60 cells × R-16c for seed sweep):
+#     Ridge × Point × H60:     ~10 sec (closed-form fit)
+#     Ridge × Smoothed × H60:  ~10 sec (closed-form fit)
+#     TLOB × Point × H60:      ~230 sec (4 min — 30-epoch PyTorch with early stop)
+#     TLOB × Smoothed × H60:   ~230 sec
+#
+#   R-16e total (40 arms; 20 Ridge dedup at training side; 40 backtest):
+#     20 Ridge training × ~10 sec = ~3 min (sweep keeps records but no compute waste)
+#     20 TLOB training × ~230 sec = ~77 min serial / ~50 min --gpus 1
+#     40 backtest × ~120 sec = ~80 min serial
+#     Pessimistic serial: ~170 min (~2.5-3 hr)
+#     With --gpus 1 + parallel: ~120 min (~2 hr)
+#
+# =============================================================================
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/cycle9_r16e_multi_seed_h60_point.yaml
+#   hft-ops sweep run     experiments/sweeps/cycle9_r16e_multi_seed_h60_point.yaml --gpus 1
+#   hft-ops sweep results experiments/sweeps/cycle9_r16e_multi_seed_h60_point.yaml
+#
+#   ANALYSIS: `scripts/analyze_r16e.py <sweep_id>` (FOLLOW-UP DELIVERABLE,
+#   authored after sweep completion + adversarial gates).
+# =============================================================================
+
+experiment:
+  name: "cycle9_r16e_multi_seed_h60_point"
+  description: >
+    R-16e EXTENDED: multi-seed IC variance + H60-hold tradeability validation
+    on R-16d's Ridge × Point × H60 finding (IC=0.147, Ratio=2.585 vs TLOB).
+    NEW vs R-16d: backtest uses --hold-events 60 (matched to prediction
+    horizon), closing the H10-hold-only gap in R-16d backtest infrastructure.
+    Authorized 2026-05-13 late night by user (Hybrid lean → Option A EXTENDED)
+    after Wave 4 Phase 2.a 3-agent pre-impl gate surfaced critical hold-time
+    mismatch. 3-axis Cartesian: 2 model × 2 return × 10 seed = 40 records.
+    Tests H1 conjunctive (H60-hold pooled CI > 0 AND mean across thresholds > 0
+    AND per-seed IC CI > 0.05) + H2 ratio bootstrap + H4 Ridge bit-exact lock
+    + H6 E8 label-execution diagnostic at H60-hold.
+  hypothesis: >
+    H1 PRIMARY (tradeability at H60-hold — three-conjunctive):
+    Ridge × Point × H60-hold backtest CI > 0 AND mean OptRet across 8
+    thresholds > 0 AND per-seed test_ic CI lower bound > 0.05.
+    H2 BASELINE: Ridge vs TLOB IC ratio CI lower bound > 1.5 (R-16d showed
+    2.585 single-seed; multi-seed verification).
+    H3 COST: median |pred| > 1.4 bps Deep ITM breakeven.
+    H4 INVARIANT: Ridge × N-seed produces bit-exact identical results
+    (Phase A.3 REDESIGN lock).
+    H6 LABEL-EXECUTION DIAGNOSTIC: smoothed × H60-hold mean OptRet ≤ 0%
+    confirms E8 is structural (label-side) NOT hold-mismatch artifact.
+    GO if H1 + H4 satisfied. REFUTE if any H1 fails (closes Ridge×Point×H60
+    direction; unblocks Option C Triple-Barrier or Option E feature ablation).
+    INDETERMINATE triggers R-16e-extended (N=20 + walk-forward).
+    ABORT if H4 fails (architectural ship-blocker).
+  contract_version: "3.0"
+  tags:
+    - nvda
+    - cycle9
+    - r16e
+    - regression
+    - multi_seed
+    - r16d_extended
+    - v3p0
+    - sweep
+    - phase_y_composability
+    - h60
+    - h60_hold
+    - tradeability_validation
+    - e8_diagnostic
+
+pipeline_root: ".."
+
+stages:
+  # EXTRACTION DISABLED per R-16d / R-16c pattern: v3p0 corpus already on disk;
+  # avoids #PY-84 orchestrator partial_failure-as-fatal hazard.
+  extraction:
+    enabled: false
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
+    output_dir: "data/exports/e5_timebased_60s_v3p0"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  training:
+    enabled: true
+    horizon_value: 60
+    trainer_config:
+      name: cycle9_r16e_base
+      description: "R-16e base; axes override model_type + return_type + train.seed. H60 pinned in base."
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s_v3p0"
+        feature_count: 98
+        feature_set: nvda_short_term_98_src98_v1
+        labeling_strategy: regression
+        num_classes: 3
+        horizon_idx: 1
+        labels:
+          source: forward_prices
+          return_type: point_return    # <- overridden by axis `return_type`
+          task: regression
+          horizons: [10, 60, 300]
+          primary_horizon_idx: 1       # H60 = index 1 of [10, 60, 300]
+          sample_weights: none
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+
+      model:
+        model_type: tlob                # <- overridden by axis `model_type`
+        input_size: 98
+        num_classes: 3
+        dropout: 0.1
+        task_type: regression
+        regression_loss_type: huber
+        regression_loss_delta: 12.6
+        # TLOB-specific (ignored when model_type=temporal_ridge).
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: nvda
+        tlob_use_cvml: false
+
+      train:
+        task_type: regression
+        loss_type: huber
+        use_class_weights: false
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: cosine
+        num_workers: 0
+        pin_memory: false
+        seed: 42                       # <- overridden by axis `train.seed`
+        mixed_precision: false
+
+      output_dir: outputs/experiments/cycle9_r16e_base
+      log_level: INFO
+      tags: [cycle9, r16e, nvda, regression, multi_seed, h60_hold, v3p0, sweep]
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_signals.py"
+    checkpoint: "${stages.training.output_dir}/checkpoints/final.pt"
+    split: test
+    output_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_regression_backtest.py"
+    signals_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+    # **CRITICAL R-16e DELTA vs R-16d**: --hold-events 60 (NEW; default 10).
+    # R-16d used H10-hold for ALL 12 cells uniformly. R-16e wires H60-hold
+    # config matching the prediction horizon (LABEL_HORIZON_IDX=1 → H60).
+    # Per `lob-backtester/scripts/run_regression_backtest.py:162` the CLI
+    # default for --hold-events is 10; the library default at
+    # `lob-backtester/src/lobbacktest/strategies/regression.py:87` is 60
+    # but the script overrides. This explicit override ensures H60-hold.
+    extra_args:
+      - "--exchange"
+      - "XNAS"
+      - "--primary-horizon-idx"
+      - "1"          # H60 (matches primary_horizon_idx above)
+      - "--hold-events"
+      - "60"         # NEW: H60-HOLD matched to H60 LABEL — closes R-16d gap
+      - "--deep-itm" # cost gate: 1.4 bps breakeven via OpraCalibratedCosts
+
+# =============================================================================
+# Sweep definition — 3 axes, 40 grid points, no cross-axis key conflicts.
+# Axis-key disjoint per validate_sweep cross-axis conflict check.
+# Per R-16c precedent (CRITICAL): train_seed MUST be spelled `train.seed:` not
+# bare `seed:` (sweep.py:89-95 manifest_level_training_fields).
+# =============================================================================
+
+sweep:
+  name: "cycle9_r16e_multi_seed_h60_point"
+  strategy: "grid"
+  axes:
+    - name: "model_type"
+      values:
+        - label: "temporal_ridge"
+          overrides:
+            model.model_type: temporal_ridge
+            # sklearn-only params live ONLY here (R-16c precedent + γ-1 LITE
+            # #PY-86 fix). Same alpha + features as R-16c for cross-cycle
+            # replication + H4 invariant test.
+            model.params:
+              alpha: 1.0
+              features:
+                signal_indices: [85, 84, 86, 56, 45]
+                top_k_signals: 3
+                rolling_windows: [3, 5, 10]
+                include_volatility: true
+                include_momentum: true
+        - label: "tlob"
+          overrides:
+            model.model_type: tlob
+            # No `model.params` override — TLOB relies on
+            # `_build_params_from_legacy` to reconstruct from `tlob_*`.
+
+    - name: "return_type"
+      values:
+        # R-16e tests {point, smoothed} (E8 diagnostic at H60-hold).
+        # R-16c tested {point, peak} (F7 falsification at deep_itm_1.4bps).
+        - label: "point_return"
+          overrides:
+            data.labels.return_type: point_return
+        - label: "smoothed_return"
+          overrides:
+            data.labels.return_type: smoothed_return
+
+    - name: "train_seed"
+      values:
+        - label: "seed_42"
+          overrides:
+            train.seed: 42
+        - label: "seed_43"
+          overrides:
+            train.seed: 43
+        - label: "seed_44"
+          overrides:
+            train.seed: 44
+        - label: "seed_45"
+          overrides:
+            train.seed: 45
+        - label: "seed_46"
+          overrides:
+            train.seed: 46
+        - label: "seed_47"
+          overrides:
+            train.seed: 47
+        - label: "seed_48"
+          overrides:
+            train.seed: 48
+        - label: "seed_49"
+          overrides:
+            train.seed: 49
+        - label: "seed_50"
+          overrides:
+            train.seed: 50
+        - label: "seed_51"
+          overrides:
+            train.seed: 51
