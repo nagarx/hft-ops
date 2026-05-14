@@ -12,6 +12,53 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ## [0.3.0-dev] — in progress
 
+### Phase 8D — #PY-223 Phase 2 (2026-05-14) — orchestrator delegation to hft-contracts SSoT
+
+**Changed — `_record_experiment` refactored to delegate to `hft_contracts.experiment_recorder.record_from_artifacts`**
+
+- `src/hft_ops/cli.py::_record_experiment` — removed cli-local
+  `_HarvestedTrustColumns` + `_harvest_trust_columns` (lines 59-208
+  pre-refactor; ~150 LOC) + refactored body (~265 LOC pre-refactor;
+  ~75 LOC post-refactor) to delegate ExperimentRecord construction +
+  Phase Y composer + trust-column harvest to the hft-contracts SSoT
+  shipped 2026-05-14 (`hft-contracts` v2.8.0, commit `d773ac4`).
+  Orchestrator remains responsible for orchestrator-only work:
+  `stages_completed` aggregation, `status` aggregation (failed /
+  completed / partial), `gate_reports` harvest from
+  `StageResult.captured_metrics["gate_report"]`, `cache_info` harvest
+  from extraction stage's 5 `cache_*` keys, `training_metrics` +
+  `training_config` harvest from training stage's
+  `_effective_config_path` YAML, post-stage artifact routing via
+  `ledger.persist_post_stage_artifacts`, and `ledger.register(record)`.
+  Behavior bit-equivalent pre/post-refactor (modulo timestamp). Net diff:
+  392 LOC → 94 LOC in `_record_experiment` site (-298 LOC; -76% lines).
+
+- `tests/test_cli_harvest_trust_columns.py` — DELETED. 21 tests
+  superseded by 40 tests at
+  `hft-contracts/tests/test_experiment_recorder.py` (1.9× coverage
+  increase; harvester semantics tested at SSoT site per Phase 1).
+
+- `pyproject.toml` — `hft-contracts>=2.5.0` → `>=2.8.0` (required for
+  `record_from_artifacts` SSoT). Strictly additive bump per SemVer; no
+  symbols removed.
+
+**Architectural impact**: closes the orchestrator-side half of
+#PY-223 (R-17a-class direct-trainer ~26% invisibility class). Phase 3
+(`lob-model-trainer` `scripts/train.py --register-to-ledger`) consumes
+the same SSoT to make direct-trainer runs visible to
+`hft-ops ledger list` queries. Per hft-rules §0 reuse-first: ZERO new
+SSoT primitives — consolidation only.
+
+**Pre-commit gates**: 2 parallel adversarial agents (feature-dev
+code-reviewer + hft-architect) both APPROVE-COMMIT with 2 LOW
+micro-fixes applied same-commit (comment block cleanup + path
+resolution comment clarification). 1 LOW deferred to backlog
+(top-level `build_provenance` import at cli.py:43 shadowed by
+function-local at cli.py:1256 — not blocking).
+
+**Test count**: 1055 → 1034 pass (−21 deleted; zero regressions; full
+suite 6.81s wall-clock).
+
 ### R-16d Horizon-Axis Sweep (2026-05-13) — Cycle 8 / Phase B authoring
 
 **Added — R-16d sweep authoring (12 grid points, horizon-decay validation)**

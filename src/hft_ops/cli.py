@@ -26,6 +26,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from hft_contracts.experiment_recorder import record_from_artifacts
 from hft_contracts.signal_manifest import CONTENT_HASH_RE
 from hft_ops.config import OpsConfig
 from hft_ops.ledger.comparator import compare_experiments, diff_experiments
@@ -57,155 +58,24 @@ _logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Phase Y trust-column harvester (Cluster Z Closure C, 2026-05-11)
+# Phase Y trust-column harvester — MIGRATED TO hft-contracts (Phase 8D / #PY-223)
 # ---------------------------------------------------------------------------
 #
-# Phase Y composes ``experiment_provenance_hash`` from 4 trust columns
-# harvested from the ``signal_export`` stage's ``captured_metrics``:
+# Pre-Phase-8D this module defined `_HarvestedTrustColumns` dataclass +
+# `_harvest_trust_columns` function (Cluster Z Closure C, 2026-05-11; lines
+# 59-208 pre-refactor). Phase 8D / #PY-223 (2026-05-14, hft-contracts v2.8.0)
+# migrated them to `hft_contracts.experiment_recorder` as
+# `HarvestedTrustColumns` + `harvest_trust_columns` so the same harvester is
+# consumable from BOTH this orchestrator path AND the direct-trainer path
+# (`lob-model-trainer/scripts/train.py --register-to-ledger` — Phase 3 of
+# the #PY-223 cycle, separate commit).
 #
-#   - ``feature_set_ref``           (Phase 4 4c.4)
-#   - ``compatibility_fingerprint`` (Phase V.A.4)
-#   - ``model_config_hash``         (Phase Y deployment 2026-05-05)
-#   - ``signal_export_output_dir``  (Phase V.1 L1.2)
-#
-# Pre-Cluster-Z the 4 harvest sites at ``cli.py:566/576/587/598`` each used
-# ``captured_metrics.get(key)`` + isinstance gate — and silently kept the
-# field as ``None`` on present-but-invalid input (wrong type / wrong
-# format / partial dict). Per hft-rules §8 ("never silently drop, clamp,
-# or fix data without recording diagnostics") + #PY-155 + #PY-115, that
-# silent-None policy caused Phase Y composer queries via
-# ``hft-ops ledger list --compatibility-fp`` and
-# ``--model-config-hash`` to silently miss records.
-#
-# Cluster Z Closure C consolidates the 4 sites into ONE
-# ``_harvest_trust_columns(captured_metrics)`` helper that distinguishes:
-#
-#   - key absent           → field stays ``None`` silently (valid: stage
-#                            skipped/disabled)
-#   - key present + valid  → field populated
-#   - key present + invalid → field stays ``None``, error appended to
-#                            ``.harvest_errors``, WARN logged. Record
-#                            still persists (observation-tier failure).
-#
-# ``_HarvestedTrustColumns`` is a **cli-local** dataclass, NOT a new
-# ``hft_contracts`` SSoT primitive. The 4 harvested fields ALREADY land
-# in their respective top-level ``ExperimentRecord`` schema fields
-# (``feature_set_ref``, ``compatibility_fingerprint``,
-# ``signal_export_output_dir``) and one nested field
-# (``training_config["model_config_hash"]``). The dataclass exists only
-# to consolidate the harvest pattern; ``ExperimentRecord`` schema is
-# unchanged. NO ``INDEX_SCHEMA_VERSION`` bump.
-#
-# Reuses ``hft_contracts.signal_manifest.CONTENT_HASH_RE`` (imported at
-# the top of this module) for 64-hex SHA-256 validation. ZERO new SSoT.
-
-
-@dataclass
-class _HarvestedTrustColumns:
-    """cli-local observation-tier trust-column harvest results.
-
-    Phase Y composer cross-experiment-comparability identity fields.
-    NOT persisted to a NEW schema field; the 4 fields land in
-    ``ExperimentRecord`` top-level slots (or nested ``training_config``
-    for ``model_config_hash``). ``harvest_errors`` lives transiently on
-    this dataclass + the WARN log; the record still persists.
-
-    Cluster Z Closure C (2026-05-11) — closes #PY-155.
-    """
-
-    feature_set_ref: Optional[Dict[str, str]] = None
-    compatibility_fingerprint: Optional[str] = None
-    model_config_hash: Optional[str] = None
-    signal_export_output_dir: Optional[str] = None
-    harvest_errors: List[str] = field(default_factory=list)
-
-
-def _harvest_trust_columns(
-    captured_metrics: Dict[str, Any],
-) -> _HarvestedTrustColumns:
-    """Validate-and-harvest 4 Phase Y trust columns from signal_export.
-
-    Distinguishes three input states for each key:
-
-    * absent — field stays ``None`` silently (valid: stage
-      skipped/disabled/legacy artifact).
-    * present + valid — field populated.
-    * present + invalid format — field stays ``None``, error appended to
-      ``.harvest_errors``. Caller MUST emit a WARN log; record still
-      persists (observation-tier failure).
-
-    Validators:
-
-    * ``feature_set_ref``: dict with string ``name`` AND ``content_hash``
-      fields (mirrors Phase 4 4c.4 signal_metadata schema).
-    * ``compatibility_fingerprint`` + ``model_config_hash``: 64-hex
-      SHA-256 strings via ``CONTENT_HASH_RE`` (canonical hft-contracts
-      regex, single source of truth — reused, NOT re-implemented).
-    * ``signal_export_output_dir``: non-empty string.
-
-    Args:
-        captured_metrics: ``StageResult.captured_metrics`` dict from the
-            ``signal_export`` stage runner. May be empty or partial.
-
-    Returns:
-        ``_HarvestedTrustColumns`` with populated fields + harvest_errors
-        list. Never raises — observation-tier failures degrade gracefully
-        with diagnostic in ``harvest_errors``.
-    """
-    out = _HarvestedTrustColumns()
-
-    # feature_set_ref: nested dict {name, content_hash} (Phase 4 4c.4).
-    raw_ref = captured_metrics.get("feature_set_ref")
-    if raw_ref is not None:
-        if isinstance(raw_ref, dict):
-            name = raw_ref.get("name")
-            content_hash = raw_ref.get("content_hash")
-            if isinstance(name, str) and isinstance(content_hash, str):
-                out.feature_set_ref = {
-                    "name": name,
-                    "content_hash": content_hash,
-                }
-            else:
-                out.harvest_errors.append(
-                    f"feature_set_ref dict has non-string name "
-                    f"({type(name).__name__}) or content_hash "
-                    f"({type(content_hash).__name__})"
-                )
-        else:
-            out.harvest_errors.append(
-                f"feature_set_ref not a dict (got "
-                f"{type(raw_ref).__name__})"
-            )
-
-    # compatibility_fingerprint + model_config_hash: 64-hex SHA-256.
-    # CONTENT_HASH_RE is the canonical hft-contracts regex — reused
-    # here for symmetry with the producer-side gate at
-    # ``stages/signal_export.py``.
-    for fld in ("compatibility_fingerprint", "model_config_hash"):
-        raw = captured_metrics.get(fld)
-        if raw is not None:
-            if isinstance(raw, str) and CONTENT_HASH_RE.match(raw):
-                setattr(out, fld, raw)
-            else:
-                out.harvest_errors.append(
-                    f"{fld} not a 64-hex SHA-256 string (got "
-                    f"{type(raw).__name__}, value={raw!r})"
-                )
-
-    # signal_export_output_dir: non-empty string (Phase V.1 L1.2 — the
-    # run-time-captured absolute path that closes manifest-move
-    # resilience).
-    raw_dir = captured_metrics.get("signal_export_output_dir")
-    if raw_dir is not None:
-        if isinstance(raw_dir, str) and raw_dir:
-            out.signal_export_output_dir = raw_dir
-        else:
-            out.harvest_errors.append(
-                f"signal_export_output_dir invalid (got "
-                f"{type(raw_dir).__name__}, value={raw_dir!r})"
-            )
-
-    return out
+# `_record_experiment` (below) now delegates to
+# `record_from_artifacts(...)` — the SSoT helper handles trust-column
+# harvest + Phase Y composer + ExperimentRecord construction. Orchestrator
+# remains responsible for orchestrator-only work: stage status aggregation,
+# gate_reports/cache_info harvest from StageResult.captured_metrics,
+# post-stage artifact routing, and `ledger.register(record)`.
 
 
 def _validate_content_hash_option(
@@ -589,29 +459,31 @@ def _record_experiment(
 ) -> str:
     """Build and store an ExperimentRecord from stage results.
 
+    Phase 8D / #PY-223 (2026-05-14): refactored to delegate
+    ExperimentRecord construction + Phase Y composer + trust-column harvest
+    to the hft-contracts SSoT (``record_from_artifacts``). Orchestrator
+    remains responsible for orchestrator-only work: aggregating stage
+    status, harvesting gate_reports/cache_info/training_metrics from
+    ``StageResult.captured_metrics``, post-stage artifact routing, and
+    ``ledger.register(record)``.
+
     Returns:
-        The `experiment_id` of the just-registered record. Phase 6 6A.11
+        The ``experiment_id`` of the just-registered record. Phase 6 6A.11
         added this return value so sweep-loop callers can reference the
         freshly-registered record directly instead of the brittle
-        `ledger.list_ids()[-1]` pattern (which couples correctness to
-        append-order of the in-memory index across `ExperimentLedger(...)`
-        re-instantiations).
+        ``ledger.list_ids()[-1]`` pattern.
     """
-    now = datetime.now(timezone.utc)
-    timestamp = now.strftime("%Y%m%dT%H%M%S")
-    experiment_id = f"{manifest.experiment.name}_{timestamp}_{fingerprint[:8]}"
-
+    # Resolve orchestrator-side paths so they can be passed to
+    # `record_from_artifacts` (which calls build_provenance internally).
     ext_config_path = None
     if manifest.stages.extraction.config:
         ext_config_path = paths.resolve(manifest.stages.extraction.config)
 
-    # Phase 6 6A.3 (2026-04-17, revised after validation audit): dispatch to
-    # file-path OR inline-dict hashing via `build_provenance`'s symmetric API
-    # (mutually exclusive per lineage.py contract). Inline `trainer_config:`
-    # (Phase 1 wrapper-less) paths produce `config_hashes["trainer"]` via
-    # canonical_hash SSoT; file paths produce it via hash_file. Removed the
-    # prior post-mutation pattern (fragile; blocked Phase 6B.4 Provenance →
-    # hft_contracts migration because hft_contracts can't import from hft-ops).
+    # Phase 6 6A.3 dispatch: file-path OR inline-dict hashing via
+    # build_provenance's symmetric API (mutually exclusive per lineage.py
+    # contract). Inline trainer_config: (Phase 1 wrapper-less) paths produce
+    # config_hashes["trainer"] via canonical_hash SSoT; file paths produce
+    # it via hash_file.
     train_config_path = None
     train_config_dict = None
     if manifest.stages.training.config:
@@ -619,33 +491,22 @@ def _record_experiment(
     elif manifest.stages.training.trainer_config is not None:
         train_config_dict = manifest.stages.training.trainer_config
 
-    provenance = build_provenance(
-        paths.pipeline_root,
-        manifest_path=Path(manifest.manifest_path) if manifest.manifest_path else None,
-        extractor_config_path=ext_config_path,
-        trainer_config_path=train_config_path,
-        trainer_config_dict=train_config_dict,
-        data_dir=(
-            paths.resolve(manifest.stages.extraction.output_dir)
-            if manifest.stages.extraction.output_dir
-            else None
-        ),
-        contract_version=manifest.experiment.contract_version,
+    data_dir = (
+        paths.resolve(manifest.stages.extraction.output_dir)
+        if manifest.stages.extraction.output_dir
+        else None
     )
 
+    # Aggregate status + stages_completed (orchestrator-specific).
     stages_completed = [
         name for name, r in results.items()
         if r.status in (StageStatus.COMPLETED, StageStatus.SKIPPED)
     ]
-
-    any_failed = any(
-        r.status == StageStatus.FAILED for r in results.values()
-    )
+    any_failed = any(r.status == StageStatus.FAILED for r in results.values())
     all_done = all(
         r.status in (StageStatus.COMPLETED, StageStatus.SKIPPED)
         for r in results.values()
     )
-
     if any_failed:
         status = "failed"
     elif all_done and results:
@@ -653,15 +514,16 @@ def _record_experiment(
     else:
         status = "partial"
 
+    # Harvest training_metrics + training_config from training stage.
     training_metrics = {}
     training_config = {}
     if "training" in results:
         captured = results["training"].captured_metrics
-        # Separate internal keys from public metrics
+        # Separate internal keys from public metrics.
         effective_config_path = captured.pop("_effective_config_path", None)
         training_metrics = captured
 
-        # Load the effective (resolved) trainer config for index_entry lookups
+        # Load the effective (resolved) trainer config for index_entry lookups.
         if effective_config_path:
             try:
                 import yaml as _yaml
@@ -670,37 +532,24 @@ def _record_experiment(
             except (OSError, Exception):
                 pass  # Best effort — config may not exist in dry-run or failure
 
-    # Phase 7 Stage 7.4 Round 4 (2026-04-20): generic gate-report
-    # harvest. Every runner that emits a gate writes its serialized
-    # report under the uniform ``result.captured_metrics["gate_report"]``
-    # key. Harvest ALL of them into ``ExperimentRecord.gate_reports``
-    # keyed by stage name — researchers can then query
-    # ``ledger list --gate-status warn`` across every gate type
-    # uniformly (validation, post_training_gate, future
-    # post_backtest_gate) without per-gate CLI special-casing.
-    #
-    # Supersedes Round 1's nested-under-training_metrics pattern
-    # (which violated the training_metrics flat-scalar-dict contract
-    # and was silently filtered from ``index_entry()``). Records
-    # written pre-Round-4 still load correctly via the migration shim
-    # in ``ExperimentRecord.from_dict`` (removal deadline 2026-08-01).
+    # Phase 7 Stage 7.4 Round 4 generic gate-report harvest (orchestrator-specific):
+    # every stage that emits a gate writes its serialized report under the uniform
+    # ``result.captured_metrics["gate_report"]`` key. Harvest ALL of them into
+    # ``ExperimentRecord.gate_reports`` keyed by stage name for unified
+    # ``ledger list --gate-status warn`` queries across every gate type.
     gate_reports: Dict[str, Dict[str, Any]] = {}
     for stage_name, stage_result in results.items():
         report = stage_result.captured_metrics.get("gate_report")
         if isinstance(report, dict):
             gate_reports[stage_name] = report
 
-    # Phase 8A.0 (2026-04-20): harvest extraction-cache observability from
-    # the extraction stage's captured_metrics. Flattened into top-level
-    # ``ExperimentRecord.cache_info`` so ``ledger list --cache-hit true``
-    # filters without reaching into per-stage nested dicts. Absence of
-    # the extraction stage (e.g., dataset_analysis-only manifests) leaves
-    # cache_info={}.
+    # Phase 8A.0 extraction-cache observability harvest (orchestrator-specific):
+    # flatten the 5 cache_* keys from extraction stage's captured_metrics into
+    # record-level ``cache_info`` for ergonomic ``ledger list --cache-hit true``
+    # filtering. Absence of extraction stage → cache_info={}.
     cache_info: Dict[str, Any] = {}
     if "extraction" in results:
         extraction_captured = results["extraction"].captured_metrics
-        # Project only the 5 cache-* observation keys; leave the rest of
-        # captured_metrics alone (stage-local, not record-level).
         for key in (
             "cache_hit",
             "cache_key",
@@ -711,117 +560,59 @@ def _record_experiment(
             if key in extraction_captured:
                 cache_info[key] = extraction_captured[key]
 
-    # Cluster Z Closure C (2026-05-11): trust-column harvester DRY.
-    #
-    # Pre-Cluster-Z this block had 4 inline ``captured_metrics.get(...)``
-    # + isinstance gates with NO observability on present-but-invalid
-    # input — silently degraded to ``None``, causing
-    # ``hft-ops ledger list --compatibility-fp`` /
-    # ``--model-config-hash`` queries to silently miss records (#PY-155
-    # sister of #PY-115).
-    #
-    # The 4 fields land in ``ExperimentRecord`` top-level slots
-    # (``feature_set_ref`` / ``compatibility_fingerprint`` /
-    # ``signal_export_output_dir``) and one nested slot
-    # (``training_config["model_config_hash"]`` per Phase Y deployment
-    # 2026-05-05). The cli-local ``_HarvestedTrustColumns`` dataclass
-    # consolidates the harvest pattern; ``ExperimentRecord`` schema is
-    # unchanged (NO ``INDEX_SCHEMA_VERSION`` bump).
-    trust = _HarvestedTrustColumns()
+    # Trust columns: harvested INSIDE record_from_artifacts SSoT.
+    # Pass the signal_export captured_metrics through; SSoT validates each
+    # of the 4 fields, WARN-logs harvest errors, and injects model_config_hash
+    # into training_config (mirrors pre-Phase-8D cli-local pattern).
+    captured_for_trust = None
     if "signal_export" in results:
-        trust = _harvest_trust_columns(
-            results["signal_export"].captured_metrics
-        )
-        if trust.harvest_errors:
-            _logger.warning(
-                "Trust-column harvest errors on experiment %s: %s",
-                experiment_id,
-                "; ".join(trust.harvest_errors),
-            )
-        # Phase Y composer reads ``training_config["model_config_hash"]``
-        # during ``compute_experiment_provenance_hash``. Inject the
-        # harvested 64-hex SHA into the local ``training_config`` dict
-        # so it propagates into ``record.training_config[...]`` below.
-        # CONTENT_HASH_RE gate already applied inside the harvester.
-        if trust.model_config_hash is not None:
-            training_config["model_config_hash"] = trust.model_config_hash
+        captured_for_trust = results["signal_export"].captured_metrics
 
-    record = ExperimentRecord(
-        experiment_id=experiment_id,
+    # Phase 8D / #PY-223 SSoT delegation. record_from_artifacts handles:
+    #   - build_provenance (with mutually-exclusive trainer_config_*
+    #     validation per Phase 6 6A.3)
+    #   - HarvestedTrustColumns harvest (Cluster Z Closure C semantics
+    #     bit-exact)
+    #   - ExperimentRecord construction with all 22+ fields
+    #   - Phase Y composer (compute_experiment_provenance_hash) + WARN
+    #     diagnostic on missing components
+    #   - model_config_hash injection into training_config (nested location
+    #     read by Phase Y composer)
+    # ledger_path=None: the orchestrator's ledger.register(record) below
+    # handles the atomic save (via record.save → atomic_write_json) + index
+    # rebuild. Passing a ledger_path here would double-write.
+    record = record_from_artifacts(
         name=manifest.experiment.name,
-        manifest_path=manifest.manifest_path,
-        fingerprint=fingerprint,
-        feature_set_ref=trust.feature_set_ref,
-        compatibility_fingerprint=trust.compatibility_fingerprint,
-        signal_export_output_dir=trust.signal_export_output_dir,
-        provenance=provenance,
+        pipeline_root=paths.pipeline_root,
         contract_version=manifest.experiment.contract_version,
-        training_config=training_config,
+        fingerprint=fingerprint,
+        captured_metrics_for_trust=captured_for_trust,
         training_metrics=training_metrics,
+        training_config=training_config,
+        manifest_path=Path(manifest.manifest_path) if manifest.manifest_path else None,
+        extractor_config_path=ext_config_path,
+        trainer_config_path=train_config_path,
+        trainer_config_dict=train_config_dict,
+        data_dir=data_dir,
         gate_reports=gate_reports,
         cache_info=cache_info,
+        stages_completed=stages_completed,
+        status=status,
+        duration_seconds=total_duration,
         tags=manifest.experiment.tags,
         hypothesis=manifest.experiment.hypothesis,
         description=manifest.experiment.description,
-        created_at=now.isoformat(),
-        duration_seconds=total_duration,
-        status=status,
-        stages_completed=stages_completed,
+        ledger_path=None,  # ledger.register() below handles the save.
     )
-
-    # Phase Y deployment (2026-05-05): compose experiment_provenance_hash
-    # AFTER the record is constructed (all 4 source fields landed).
-    # compute_experiment_provenance_hash returns None when ANY of the 4
-    # components is missing — log a WARN diagnostic citing which fields
-    # are absent so operators can detect partial-coverage records via log
-    # monitoring (mirrors Phase V.1.5 SDR-2 observability convention,
-    # hft-rules §8 "never silently drop without recording diagnostics").
-    # Composition is a pure post-hoc derivation; mutating record.experiment_
-    # provenance_hash here is the canonical pattern (the field is dataclass-
-    # default None, set once after harvest).
-    from hft_contracts.experiment_record import compute_experiment_provenance_hash
-    provenance_hash = compute_experiment_provenance_hash(record)
-    if provenance_hash is not None:
-        record.experiment_provenance_hash = provenance_hash
-    else:
-        # Diagnose which sources are missing — operators see this in logs
-        # without crashing the run. Empty values count as missing per the
-        # composer's `if not all(components.values())` short-circuit.
-        missing = []
-        if not (record.provenance and record.provenance.data_dir_hash):
-            missing.append("provenance.data_dir_hash")
-        if not (record.feature_set_ref and record.feature_set_ref.get("content_hash")):
-            missing.append("feature_set_ref.content_hash")
-        if not record.compatibility_fingerprint:
-            missing.append("compatibility_fingerprint")
-        if not (record.training_config or {}).get("model_config_hash"):
-            missing.append("training_config.model_config_hash")
-        # Use module-level logger (already imported at top of cli.py).
-        # WARN level (not INFO) for consistency with the V.1.5 SDR-2
-        # observability convention (signal_export.py post-Phase-Y cutoff
-        # WARN at line 294). Composer-level partial-coverage diagnostic
-        # MUST surface at default log levels so operators see "all 4 needed
-        # but only 3 landed" cases without bumping log verbosity.
-        import logging as _logging
-        _logging.getLogger(__name__).warning(
-            "experiment_provenance_hash composition skipped — missing source(s): %s. "
-            "Record will be stored with experiment_provenance_hash=None (graceful). "
-            "Common causes: cached extraction (extraction.output_dir unset → empty data_dir_hash), "
-            "inline feature_indices: instead of feature_set: (None feature_set_ref), "
-            "signal_export stage disabled (no harvester run), or pre-Phase-Y trainer venv.",
-            ", ".join(missing) if missing else "unknown",
-        )
 
     ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     # Phase 8C-α Stage C.3 (2026-04-20): route post-stage artifacts into
-    # ledger content-addressed storage BEFORE registration — so the
-    # persisted ExperimentRecord carries the populated ``artifacts[]``
-    # list. Currently routes ``feature_importance_v1.json`` from the
-    # trainer's PermutationImportanceCallback (Phase 8C-α Stage C.1,
-    # shipping next). Routing is idempotent + graceful no-op when the
-    # artifact isn't present (e.g., trainer ImportanceConfig.enabled=False
-    # OR training stage was SKIPPED via cache hit).
+    # ledger content-addressed storage BEFORE registration — so the persisted
+    # ExperimentRecord carries the populated ``artifacts[]`` list. Currently
+    # routes ``feature_importance_v1.json`` from the trainer's
+    # PermutationImportanceCallback. Routing is idempotent + graceful no-op
+    # when the artifact isn't present.
     training_stage_result = results.get("training")
     if training_stage_result is not None and training_stage_result.output_dir:
         training_output_dir = Path(training_stage_result.output_dir)
@@ -838,11 +629,11 @@ def _record_experiment(
 
     ledger.register(record)
 
-    console.print(f"[green]Registered: {experiment_id}[/green]")
+    console.print(f"[green]Registered: {record.experiment_id}[/green]")
     console.print(f"  Status: {status}")
     console.print(f"  Duration: {total_duration:.1f}s")
     console.print(f"  Stages: {', '.join(stages_completed)}")
-    return experiment_id
+    return record.experiment_id
 
 
 @main.command()

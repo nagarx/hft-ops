@@ -20,7 +20,7 @@ dependencies = [
     # consumed by `hft_ops.ledger.statistical_compare.compare_sweep_statistical`
     # adapter for `hft-ops sweep compare` CLI). Strictly additive bump per
     # SemVer; no symbols removed.
-    "hft-contracts>=2.5.0",
+    "hft-contracts>=2.8.0",
     "click>=8.0",
     "pyyaml>=6.0",
     "rich>=13.0",
