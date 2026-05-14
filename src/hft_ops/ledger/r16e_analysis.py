@@ -115,6 +115,15 @@ H1_IC_FLOOR: float = 0.05        # per-seed test_ic CI lower bound > 0.05
 # CI lower bound > 1.5 is the H2 acceptance gate
 H2_RATIO_FLOOR: float = 1.5
 
+# Borderline-CI threshold for manifest INDETERMINATE clause (line 157-158):
+# "H1 (a) borderline (CI crosses zero by < 1% margin) AND H1 (b) > 0 → INDETERMINATE"
+# Interpreted as: max(|ci_low|, |ci_high|) < margin (both bounds within ±1% in
+# FRACTION units, 0.01 = 1%). Triggers verdict re-classification when H1(a) just
+# barely fails AND mean-across-8 (manifest H1(b)) passes. Per hft-rules §13
+# pre-registered gates discipline — added 2026-05-14 mid-cycle to close
+# analyzer-vs-manifest spec drift surfaced by 3-agent adversarial review.
+H1_BORDERLINE_MARGIN: float = 0.01
+
 # R-16e grid expectations (per cycle9_r16e manifest: 2 model × 2 return × 10 seed = 40)
 EXPECTED_GRID_POINTS: int = 40
 
@@ -222,22 +231,44 @@ class R16eRatioResult:
 
 @dataclass(frozen=True)
 class R16eDecisionGateOutcome:
-    """5-way verdict on R-16e sweep (mirrors R-16c outcome structure).
+    """5-way verdict on R-16e sweep.
 
-    H1 PRIMARY three-conjunctive at Ridge×Point×H60-hold deep_itm_1.4bps:
-      (a) mean OptRet > 0%
-      (b) pooled CI lower bound > 0
-      (c) per-seed test_ic CI lower bound > H1_IC_FLOOR (0.05)
+    Per cycle9_r16e manifest line 145-149 + 205-208, H1 PRIMARY is a
+    three-conjunctive against MANIFEST-PRE-REGISTERED gates:
+      (a) Ridge × Point × H60-hold pooled CI > 0
+          (manifest H1(a), tracked here as ``h1_ci_ok``)
+      (b) Mean OptRet across 8 canonical thresholds > H1_MEAN_FLOOR
+          (manifest H1(b), tracked here as ``h1_mean_across_8_ok``)
+      (c) Per-seed test_ic CI lower bound > H1_IC_FLOOR (0.05)
+          (manifest H1(c), tracked here as ``h1_ic_floor_ok``)
     H2 BASELINE: Ridge/TLOB IC ratio CI lower bound > 1.5
     H4 INVARIANT: Ridge bit-exact within each (model, return_type) cell
     H6 LABEL-EXEC DIAGNOSTIC: smoothed × {Ridge, TLOB} mean OptRet ≤ 0%
        confirms E8 is structural (informational, not GO/REFUTE gating)
+
+    INDETERMINATE clause (manifest line 157-158):
+       ``h1_ci_ok=False`` AND ``h1_ci_borderline=True`` (CI within ±1%)
+       AND ``h1_mean_across_8_ok=True`` → trigger N=20 R-16e-extended.
+
+    HISTORICAL NOTE (2026-05-14): the ``h1_mean_ok`` + ``h1_mean_observed``
+    fields encode the original pre-fix analyzer's DRIFTED single-threshold
+    gate ("mean at deep_itm_1.4bps > 0"), which was NOT in the manifest.
+    They are preserved as DIAGNOSTIC FIELDS for cross-cycle continuity
+    + observability but DO NOT GATE the verdict. Gate-driving fields are
+    h1_ci_ok / h1_mean_across_8_ok / h1_ic_floor_ok / h4_invariant_ok.
+    See #PY-208 (closed by this same cycle's analyzer fix) for the
+    drift root-cause + manifest-vs-analyzer reconciliation.
     """
     verdict: Literal["GO", "REFUTE", "INDETERMINATE", "ABORT"]
-    # H1 PRIMARY three-conjunctive
-    h1_mean_ok: bool
-    h1_ci_ok: bool
-    h1_ic_floor_ok: bool          # per-seed test_ic CI lower bound > 0.05
+    # H1 PRIMARY three-conjunctive (manifest-pre-registered)
+    h1_ci_ok: bool                # manifest H1(a): pooled CI > 0
+    h1_mean_across_8_ok: bool     # manifest H1(b): mean across 8 thresholds > 0
+    h1_ic_floor_ok: bool          # manifest H1(c): per-seed test_ic CI > 0.05
+    # INDETERMINATE clause prerequisite (CI within ±1% margin)
+    h1_ci_borderline: bool
+    # H1 DIAGNOSTIC (pre-fix analyzer's drifted single-threshold gate;
+    # NOT verdict-gating but preserved for cross-cycle continuity)
+    h1_mean_ok: bool              # diagnostic: single-threshold mean > 0
     # H2 BASELINE
     h2_ratio_ok_point: bool       # Ridge/TLOB ratio CI > 1.5 at point_return
     h2_ratio_ok_smoothed: bool    # same at smoothed_return (informational)
@@ -246,7 +277,8 @@ class R16eDecisionGateOutcome:
     # H6 LABEL-EXEC DIAGNOSTIC (informational only)
     h6_e8_confirmed: bool         # both smoothed arms mean OptRet ≤ 0%
     # Diagnostic context (humans need to see WHY)
-    h1_mean_observed: float
+    h1_mean_observed: float       # diagnostic: single-threshold mean
+    h1_mean_across_8_observed: float  # manifest H1(b) observed value
     h1_ci_low_observed: float
     h1_ci_high_observed: float
     h1_ic_mean_observed: float
@@ -347,24 +379,106 @@ def _extract_test_ic(record: Dict[str, Any]) -> Optional[float]:
     return float(val)
 
 
+def _mean_across_thresholds_primary_cell(
+    cell_results: Dict[Tuple[str, str, str], "R16eCellResult"],
+    primary_cell: Tuple[str, str] = H1_PRIMARY_CELL,
+) -> float:
+    """Compute manifest H1(b) statistic: mean OptRet across the 8 canonical
+    thresholds for the primary cell (Ridge × Point × H60-hold).
+
+    Per cycle9_r16e manifest line 147 + 207:
+        "mean OptRet across 8 thresholds > 0"
+
+    Pre-registered as a CONJUNCT of H1 PRIMARY (not informational) but
+    inadvertently dropped from the analyzer's initial implementation
+    (#PY-208, closed 2026-05-14 mid-cycle). This helper computes it
+    correctly: skips insufficient-data thresholds + non-finite means;
+    returns NaN if no thresholds contribute.
+
+    Interpretation choice (documented per Agent 1 mid-impl gate review):
+        "OptRet across 8 thresholds" admits two reasonable mathematical
+        readings:
+          (a) MEAN(per_trade_mean_i for i in 8 thresholds) — equal weight
+              per threshold, regardless of trade count. CHOSEN HERE.
+          (b) MEAN(aggregate_option_return_pct_i for i in 8 thresholds) —
+              implicitly weights by trade count (since aggregate =
+              per_trade_mean × n_trades). Alternative interpretation.
+
+        We adopt (a) because it is:
+          - The CONSERVATIVE reading: a PASS in (a) implies a PASS in (b)
+            since the high-return threshold (e.g., ultra_conv_15bps at
+            +0.16% per-trade with 34 trades = +5.52% aggregate) is
+            DOWN-WEIGHTED to 1/8 of the average vs in (b) where it is
+            heavily weighted via × n_trades.
+          - "Cherry-pick-resistant" per manifest cycle9_r16e line 91
+            (no-cherry-pick principle): a single high-return threshold
+            cannot single-handedly carry the H1(b) gate.
+          - Aligns with what the manifest author most likely intended
+            given the no-cherry-pick framing.
+
+        For Ridge × Point × H60-hold R-16e empirics: both (a) and (b)
+        yield POSITIVE mean → same verdict regardless of interpretation.
+        Future R-cycles must adopt the same convention; deviation
+        requires explicit justification.
+
+    Returns:
+        Float mean across the 8 thresholds (FRACTION units; per-trade-mean
+        equal-weighted across threshold cells, per interpretation (a) above).
+        NaN if no valid threshold cells exist.
+    """
+    means: List[float] = []
+    for threshold in CANONICAL_THRESHOLD_LABELS:
+        cell = cell_results.get((*primary_cell, threshold))
+        if cell is None or cell.insufficient_data:
+            continue
+        if np.isfinite(cell.mean_opt_ret):
+            means.append(cell.mean_opt_ret)
+    if not means:
+        return float("nan")
+    return float(np.mean(means))
+
+
 def _classify_verdict_r16e(
     *,
-    h1_mean_ok: bool,
     h1_ci_ok: bool,
+    h1_mean_across_8_ok: bool,
     h1_ic_floor_ok: bool,
     h4_invariant_ok: bool,
+    h1_ci_borderline: bool = False,
 ) -> Tuple[str, int]:
-    """Classify R-16e decision-gate verdict.
+    """Classify R-16e decision-gate verdict per cycle9_r16e manifest.
 
-    Per pre-registered decision logic in cycle9_r16e manifest:
-    - GO: all H1 + H4
-    - ABORT: H4 fails (architectural ship-blocker)
-    - REFUTE: H4 OK AND any H1 fails
+    Per pre-registered decision logic in cycle9_r16e manifest line 145-163:
+
+      - GO (line 145-149): H1(a) + H1(b) + H1(c) + H4 all PASS
+      - ABORT (line 161-163): H4 fails (architectural ship-blocker)
+      - INDETERMINATE (line 157-159): H1(a) borderline (CI within ±1%)
+          AND H1(b) > 0 → trigger R-16e-extended N=20
+      - REFUTE (line 151-155): H4 OK AND H1 fails AND not INDETERMINATE
+
+    Args:
+        h1_ci_ok: Manifest H1(a) — pooled CI > 0.
+        h1_mean_across_8_ok: Manifest H1(b) — mean across 8 thresholds > 0.
+        h1_ic_floor_ok: Manifest H1(c) — per-seed test_ic CI > 0.05.
+        h4_invariant_ok: H4 architectural — Ridge bit-exact within cells.
+        h1_ci_borderline: True iff CI bounds lie within ±H1_BORDERLINE_MARGIN
+            (default 1% margin). Per manifest line 157-158, enables
+            re-classification of borderline H1(a) failure to INDETERMINATE
+            when H1(b) passes. Default False preserves pure-REFUTE on
+            non-borderline failures.
+
+    Returns:
+        Tuple of (verdict_string, exit_code).
     """
     if not h4_invariant_ok:
         return "ABORT", 2
-    if h1_mean_ok and h1_ci_ok and h1_ic_floor_ok:
+    if h1_ci_ok and h1_mean_across_8_ok and h1_ic_floor_ok:
         return "GO", 0
+    # Manifest INDETERMINATE clause (line 157-158):
+    # H1(a) borderline AND H1(b) > 0 → INDETERMINATE
+    # Only triggers when H1(a) FAILS but borderline; otherwise pure REFUTE.
+    if (not h1_ci_ok) and h1_ci_borderline and h1_mean_across_8_ok:
+        return "INDETERMINATE", 1
     return "REFUTE", 1
 
 
@@ -645,23 +759,61 @@ def analyze_r16e_sweep(
         )
 
     # =========================================================================
-    # H1 PRIMARY: Ridge × Point × H60-hold at deep_itm_1.4bps
+    # H1 PRIMARY: Ridge × Point × H60-hold per MANIFEST pre-registered gates
     # =========================================================================
+    # Manifest cycle9_r16e (line 145-149 GO + 205-208 hypothesis):
+    #   H1(a) pooled CI > 0   → h1_ci_ok
+    #   H1(b) mean across 8 thresholds > 0   → h1_mean_across_8_ok
+    #   H1(c) per-seed test_ic CI lower > 0.05   → h1_ic_floor_ok
+    # Plus INDETERMINATE clause (line 157-158):
+    #   H1(a) borderline (CI within ±1%) AND H1(b) > 0 → INDETERMINATE
+    #
+    # NOTE: ``h1_mean_obs``/``h1_mean_ok`` retained as DIAGNOSTIC (single
+    # threshold at deep_itm_1.4bps); they were the pre-fix analyzer's
+    # drifted gate per #PY-208. They are now informational, not verdict-
+    # gating. Verdict driven by h1_ci_ok + h1_mean_across_8_ok + h1_ic_floor_ok.
     primary_cell_key = (*H1_PRIMARY_CELL, H1_TARGET_THRESHOLD)
     primary_cell = cell_results.get(primary_cell_key)
     if primary_cell is None or primary_cell.insufficient_data:
         h1_mean_ok = h1_ci_ok = h1_ic_floor_ok = False
         h1_mean_obs = h1_ci_low_obs = h1_ci_high_obs = float("nan")
         h1_ic_mean_obs = h1_ic_ci_low_obs = float("nan")
+        h1_ci_borderline = False
     else:
         h1_mean_obs = primary_cell.mean_opt_ret
         h1_ci_low_obs = primary_cell.ci_low
         h1_ci_high_obs = primary_cell.ci_high
         h1_ic_mean_obs = primary_cell.test_ic_mean
         h1_ic_ci_low_obs = primary_cell.test_ic_ci_low
+        # Diagnostic (pre-fix drifted gate; not used in verdict)
         h1_mean_ok = h1_mean_obs > H1_MEAN_FLOOR
-        h1_ci_ok = h1_ci_low_obs > 0.0
-        h1_ic_floor_ok = h1_ic_ci_low_obs > H1_IC_FLOOR
+        # MANIFEST H1(a): pooled CI > 0
+        h1_ci_ok = (
+            np.isfinite(h1_ci_low_obs) and h1_ci_low_obs > 0.0
+        )
+        # MANIFEST H1(c): per-seed test_ic CI lower > 0.05
+        h1_ic_floor_ok = (
+            np.isfinite(h1_ic_ci_low_obs) and h1_ic_ci_low_obs > H1_IC_FLOOR
+        )
+        # INDETERMINATE clause prerequisite: CI bounds within ±1% margin
+        # (FRACTION units; per manifest line 158 "CI crosses zero by < 1%").
+        # Interpretation: max(|ci_low|, |ci_high|) < margin — both bounds
+        # close to zero such that the crossing is "narrow".
+        if np.isfinite(h1_ci_low_obs) and np.isfinite(h1_ci_high_obs):
+            h1_ci_borderline = (
+                max(abs(h1_ci_low_obs), abs(h1_ci_high_obs)) < H1_BORDERLINE_MARGIN
+            )
+        else:
+            h1_ci_borderline = False
+
+    # MANIFEST H1(b): mean OptRet across 8 thresholds for primary cell
+    h1_mean_across_8_obs = _mean_across_thresholds_primary_cell(
+        cell_results, primary_cell=H1_PRIMARY_CELL,
+    )
+    h1_mean_across_8_ok = (
+        np.isfinite(h1_mean_across_8_obs)
+        and h1_mean_across_8_obs > H1_MEAN_FLOOR
+    )
 
     # =========================================================================
     # H6 LABEL-EXECUTION DIAGNOSTIC (informational)
@@ -684,13 +836,14 @@ def analyze_r16e_sweep(
     )
 
     # =========================================================================
-    # Verdict classification + reasons
+    # Verdict classification + reasons (per cycle9_r16e manifest line 145-163)
     # =========================================================================
     verdict, exit_code = _classify_verdict_r16e(
-        h1_mean_ok=h1_mean_ok,
         h1_ci_ok=h1_ci_ok,
+        h1_mean_across_8_ok=h1_mean_across_8_ok,
         h1_ic_floor_ok=h1_ic_floor_ok,
         h4_invariant_ok=h4_invariant_ok,
+        h1_ci_borderline=h1_ci_borderline,
     )
 
     reasons: List[str] = []
@@ -699,18 +852,54 @@ def analyze_r16e_sweep(
             f"H4 FAILED (ABORT): Ridge bit-exact invariant violated in cells "
             f"{h4_failed_cells}. Phase A.3 REDESIGN ship-blocker."
         )
-    if h1_mean_ok:
-        reasons.append(f"H1a PASS: mean OptRet={h1_mean_obs:.6f} > +{H1_MEAN_FLOOR:.4f}")
-    else:
-        reasons.append(f"H1a FAIL: mean OptRet={h1_mean_obs:.6f} ≤ +{H1_MEAN_FLOOR:.4f}")
+    # Manifest H1(a): pooled CI > 0
     if h1_ci_ok:
-        reasons.append(f"H1b PASS: CI=({h1_ci_low_obs:.6f}, {h1_ci_high_obs:.6f}); lower > 0")
+        reasons.append(
+            f"H1a PASS (CI > 0): CI=({h1_ci_low_obs:.6f}, {h1_ci_high_obs:.6f}); lower > 0"
+        )
     else:
-        reasons.append(f"H1b FAIL: CI=({h1_ci_low_obs:.6f}, {h1_ci_high_obs:.6f}); lower ≤ 0")
+        borderline_suffix = " [BORDERLINE — within ±{m:.0%}]".format(
+            m=H1_BORDERLINE_MARGIN
+        ) if h1_ci_borderline else ""
+        reasons.append(
+            f"H1a FAIL (CI > 0): CI=({h1_ci_low_obs:.6f}, {h1_ci_high_obs:.6f})"
+            f"{borderline_suffix}"
+        )
+    # Manifest H1(b): mean OptRet across 8 thresholds > 0
+    if h1_mean_across_8_ok:
+        reasons.append(
+            f"H1b PASS (mean across 8 thresholds > 0): "
+            f"mean_across_8={h1_mean_across_8_obs:.6f} > +{H1_MEAN_FLOOR:.4f}"
+        )
+    else:
+        reasons.append(
+            f"H1b FAIL (mean across 8 thresholds > 0): "
+            f"mean_across_8={h1_mean_across_8_obs:.6f} ≤ +{H1_MEAN_FLOOR:.4f}"
+        )
+    # Manifest H1(c): per-seed test_ic CI lower bound > 0.05
     if h1_ic_floor_ok:
-        reasons.append(f"H1c PASS: test_ic CI lower={h1_ic_ci_low_obs:.4f} > {H1_IC_FLOOR:.2f}")
+        reasons.append(
+            f"H1c PASS (IC CI > {H1_IC_FLOOR:.2f}): test_ic CI lower={h1_ic_ci_low_obs:.4f}"
+        )
     else:
-        reasons.append(f"H1c FAIL: test_ic CI lower={h1_ic_ci_low_obs:.4f} ≤ {H1_IC_FLOOR:.2f}")
+        reasons.append(
+            f"H1c FAIL (IC CI > {H1_IC_FLOOR:.2f}): test_ic CI lower={h1_ic_ci_low_obs:.4f}"
+        )
+    # INDETERMINATE clause diagnostic — only emit when actually triggered
+    if verdict == "INDETERMINATE":
+        reasons.append(
+            f"INDETERMINATE clause TRIGGERED (manifest line 157-158): H1(a) FAIL but "
+            f"borderline AND H1(b) PASS → Trigger R-16e-extended N=20 + walk-forward "
+            f"per manifest decision logic."
+        )
+    # Diagnostic — pre-fix analyzer's drifted single-threshold gate (informational)
+    diag_status = "PASS" if h1_mean_ok else "FAIL"
+    reasons.append(
+        f"DIAGNOSTIC (single-threshold deep_itm_1.4bps, NOT manifest-gated): "
+        f"mean={h1_mean_obs:.6f} ({diag_status} relative to +{H1_MEAN_FLOOR:.4f}). "
+        f"Per #PY-208, this gate is informational only; verdict is driven by "
+        f"manifest H1(a)/(b)/(c)."
+    )
     # H2 informational reasons
     rr_point = ratio_results.get("point_return")
     rr_smoothed = ratio_results.get("smoothed_return")
@@ -743,14 +932,23 @@ def analyze_r16e_sweep(
 
     outcome = R16eDecisionGateOutcome(
         verdict=verdict,
-        h1_mean_ok=h1_mean_ok,
+        # H1 PRIMARY (manifest pre-registered gates)
         h1_ci_ok=h1_ci_ok,
+        h1_mean_across_8_ok=h1_mean_across_8_ok,
         h1_ic_floor_ok=h1_ic_floor_ok,
+        h1_ci_borderline=h1_ci_borderline,
+        # H1 DIAGNOSTIC (informational; #PY-208 pre-fix drifted gate)
+        h1_mean_ok=h1_mean_ok,
+        # H2 BASELINE
         h2_ratio_ok_point=h2_ratio_ok_point,
         h2_ratio_ok_smoothed=h2_ratio_ok_smoothed,
+        # H4 INVARIANT
         h4_invariant_ok=h4_invariant_ok,
+        # H6 LABEL-EXEC DIAGNOSTIC
         h6_e8_confirmed=h6_e8_confirmed,
+        # Observed values (humans need to see WHY)
         h1_mean_observed=h1_mean_obs,
+        h1_mean_across_8_observed=h1_mean_across_8_obs,
         h1_ci_low_observed=h1_ci_low_obs,
         h1_ci_high_observed=h1_ci_high_obs,
         h1_ic_mean_observed=h1_ic_mean_obs,
@@ -824,15 +1022,32 @@ def render_verdict(
 
 
 def outcome_to_json_dict(outcome: R16eDecisionGateOutcome) -> Dict[str, Any]:
-    """Serialize outcome to a JSON-compatible dict for archival."""
+    """Serialize outcome to a JSON-compatible dict for archival.
+
+    Schema (2026-05-14, post #PY-208 spec-drift fix):
+      h1.ci_ok                  — manifest H1(a): pooled CI > 0 (GATING)
+      h1.mean_across_8_ok       — manifest H1(b): mean across 8 thresholds > 0 (GATING)
+      h1.ic_floor_ok            — manifest H1(c): per-seed test_ic CI > 0.05 (GATING)
+      h1.ci_borderline          — CI within ±1% (INDETERMINATE prerequisite)
+      h1.mean_ok                — DIAGNOSTIC single-threshold gate (NOT gating)
+      h1.mean_observed          — DIAGNOSTIC: mean at deep_itm_1.4bps
+      h1.mean_across_8_observed — manifest H1(b) observed value
+      h1.ci_low_observed/ci_high_observed — CI bounds
+      h1.ic_mean_observed/ic_ci_low_observed — IC observed values
+    """
     return {
         "verdict": outcome.verdict,
         "exit_code": outcome.exit_code,
         "h1": {
-            "mean_ok": outcome.h1_mean_ok,
+            # GATING fields (manifest-pre-registered)
             "ci_ok": outcome.h1_ci_ok,
+            "mean_across_8_ok": outcome.h1_mean_across_8_ok,
             "ic_floor_ok": outcome.h1_ic_floor_ok,
+            "ci_borderline": outcome.h1_ci_borderline,
+            # DIAGNOSTIC fields (informational; not verdict-gating)
+            "mean_ok": outcome.h1_mean_ok,
             "mean_observed": outcome.h1_mean_observed,
+            "mean_across_8_observed": outcome.h1_mean_across_8_observed,
             "ci_low_observed": outcome.h1_ci_low_observed,
             "ci_high_observed": outcome.h1_ci_high_observed,
             "ic_mean_observed": outcome.h1_ic_mean_observed,

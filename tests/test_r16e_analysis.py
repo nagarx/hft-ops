@@ -198,28 +198,37 @@ class TestPairedBootstrapIcRatio:
 
 
 class TestClassifyVerdictR16e:
-    """Parametric tests for _classify_verdict_r16e logic."""
+    """Parametric tests for _classify_verdict_r16e logic.
 
-    @pytest.mark.parametrize("h1_mean,h1_ci,h1_ic,h4,expected_verdict,expected_exit", [
+    Updated 2026-05-14 (#PY-208 closure): tests now reflect the manifest-aligned
+    H1 gates:
+      - h1_ci_ok           = manifest H1(a): pooled CI > 0
+      - h1_mean_across_8_ok = manifest H1(b): mean across 8 thresholds > 0
+      - h1_ic_floor_ok     = manifest H1(c): per-seed test_ic CI > 0.05
+      - h1_ci_borderline   = INDETERMINATE clause prerequisite
+    """
+
+    @pytest.mark.parametrize("h1_ci,h1_mean8,h1_ic,h4,expected_verdict,expected_exit", [
         # All H1 + H4 pass → GO
         (True, True, True, True, "GO", 0),
-        # Any H1 fail + H4 pass → REFUTE
+        # Any H1 fail + H4 pass + not borderline → REFUTE
         (False, True, True, True, "REFUTE", 1),
         (True, False, True, True, "REFUTE", 1),
         (True, True, False, True, "REFUTE", 1),
         # H4 fails → ABORT (regardless of H1)
         (True, True, True, False, "ABORT", 2),
         (False, False, False, False, "ABORT", 2),
-        # All fail + H4 fail → ABORT
+        # All H1 fail + H4 fail → ABORT (H4 dominates)
         (False, False, False, False, "ABORT", 2),
     ])
-    def test_classify_verdict_parametric(
-        self, h1_mean: bool, h1_ci: bool, h1_ic: bool, h4: bool,
+    def test_classify_verdict_parametric_non_borderline(
+        self, h1_ci: bool, h1_mean8: bool, h1_ic: bool, h4: bool,
         expected_verdict: str, expected_exit: int,
     ):
+        """Parametric over manifest-aligned gates with borderline=False default."""
         verdict, exit_code = _classify_verdict_r16e(
-            h1_mean_ok=h1_mean,
             h1_ci_ok=h1_ci,
+            h1_mean_across_8_ok=h1_mean8,
             h1_ic_floor_ok=h1_ic,
             h4_invariant_ok=h4,
         )
@@ -230,11 +239,90 @@ class TestClassifyVerdictR16e:
         """H4 fail → ABORT regardless of any H1 state (ship-blocker semantics)."""
         for h1_combo in [(True, True, True), (False, False, False), (True, False, True)]:
             verdict, _ = _classify_verdict_r16e(
-                h1_mean_ok=h1_combo[0], h1_ci_ok=h1_combo[1],
-                h1_ic_floor_ok=h1_combo[2], h4_invariant_ok=False,
+                h1_ci_ok=h1_combo[0],
+                h1_mean_across_8_ok=h1_combo[1],
+                h1_ic_floor_ok=h1_combo[2],
+                h4_invariant_ok=False,
             )
             assert verdict == "ABORT", \
                 f"Expected ABORT when H4 fails, got {verdict} with H1={h1_combo}"
+
+    def test_indeterminate_clause_triggers_when_ci_borderline_and_mean_passes(self):
+        """Manifest line 157-158: H1(a) borderline AND H1(b) > 0 → INDETERMINATE.
+
+        Closes the analyzer drift surfaced by #PY-208 (R-16e empirical case:
+        H1(a) FAIL with CI=(-0.000468, +0.000313) — borderline within ±1% —
+        AND H1(b) PASS at mean-across-8=+0.2025% → INDETERMINATE per manifest).
+        """
+        verdict, exit_code = _classify_verdict_r16e(
+            h1_ci_ok=False,            # CI FAIL (lower < 0)
+            h1_mean_across_8_ok=True,  # H1(b) PASS
+            h1_ic_floor_ok=True,       # H1(c) PASS
+            h4_invariant_ok=True,      # H4 PASS
+            h1_ci_borderline=True,     # CI within ±1% margin
+        )
+        assert verdict == "INDETERMINATE", \
+            "Expected INDETERMINATE per manifest line 157-158 when CI fails but borderline + H1(b) > 0"
+        assert exit_code == 1  # 1 = REFUTE or INDETERMINATE (per analyzer docstring)
+
+    def test_indeterminate_clause_NOT_triggered_when_not_borderline(self):
+        """If CI fails NON-borderline (>1% margin), REFUTE not INDETERMINATE."""
+        verdict, _ = _classify_verdict_r16e(
+            h1_ci_ok=False,
+            h1_mean_across_8_ok=True,
+            h1_ic_floor_ok=True,
+            h4_invariant_ok=True,
+            h1_ci_borderline=False,  # NOT borderline
+        )
+        assert verdict == "REFUTE", \
+            "Expected REFUTE when CI fails non-borderline (manifest clause requires borderline)"
+
+    def test_indeterminate_clause_NOT_triggered_when_mean_across_8_fails(self):
+        """INDETERMINATE clause requires H1(b) PASS — fails if mean across 8 ≤ 0."""
+        verdict, _ = _classify_verdict_r16e(
+            h1_ci_ok=False,
+            h1_mean_across_8_ok=False,  # H1(b) FAIL
+            h1_ic_floor_ok=True,
+            h4_invariant_ok=True,
+            h1_ci_borderline=True,  # CI borderline but H1(b) fails
+        )
+        assert verdict == "REFUTE", \
+            "Expected REFUTE when H1(b) fails — INDETERMINATE clause requires BOTH borderline AND H1(b) PASS"
+
+    def test_indeterminate_clause_subsumed_by_GO_when_ci_passes(self):
+        """If CI passes (not borderline), normal GO path applies — borderline is irrelevant."""
+        verdict, _ = _classify_verdict_r16e(
+            h1_ci_ok=True,             # CI > 0 (GO eligibility)
+            h1_mean_across_8_ok=True,
+            h1_ic_floor_ok=True,
+            h4_invariant_ok=True,
+            h1_ci_borderline=True,  # borderline flag is irrelevant when CI passes
+        )
+        assert verdict == "GO", \
+            "Expected GO when all H1 pass — borderline flag should be ignored"
+
+    def test_indeterminate_clause_does_not_require_h1c_pass(self):
+        """INDETERMINATE clause only requires H1(a) borderline + H1(b) PASS — H1(c) is silent.
+
+        Manifest line 157-158 ("H1(a) borderline AND H1(b) > 0 → INDETERMINATE") is silent
+        on H1(c). The analyzer's interpretation: INDETERMINATE means "low power, need
+        more data". An IC floor failure doesn't preclude that (more seeds might lift IC
+        above floor in R-16e-extended N=20). Deliberate design choice; locked here to
+        prevent silent regression.
+
+        Renamed 2026-05-14 mid-impl gate per Agent 1 review: original name said
+        "still_refutes" but assertion is INDETERMINATE (name was inverted relative
+        to behavior). This name matches the actual behavior.
+        """
+        verdict, _ = _classify_verdict_r16e(
+            h1_ci_ok=False,
+            h1_mean_across_8_ok=True,
+            h1_ic_floor_ok=False,  # H1(c) FAIL — IC noise floor not met
+            h4_invariant_ok=True,
+            h1_ci_borderline=True,
+        )
+        assert verdict == "INDETERMINATE", \
+            "Per current spec, INDETERMINATE only requires h1_ci borderline + h1_mean_across_8"
 
 
 class TestExtractTestIc:
@@ -291,10 +379,21 @@ class TestDataclassInvariants:
     def test_outcome_frozen(self):
         outcome = R16eDecisionGateOutcome(
             verdict="GO",
-            h1_mean_ok=True, h1_ci_ok=True, h1_ic_floor_ok=True,
+            # H1 PRIMARY (manifest-aligned gates per #PY-208 fix)
+            h1_ci_ok=True,
+            h1_mean_across_8_ok=True,
+            h1_ic_floor_ok=True,
+            h1_ci_borderline=False,
+            # H1 diagnostic (informational)
+            h1_mean_ok=True,
+            # H2 BASELINE
             h2_ratio_ok_point=True, h2_ratio_ok_smoothed=False,
+            # H4 + H6
             h4_invariant_ok=True, h6_e8_confirmed=False,
-            h1_mean_observed=0.001, h1_ci_low_observed=0.0002, h1_ci_high_observed=0.002,
+            # Observed values
+            h1_mean_observed=0.001,
+            h1_mean_across_8_observed=0.002,
+            h1_ci_low_observed=0.0002, h1_ci_high_observed=0.002,
             h1_ic_mean_observed=0.07, h1_ic_ci_low_observed=0.06,
             h2_ratio_mean_point=2.5, h2_ratio_ci_low_point=1.8,
             h2_ratio_mean_smoothed=1.1, h2_ratio_ci_low_smoothed=0.9,

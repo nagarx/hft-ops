@@ -1,0 +1,32 @@
+==============================================================================
+R-16e EXTENDED VERDICT: INDETERMINATE (exit_code=1)
+==============================================================================
+
+Pre-registered hypothesis gates:
+  - H1a FAIL (CI > 0): CI=(-0.000468, 0.000313) [BORDERLINE — within ±1%]
+  - H1b PASS (mean across 8 thresholds > 0): mean_across_8=0.000161 > +0.0000
+  - H1c PASS (IC CI > 0.05): test_ic CI lower=0.1473
+  - INDETERMINATE clause TRIGGERED (manifest line 157-158): H1(a) FAIL but borderline AND H1(b) PASS → Trigger R-16e-extended N=20 + walk-forward per manifest decision logic.
+  - DIAGNOSTIC (single-threshold deep_itm_1.4bps, NOT manifest-gated): mean=-0.000054 (FAIL relative to +0.0000). Per #PY-208, this gate is informational only; verdict is driven by manifest H1(a)/(b)/(c).
+  - H2 RATIO (point_return): 1.653× [CI 1.479, 1.907] FAIL (floor 1.5)
+  - H2 RATIO (smoothed_return): 1.084× [CI 1.067, 1.105] FAIL (informational)
+  - H6 E8 CONFIRMED: smoothed × Ridge mean=-0.000200 ≤ 0, smoothed × TLOB mean=-0.000022 ≤ 0. Label-execution mismatch is STRUCTURAL (label-side), NOT hold-mismatch artifact.
+
+Per-cell summary at H1_TARGET_THRESHOLD = deep_itm_1.4bps:
+------------------------------------------------------------------------------
+Cell                                      n_seeds   n_trades         mean                   CI
+------------------------------------------------------------------------------
+temporal_ridge__point_return                     1        130    -0.000054   (-0.00047,0.00031)
+temporal_ridge__smoothed_return                  1        132    -0.000200   (-0.00055,0.00019)
+tlob__point_return                    10       1264    -0.000107  (-0.00021,-0.00001)
+tlob__smoothed_return                 10       1319    -0.000022   (-0.00012,0.00008)
+
+H2 Ridge/TLOB IC ratio (paired bootstrap):
+  point_return: Ridge_IC=0.1473, TLOB_IC_mean=0.0891, Ratio=1.653 CI=(1.479,1.907) FAIL (floor 1.5)
+  smoothed_return: Ridge_IC=0.1557, TLOB_IC_mean=0.1436, Ratio=1.084 CI=(1.067,1.105) FAIL (floor 1.5)
+
+H6 E8 LABEL-EXECUTION DIAGNOSTIC (informational):
+  Smoothed × Ridge mean OptRet @ H60-hold: -0.000200
+  Smoothed × TLOB mean OptRet @ H60-hold:  -0.000022
+  E8 confirmed (both ≤ 0): True
+==============================================================================
