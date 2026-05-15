@@ -1,0 +1,57 @@
+{
+  "analysis_kind": "r17a_vs_r19_pt_precision",
+  "clears_cost_economics_floor": false,
+  "cross_ref": {
+    "backlog_entries": [
+      "#PY-241",
+      "#PY-258"
+    ],
+    "comprehensive_validation_doc": "COMPREHENSIVE_VALIDATION_2026_05_15_NIGHT.md \u00a77",
+    "consumes_ssot": "hft_metrics block_bootstrap_ci paired=False (v0.1.11, #PY-255 closure)",
+    "design_gate": "Agent Z pre-impl design gate Option B cycle 2026-05-15 NIGHT"
+  },
+  "inputs": {
+    "n_samples": 17480,
+    "r17a_signal_dir": "/Users/knight/code_local/HFT-pipeline-v2/lob-model-trainer/outputs/experiments/r17a_logistic_tb_v3p0_h30/signals/test",
+    "r19_signal_dir": "/Users/knight/code_local/HFT-pipeline-v2/lob-model-trainer/outputs/experiments/r19_tlob_tb_v3p0_h30/signals/test"
+  },
+  "mcnemar": {
+    "a_both_correct": 1077,
+    "b_r19_only_correct": 538,
+    "c_r17a_only_correct": 381,
+    "d_both_wrong": 15484,
+    "p_value_one_sided": 1.248135592415494e-07,
+    "p_value_two_sided": 2.6614880087541583e-07,
+    "statistic": 26.48095756256801
+  },
+  "mean_diff_precision": 0.049153985928665656,
+  "pre_registered_constants": {
+    "alpha": 0.05,
+    "cost_economics_floor": 0.05,
+    "h1": "R-19 PT precision > R-17a PT precision (one-sided)",
+    "pt_class_index": 2
+  },
+  "r17a": {
+    "arm_name": "r17a_logistic_tb_v3p0_h30",
+    "pt_correct": 1458,
+    "pt_precision": 0.21974378296910324,
+    "pt_predictions": 6635,
+    "wilson_ci_high": 0.2298677164446895,
+    "wilson_ci_low": 0.20994418099733297
+  },
+  "r19": {
+    "arm_name": "r19_tlob_tb_v3p0_h30",
+    "pt_correct": 1615,
+    "pt_precision": 0.2688977688977689,
+    "pt_predictions": 6006,
+    "wilson_ci_high": 0.2802562969182048,
+    "wilson_ci_low": 0.2578346795208422
+  },
+  "schema_version": "1.0",
+  "statistically_significant_at_alpha": true,
+  "timestamp_utc": "2026-05-15T14:35:18.499493+00:00",
+  "verdict": {
+    "label": "INDETERMINATE-COST-INSUFFICIENT",
+    "rationale": "McNemar one-sided p=0.0000 < \u03b1=0.05 (statistically significant) BUT mean diff +0.0492 < cost-economics floor 0.05. R-19's lift is REAL but does NOT clear cost-economics threshold (1.4 bps Deep ITM \u00f7 ~28 bps typical PT gain = 0.05 absolute precision diff). Direction closed; PT precision plateau confirmed at ~22% architectural bound on TB v3p0 NVDA."
+  }
+}
