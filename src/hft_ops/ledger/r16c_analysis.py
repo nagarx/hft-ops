@@ -79,6 +79,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 import numpy as np
 
 from hft_contracts.provenance import hash_file
+from hft_metrics import block_bootstrap_ci
 from hft_metrics._sanitize import assert_finite_array
 
 from hft_ops.ledger.signal_dir import resolve_signal_dir
@@ -237,21 +238,32 @@ def _pooled_block_bootstrap_mean_ci(
     ci: float = 0.95,
     seed: int = DEFAULT_BOOTSTRAP_SEED,
 ) -> Tuple[float, float, float, int, int]:
-    """Moving block bootstrap CI on single-array mean.
+    """Moving block bootstrap CI on single-array mean (R-analyzer wrapper).
 
-    Specialized for R-16c per-trade pooled use case. For paired-array stats
-    (Spearman IC, Pearson r), use ``hft_metrics.bootstrap.block_bootstrap_ci``
-    (paired (x, y) signature, returns 4-tuple). This single-array helper
-    avoids the dummy-y workaround Agent G Q2 flagged. ~15 LOC documented-
-    intentional-near-duplicate; if a 3rd consumer emerges, promote to
-    ``hft-metrics`` v0.1.10 (per §0 reuse-first threshold).
+    Thin R-analyzer-specific wrapper around ``hft_metrics.bootstrap.block_bootstrap_ci``
+    paired=False mode (v0.1.11). The bootstrap loop itself lives in
+    hft-metrics SSoT; this wrapper handles the R-analyzer-specific
+    block_length adjustment (N_BLOCKS_MIN=5 hard floor) + returns the
+    5-tuple including ``block_length_used`` for operator diagnostics.
+
+    Pre-v0.1.11 history: this function inlined the full bootstrap loop
+    as a "documented-intentional-near-duplicate" of the SSoT (~75 LOC).
+    Wave 2 Agent J (Comprehensive Validation 2026-05-15 NIGHT) surfaced
+    that r16c + r16d + r16e have crossed the §0 3-consumer SSoT-promotion
+    threshold, triggering #PY-255 closure: SSoT was extended with
+    ``paired: bool = True`` parameter, and the bootstrap loop here now
+    delegates to it. Bit-exact preservation: same RNG seed, same
+    np.RandomState class, same block_starts sequence, same indices,
+    same np.mean stat → IDENTICAL output to pre-v0.1.11 inline path
+    (verified by hft-ops/tests/test_r16c_analysis.py::TestPooledBlockBootstrapMeanCi
+    + hft-metrics/tests/test_bootstrap.py::TestBlockBootstrapSingleArrayMode::
+    test_single_array_pooled_mean_matches_inline_r16c_semantic).
 
     Returns:
-        (estimate, ci_lower, ci_upper, n_nonfinite_replaced, block_length_used)
-        — extends Cluster Z v0.1.9 4-tuple with explicit ``block_length_used``
-        for operator diagnostics (when default cube-root rule produced
-        n_blocks < N_BLOCKS_MIN floor, the helper raises the block_length
-        downward to maintain ≥5 blocks).
+        (estimate, ci_lower, ci_upper, n_nonfinite_replaced, block_length_used).
+        The wrapper extends the SSoT's 4-tuple with ``block_length_used``
+        because R-analyzer operator diagnostics need to surface when the
+        cube-root default was overridden by the N_BLOCKS_MIN floor.
 
     Args:
         arr: Single 1-D array of values (pooled per-trade pnls).
@@ -260,52 +272,48 @@ def _pooled_block_bootstrap_mean_ci(
             Politis-Romano 1994 with N_BLOCKS_MIN=5 hard floor.
         ci: Confidence level (default 0.95).
         seed: RNG seed for reproducibility.
-
-    Raises:
-        ValueError: if len(arr) < 3 (insufficient data for bootstrap).
     """
     arr = np.asarray(arr, dtype=np.float64)
     n = len(arr)
     if n < 3:
-        # Mirror hft-metrics block_bootstrap_ci edge-case behavior
+        # Mirror hft-metrics block_bootstrap_ci edge-case behavior:
+        # return point estimate everywhere with block_length_used=1.
         m = float(np.mean(arr)) if n > 0 else float("nan")
         return m, m, m, 0, 1
 
-    # Cube-root block_length with N_BLOCKS_MIN hard floor (Agent H E3)
+    # R-analyzer-specific block_length determination:
+    # Cube-root block_length with N_BLOCKS_MIN hard floor (Agent H E3).
+    # This logic stays HERE (not pushed to SSoT) because SSoT's caller
+    # contract is "either auto-derive cube-root or accept explicit value";
+    # the R-analyzer-specific N_BLOCKS_MIN floor adjustment is a
+    # domain-specific operator-diagnostic concern, not a general bootstrap
+    # invariant. The cube-root default + ceiling division semantics are
+    # SSoT (block_bootstrap_ci handles them); only the N_BLOCKS_MIN floor
+    # is R-analyzer-specific.
     if block_length is None:
         block_length = max(1, math.ceil(n ** (1.0 / 3.0)))
     # If default produces fewer than N_BLOCKS_MIN blocks, reduce block_length
     if n // max(1, block_length) < N_BLOCKS_MIN:
         block_length = max(1, n // N_BLOCKS_MIN)
 
-    estimate = float(np.mean(arr))
-    rng = np.random.RandomState(seed)
-    alpha = 1.0 - ci
-    # 2026-05-13 #PY-186 closure (sister site of hft-metrics/bootstrap.py:213):
-    # ceiling division matches pairwise.py:297 + hft-metrics v0.1.10. Old floor
-    # `n // block_length` produced indices SHORT of n when `n % block_length != 0`,
-    # narrowing the bootstrap distribution → false-positive significance. Ceiling
-    # over-produces + `[:n]` trim restores moving-block-bootstrap semantic.
-    # R-16c (702 trades, block=9, remainder 0) → ceil == floor → REFUTE verdict
-    # unchanged. R-16d may have different n; ceiling future-proofs.
-    n_blocks = max(1, math.ceil(n / block_length))
-
-    boot_stats = np.empty(n_bootstraps, dtype=np.float64)
-    n_nonfinite_replaced = 0
-    for b in range(n_bootstraps):
-        block_starts = rng.randint(0, max(1, n - block_length + 1), size=n_blocks)
-        indices = np.concatenate([
-            np.arange(s, min(s + block_length, n)) for s in block_starts
-        ])[:n]
-        stat = float(np.mean(arr[indices]))
-        if np.isfinite(stat):
-            boot_stats[b] = stat
-        else:
-            boot_stats[b] = estimate
-            n_nonfinite_replaced += 1
-
-    ci_lower = float(np.nanpercentile(boot_stats, 100 * alpha / 2))
-    ci_upper = float(np.nanpercentile(boot_stats, 100 * (1 - alpha / 2)))
+    # Delegate bootstrap loop to hft-metrics SSoT (paired=False single-
+    # array mode added in v0.1.11 / #PY-255 closure 2026-05-15). SSoT
+    # owns: estimate computation, RNG initialization, ceiling-division
+    # n_blocks (#PY-186 fix), block_starts sampling, indices concatenation
+    # + trim, statistic_fn evaluation, np.isfinite check with conservative
+    # estimate substitution + n_nonfinite_replaced counter, percentile CI.
+    # Bit-exact identical RNG sequence: same seed → same np.RandomState →
+    # same block_starts → same indices → same stat → same boot_stats →
+    # same ci_lower/ci_upper.
+    estimate, ci_lower, ci_upper, n_nonfinite_replaced = block_bootstrap_ci(
+        statistic_fn=lambda a: float(np.mean(a)),
+        x=arr,
+        paired=False,
+        n_bootstraps=n_bootstraps,
+        block_length=block_length,
+        ci=ci,
+        seed=seed,
+    )
     return estimate, ci_lower, ci_upper, n_nonfinite_replaced, block_length
 
 

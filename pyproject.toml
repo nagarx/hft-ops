@@ -50,7 +50,11 @@ dependencies = [
     # pattern). hft-ops doesn't directly consume the 4-tuple but stays aligned with
     # the producer floor — pre-v0.1.9 installs could hit BREAKING API change via
     # transitive dependency (trainer + evaluator both pin >=0.1.9).
-    "hft-metrics>=0.1.9",
+    # >=0.1.11 after #PY-255 closure (2026-05-15): block_bootstrap_ci extended with
+    # paired=False single-array mode. hft-ops/ledger/r16c_analysis.py NOW CONSUMES
+    # paired=False directly (the bootstrap-loop body lives in SSoT post-#PY-255).
+    # Pre-v0.1.11 installs would raise TypeError on the paired= keyword arg.
+    "hft-metrics>=0.1.11",
 ]
 
 [project.optional-dependencies]
