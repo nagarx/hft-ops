@@ -111,8 +111,8 @@ def load_paired_arm(signal_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
     if not labels_path.exists():
         raise FileNotFoundError(f"missing labels.npy at {labels_path}")
 
-    predictions = np.load(predictions_path)
-    labels = np.load(labels_path)
+    predictions = np.load(predictions_path, allow_pickle=False)
+    labels = np.load(labels_path, allow_pickle=False)
 
     if predictions.shape != labels.shape:
         raise ValueError(

@@ -954,8 +954,14 @@ def gc_cache(
         size = sum(f.stat().st_size for f in child.rglob("*") if f.is_file())
         entries.append((child, mtime, size))
 
-    # Sort oldest-mtime first (LRU eviction order)
-    entries.sort(key=lambda t: t[1])
+    # Sort oldest-mtime first (LRU eviction order).
+    # #PY-293-NARROW (2026-05-16 LATE): secondary sort key `child.name`
+    # for deterministic LRU at sub-second granularity. `st_mtime` is
+    # 1-second resolution on ext4/HFS+; same-second entries would
+    # otherwise rely on `Path.iterdir()` which is filesystem-arbitrary.
+    # Tiebreaker via 64-hex cache-key name guarantees deterministic
+    # eviction order across repeated invocations + cross-platform.
+    entries.sort(key=lambda t: (t[1], t[0].name))
 
     now = time.time()
     age_threshold = now - (older_than_days * 86400.0) if older_than_days is not None else None

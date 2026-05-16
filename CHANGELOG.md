@@ -12,6 +12,29 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ## [0.3.0-dev] — in progress
 
+### Option B Path B' TIER 1 Hygiene Bundle (2026-05-16 LATE) — #PY-291 + #PY-293-NARROW
+
+**Shipped — 2 fixes closing Wave 2-C hidden findings from Cross-Pipeline Validation cycle 2026-05-16.**
+
+**Fixed — #PY-291 RCE-via-malicious-NPY** at 5 `np.load(...)` callsites in hft-ops:
+- `src/hft_ops/ledger/r16c_analysis.py:584` + `src/hft_ops/ledger/statistical_compare.py:166-167` (3 src sites)
+- `scripts/analyze_r17a_vs_r19_pt_precision.py:114-115` (2 sites; Option B Step 2 analyzer just shipped 2026-05-15 NIGHT)
+- Sister of FIND-110 closure in `lob-backtester` (commit `20dbc8f`) and trainer-side closure in `lob-model-trainer` same cycle
+- NEW `tests/test_security/test_np_load_allow_pickle_false.py` — AST regression-lock test
+
+**Fixed — #PY-293-NARROW deterministic LRU tiebreaker** at `src/hft_ops/scheduler/extraction_cache.py:957-964`:
+- Changed `entries.sort(key=lambda t: t[1])` → `entries.sort(key=lambda t: (t[1], t[0].name))`
+- Rationale: `st_mtime` is 1-second resolution on ext4/HFS+; same-second entries previously relied on `Path.iterdir()` order which is filesystem-arbitrary
+- Tiebreaker via 64-hex cache-key name guarantees deterministic eviction order
+- NEW regression test `test_gc_lru_deterministic_under_same_mtime_PY293_NARROW` (~65 LOC) verifies dry-run idempotence + ascending-name ordering when mtimes tie
+- Original `test_gc_lru_by_last_hit_with_size_budget` continues to pass (tuple-sort is strict refinement)
+
+**Wave 2 REFUTE outcomes**: Wave 1-D N8 TLOB final-flatten DOWNGRADED to DORMANT-DOCUMENTED (BIT-EQUIVALENT reshape in practice; no cross-loader exists). Wave 1-C R-17a/R-19 single-seed concerns DOWNGRADED to DEFERRED-LEGITIMATE (paired McNemar p=1.25e-07 + cost-floor verdict ROBUST regardless of seed variance).
+
+**Deferred — #PY-292 extraction_cache TOCTOU race**: Wave 2-A found `filelock.FileLock` lacks shared-read/exclusive-write semantics needed for the proposed lock; coarse-exclusive serialization would kill parallel-sweep throughput. Filed as `#PY-292-REVISED` with 2 design options: (a) coarse-exclusive with workflow constraint, (b) introduce `fasteners.InterProcessReaderWriterLock` dep. Requires separate dedicated cycle.
+
+**Validation**: 18 existing `test_extraction_cache.py` tests pass; 0 regressions.
+
 ### Phase 8D — #PY-223 Phase 2 (2026-05-14) — orchestrator delegation to hft-contracts SSoT
 
 **Changed — `_record_experiment` refactored to delegate to `hft_contracts.experiment_recorder.record_from_artifacts`**

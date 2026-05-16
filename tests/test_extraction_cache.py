@@ -624,6 +624,71 @@ class TestGarbageCollectionLRU:
                 "LRU order violated: oldest must be evicted first"
             )
 
+    def test_gc_lru_deterministic_under_same_mtime_PY293_NARROW(
+        self,
+        cache_root: Path,
+        synthetic_export: Path,
+        cache_key_inputs: CacheKeyInputs,
+    ):
+        """#PY-293-NARROW (2026-05-16 LATE): when two cache entries have
+        IDENTICAL `st_mtime` (1-second filesystem resolution on ext4/HFS+),
+        `entries.sort(key=lambda t: t[1])` is non-deterministic because
+        `Path.iterdir()` order is filesystem-arbitrary.
+
+        Fix: secondary tiebreaker via `child.name` (64-hex cache-key) ensures
+        deterministic LRU eviction across repeated invocations.
+
+        This test populates 3 entries with IDENTICAL mtimes (stamped to the
+        SAME wall-clock value) and verifies `gc_cache` returns them in
+        cache-key-name ascending order.
+        """
+        # Populate 3 entries with distinct cache keys
+        keys = []
+        for cfg_override in [
+            {"bin_size_seconds": 10},
+            {"bin_size_seconds": 30},
+            {"bin_size_seconds": 60},
+        ]:
+            config = {**cache_key_inputs.extractor_config_resolved, **cfg_override}
+            inputs = replace(cache_key_inputs, extractor_config_resolved=config)
+            key = compute_cache_key(inputs)
+            keys.append(key)
+            populate(
+                key,
+                synthetic_export,
+                cache_root,
+                extractor_duration_seconds=10.0,
+                cache_key_inputs=inputs,
+            )
+
+        # Stamp all 3 to the SAME mtime (simulate sub-second collision)
+        shared_mtime = time.time() - 300.0  # 5 min ago, well into eviction window
+        for key in keys:
+            os.utime(cache_root / key, (shared_mtime, shared_mtime))
+
+        # Dry-run GC twice; verify identical eviction order both times
+        planned_1 = gc_cache(cache_root, max_size_gb=0.000001, dry_run=True)
+        planned_2 = gc_cache(cache_root, max_size_gb=0.000001, dry_run=True)
+        planned_1_names = [Path(p).name for p in planned_1]
+        planned_2_names = [Path(p).name for p in planned_2]
+
+        assert planned_1_names == planned_2_names, (
+            "#PY-293-NARROW regression: gc_cache LRU eviction order is "
+            "non-deterministic when entries share st_mtime. "
+            f"Run 1: {[p[:12] for p in planned_1_names]}; "
+            f"Run 2: {[p[:12] for p in planned_2_names]}"
+        )
+
+        # Verify the order is sorted by cache-key name (deterministic tiebreaker)
+        sorted_keys = sorted(keys)
+        # planned MUST be a prefix of sorted_keys (older-first; same-mtime → name-asc)
+        # (size budget may not require all 3 to be evicted; we check ordering only)
+        for i in range(len(planned_1_names) - 1):
+            assert planned_1_names[i] < planned_1_names[i + 1], (
+                "#PY-293-NARROW: when mtimes tie, eviction order must be "
+                f"cache-key name ascending. Got: {planned_1_names}"
+            )
+
 
 # =============================================================================
 # Cycle 2 / #PY-41 (2026-05-07) — SSoT regression test

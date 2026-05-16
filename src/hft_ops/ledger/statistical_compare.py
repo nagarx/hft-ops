@@ -163,8 +163,8 @@ def _load_record_signals(
                 f"not yet supported by this MVP adapter."
             )
 
-    labels_arr = np.load(labels_path)
-    preds_arr = np.load(preds_path)
+    labels_arr = np.load(labels_path, allow_pickle=False)
+    preds_arr = np.load(preds_path, allow_pickle=False)
 
     if labels_arr.shape != preds_arr.shape:
         raise ValueError(

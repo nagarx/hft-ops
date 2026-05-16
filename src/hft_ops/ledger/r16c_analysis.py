@@ -581,7 +581,7 @@ def _load_per_trade_pnls(
                 f"banner via separate explicit invocation."
             )
         return None  # interpreted as n_trades=0 (legitimate skip)
-    arr = np.load(path)
+    arr = np.load(path, allow_pickle=False)
     # Agent H invariant 2: FINITENESS fail-loud per §8
     assert_finite_array(arr, name=f"r16c.{run_name}.{threshold_label}")
     # #PY-180 close (2026-05-13): DOLLAR → FRACTION of capital at load boundary
