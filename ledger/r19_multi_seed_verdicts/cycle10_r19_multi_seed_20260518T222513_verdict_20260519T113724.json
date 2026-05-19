@@ -1,0 +1,172 @@
+{
+  "aggregate": {
+    "bootstrap_ci_high": 0.27903489403074155,
+    "bootstrap_ci_low": 0.24875602087106125,
+    "bootstrap_n_nonfinite_replaced": 0,
+    "max_pt_precision": 0.2799272916125682,
+    "mean_pt_precision": 0.2638954574509014,
+    "min_pt_precision": 0.24105125460815793,
+    "std_pt_precision": 0.020274342447713464
+  },
+  "analysis_kind": "r19_multi_seed_validation",
+  "backlog_ref": "#PY-243",
+  "cross_ref": {
+    "backlog_entries": [
+      "#PY-243"
+    ],
+    "consumes_ssot": "hft_metrics.block_bootstrap_ci v0.1.11 (paired=False; #PY-255 closure)",
+    "design_gate": "Pre-impl Wave 2026-05-16 LATE NIGHT (3 agents: readiness + gates + REFUTE)",
+    "pattern_reuse": "analyze_r17a_vs_r19_pt_precision.py (Wilson CI + atomic_write_json)"
+  },
+  "cycle": "cycle10_r19_multi_seed",
+  "gates": {
+    "H1.a": {
+      "description": "|mean - R-19 anchor 0.269| = 0.0051 (\u2264) 0.02",
+      "observed": 0.00510454254909859,
+      "passed": true,
+      "threshold": 0.02
+    },
+    "H1.b": {
+      "description": "bootstrap CI lower 0.2488 (>) R-17a baseline 0.22",
+      "observed": 0.24875602087106125,
+      "passed": true,
+      "threshold": 0.22
+    },
+    "H1.c": {
+      "description": "bootstrap CI lower 0.2488 (\u2264) cost-floor 0.2681 (INFORMATIONAL)",
+      "observed": 0.24875602087106125,
+      "passed": false,
+      "threshold": 0.2681
+    },
+    "H2.a": {
+      "description": "mean 0.2639 (>) R-17a floor 0.22",
+      "observed": 0.2638954574509014,
+      "passed": true,
+      "threshold": 0.22
+    },
+    "H2.b": {
+      "description": "std 0.0203 (\u2265) \u03c3 ceiling 0.02",
+      "observed": 0.020274342447713464,
+      "passed": false,
+      "threshold": 0.02
+    }
+  },
+  "h3_architectural_invariants": {
+    "h3a_all_populated": true,
+    "h3a_distinct_eph": false,
+    "h3a_expected_eph_count": 5,
+    "h3a_observed_distinct_count": 1,
+    "h3a_observed_eph_count": 5,
+    "h3b_compat_identity": false,
+    "h3b_expected_compat": "dd21d079228096917c6db63227bc71d2f14534dbebb5a4a939eef19732791eaf",
+    "h3b_observed_compat": [
+      "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+      "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+      "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+      "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+      "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353"
+    ],
+    "h3c_expected_mch": "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+    "h3c_mch_identity": true,
+    "h3c_observed_mch": [
+      "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+      "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+      "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+      "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+      "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e"
+    ],
+    "h3d_distinct_pred_shas": 5,
+    "h3d_pred_divergence": true
+  },
+  "inputs": {
+    "ledger_records_dir": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/records",
+    "n_seeds": 5,
+    "signal_root": "/Users/knight/code_local/HFT-pipeline-v2/outputs/experiments",
+    "sweep_id": "cycle10_r19_multi_seed_20260518T222513"
+  },
+  "pre_registered_constants": {
+    "alpha": 0.05,
+    "go_lifted_threshold": 0.289,
+    "h1a_tolerance": 0.02,
+    "h1b_threshold": 0.22,
+    "h1c_threshold": 0.2681,
+    "h2a_floor": 0.22,
+    "h2b_sigma_ceiling": 0.02,
+    "m5_variance_abort_sigma": 0.04,
+    "n_bootstrap": 10000,
+    "pt_class_index": 2,
+    "r17a_pt_precision_baseline": 0.22,
+    "r19_compat_fingerprint": "dd21d079228096917c6db63227bc71d2f14534dbebb5a4a939eef19732791eaf",
+    "r19_model_config_hash": "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+    "r19_pt_precision_anchor": 0.269
+  },
+  "schema_version": "1.0",
+  "seeds": [
+    {
+      "compatibility_fingerprint": "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+      "experiment_provenance_hash": "27244be31b8af3744dcd1c10c2004fd1bf6609417ddac7ae7d388f4b02aeda5d",
+      "model_config_hash": "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+      "predicted_returns_sha256": "015149168181f08adb18eeb0ebc7cc9d34c094c58bb22973dd7693e98f27ce9a",
+      "pt_correct": 2010,
+      "pt_precision": 0.24240231548480462,
+      "pt_predictions": 8292,
+      "seed": 43,
+      "wilson_ci_high": 0.2517439546192048,
+      "wilson_ci_low": 0.23329924187803258
+    },
+    {
+      "compatibility_fingerprint": "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+      "experiment_provenance_hash": "27244be31b8af3744dcd1c10c2004fd1bf6609417ddac7ae7d388f4b02aeda5d",
+      "model_config_hash": "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+      "predicted_returns_sha256": "7c0fa41f3fd9d60b2f701b5a122b4a171b1f894599f5f9ac1c59e17d226705dc",
+      "pt_correct": 1078,
+      "pt_precision": 0.2799272916125682,
+      "pt_predictions": 3851,
+      "seed": 44,
+      "wilson_ci_high": 0.29432109595676764,
+      "wilson_ci_low": 0.2659721046568449
+    },
+    {
+      "compatibility_fingerprint": "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+      "experiment_provenance_hash": "27244be31b8af3744dcd1c10c2004fd1bf6609417ddac7ae7d388f4b02aeda5d",
+      "model_config_hash": "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+      "predicted_returns_sha256": "78097fbe2e0b7366e5cb3b1e5a9e9e2a41e6ccf41a3c1c7bbade8ec80f9d2453",
+      "pt_correct": 1352,
+      "pt_precision": 0.2792234613795952,
+      "pt_predictions": 4842,
+      "seed": 45,
+      "wilson_ci_high": 0.2920307497340279,
+      "wilson_ci_low": 0.2667662067556892
+    },
+    {
+      "compatibility_fingerprint": "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+      "experiment_provenance_hash": "27244be31b8af3744dcd1c10c2004fd1bf6609417ddac7ae7d388f4b02aeda5d",
+      "model_config_hash": "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+      "predicted_returns_sha256": "07d016fa420fdf6060f75eed42e956b20ab41cb11af63deb41cd5e51a4efdf73",
+      "pt_correct": 1275,
+      "pt_precision": 0.2768729641693811,
+      "pt_predictions": 4605,
+      "seed": 46,
+      "wilson_ci_high": 0.2899784125555073,
+      "wilson_ci_low": 0.2641394675319038
+    },
+    {
+      "compatibility_fingerprint": "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+      "experiment_provenance_hash": "27244be31b8af3744dcd1c10c2004fd1bf6609417ddac7ae7d388f4b02aeda5d",
+      "model_config_hash": "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+      "predicted_returns_sha256": "abf90ba6bcfb57fd7e66b47a5bd8aab01cd8edc6edadbe514a2d69adc983d0fc",
+      "pt_correct": 2027,
+      "pt_precision": 0.24105125460815793,
+      "pt_predictions": 8409,
+      "seed": 47,
+      "wilson_ci_high": 0.2503100805625913,
+      "wilson_ci_low": 0.23202891021514757
+    }
+  ],
+  "timestamp_utc": "2026-05-19T11:37:24.506751+00:00",
+  "verdict": {
+    "label": "ABORT",
+    "next_action": "Investigate cycle: config drift / RNG capture failure / Phase Y composer regression. Do NOT issue scientific verdict until root-caused.",
+    "rationale": "H3 architectural invariant FAILED: H3.a (epH distinctness): 1 distinct epH among 5 populated. RNG state may be silently swallowed (TLOB ran as if RNG-free); check DESIGN-1 A.1+A.2 RNG capture.; H3.b (compat identity): observed {'8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353'}, expected 'dd21d079228096917c6db63227bc71d2f14534dbebb5a4a939eef19732791eaf'"
+  }
+}
