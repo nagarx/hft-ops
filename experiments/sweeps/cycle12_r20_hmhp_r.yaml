@@ -1,0 +1,357 @@
+# =============================================================================
+# R-20 HMHP-R ARCHITECTURE-AXIS — Cycle 12 (single-seed production cycle)
+# =============================================================================
+#
+# PURPOSE: Test HMHP-R cascading-multi-horizon-regressor architectural lift
+#   vs TLOB Stage 2 baseline (test_h10_ic=0.3747) on the SAME v3p0 corpus
+#   (e5_timebased_60s_v3p0; 98 features, 230 days, H=[10,60,300]). Stage 6
+#   (2026-05-05) validated HMHP-R infrastructure end-to-end at 20-epoch scale
+#   (test_h10_ic=0.3561); R-20 scales to production (100 epochs / patience 15)
+#   for direct R-17a/R-19 protocol parity.
+#
+# AUTHORIZATION: User authorized 2026-05-19 NIGHT after multi-wave adversarial
+#   prep (Wave 1A + Wave 2F + Wave 2H + Phase 3 Agent X) reframed the original
+#   cycle 11 close-out's "R-20 HMHP single-horizon TB v3p0" recommendation
+#   (INFEASIBLE per HMHPConfig N>=2 + TB single-horizon labels + Tuple return
+#   + HMHP×TB twice-refuted) into "R-20-HMHP-R on e5_timebased_60s_v3p0"
+#   (Stage-6-validated infrastructure; multi-horizon regression).
+#
+# PRE-IMPL DESIGN AGENT X APPROVE-PROCEED (2026-05-19 NIGHT):
+#   - Trainer YAML: clone Stage 6 + 4-LOC production-scale overrides
+#   - Sweep: SINGLE-SEED=42 (R-17a/R-19/Stage 6 protocol parity)
+#   - Outcome-conditional multi-seed N=3 follow-up triggered IF H1 PARTIAL-LIFT
+#   - #PY-43/#PY-57/N4 dormant-bug DISPLACED via primary_horizon_idx=0 EXPLICIT
+#
+# CYCLE 12 CONTEXT: Cycle 11 (hygiene bundle 2026-05-19 NIGHT) closed F-1
+#   manifest cyclic fail-loud + F-2 paths traversal guard + #PY-312 +
+#   bimodality dividend. Cycle 12 = first R-NN cycle post Cycle 11 hardening.
+#
+# COMPUTE BUDGET (per Agent X):
+#   - Training (HMHP-R 169K params, MPS, 230 days): ~45-90 min
+#   - Signal export + backtest: ~25-30 min
+#   - Analyzer + ledger + commit/push: ~1.5 hr
+#   - TOTAL: ~3-4 hr (within user's 5-6 hr budget; budget-conservative)
+#
+# **CRITICAL ANTI-DRIFT (preserve through compaction)**:
+#   1. R-20 is HMHP-R (REGRESSION) cascading decoders, NOT HMHP (classification).
+#      Wave 1A established HMHP×TB classification is INFEASIBLE on v3p0 corpus
+#      (single-horizon labels + HMHPConfig N>=2). HMHP-R × regression has been
+#      validated end-to-end at Stage 6.
+#   2. e5_timebased_60s_v3p0 corpus has multi-horizon regression_labels.npy
+#      shape (N, 3) for H=[10, 60, 300]. Confirms HMHP-R cascade requirement.
+#   3. CompatibilityContract (hft-contracts/.../compatibility.py:104-131) is
+#      11 fields — seed NOT in it. Expected: 1 distinct compat_fp matching
+#      Stage 6's `cdd723ae5024b877683ed55e55a30c49e882e77260156ddb69ea192e6c05998b`.
+#   4. model_config_hash: OBSERVATIONAL not gate-criterion (epochs/patience may
+#      rotate mch per _LOSS_TUNING_KEYS semantics; document empirically).
+#   5. ConfirmationModule emits agreement_ratio.npy alongside predicted_returns.npy
+#      at signal export (Stage 6 verified; H4 gate validates).
+#   6. cycle12 (not cycle11 — that was hygiene). Counter advances per cycle.
+#
+# =============================================================================
+# PRE-REGISTERED HYPOTHESES (per hft-rules §13 — LOCKED BEFORE RUN)
+# =============================================================================
+#
+#   H1 PRIMARY — Architectural lift at H10 (vs TLOB Stage 2 baseline 0.3747):
+#     H1.a Floor: test_h10_ic > 0.30 (Stage 6 was 0.3561 — HMHP-R produces
+#                  predictive signal at production scale)
+#     H1.b PARTIAL-LIFT: test_h10_ic > 0.3247 (TLOB Stage 2 - 5pp; competitive
+#                  within architectural-noise band)
+#     H1.c CLEAR-LIFT: test_h10_ic > 0.3747 (strict superiority over TLOB)
+#
+#   H2 BASELINE — Multi-horizon signal capture (HMHP-R unique architectural promise):
+#     H2.a test_h60_ic > 0.10 (Stage 6 was 0.1408)
+#     H2.b test_h300_ic > 0.05 (Stage 6 was 0.0820)
+#
+#   H3 ARCHITECTURAL INVARIANT (Phase Y composer correctness):
+#     H3.a compatibility_fingerprint == "cdd723ae5024b877683ed55e55a30c49e882e77260156ddb69ea192e6c05998b"
+#          (Stage 6 anchor; same corpus + window + normalization + horizons)
+#     H3.b model_config_hash OBSERVATIONAL not gate (epochs=100 vs Stage 6's 20
+#          may rotate mch per _LOSS_TUNING_KEYS at compatibility.py:86;
+#          document empirically; NOT abort criterion)
+#     H3.c experiment_provenance_hash populated (non-null; Phase Y end-to-end
+#          functional on HMHP-R production cycle)
+#
+#   H4 CONFIRMATION MODULE (HMHP-R unique architectural feature):
+#     H4.a agreement_ratio.npy emitted at signal export (file exists, shape (N,))
+#     H4.b mean(agreement_ratio) ∈ [0.4, 0.9] (non-degenerate; not collapsed
+#          to 1.0 or 0.0)
+#     H4.c std(agreement_ratio) > 0.05 (non-constant)
+#
+#   H5 COST GATE — Backtest tradeability INFORMATIONAL (not binding):
+#     POST-HF-1 cost model (IV=0.25 Deep ITM mode-aware via OpraCalibratedCosts.deep_itm()).
+#     Document OptRet @ deep_itm_1.4bps + WinRate. Per Lesson #106
+#     (cost-floor + architecture-axis orthogonal): NOT a binding gate.
+#
+# =============================================================================
+# DECISION MATRIX (LOCKED PRE-RUN per Agent X)
+# =============================================================================
+#
+#   GO-CLEAR-LIFT — HMHP-R ARCHITECTURALLY SUPERIOR:
+#     H1.c PASS AND H2.a/b PASS AND H3.a/c PASS AND H4.a/b/c PASS
+#     → HMHP-R cascade dominates TLOB on v3p0; close TLOB-direction
+#     → Next cycle: HMHP-R multi-seed N=3 follow-up + R-21 axis tests
+#
+#   GO-COMPETITIVE — HMHP-R PARITY (within ±5pp of TLOB):
+#     H1.b PASS AND H2.a/b PASS AND H3.a/c PASS AND H4.a/b/c PASS
+#     → HMHP-R competitive but no clear lift
+#     → Multi-seed N=3 follow-up triggered for variance characterization
+#
+#   PARTIAL-LIFT — HMHP-R signal real but below TLOB band:
+#     H1.a PASS AND H2.a/b PASS AND H3.a/c PASS, BUT H1.b FAIL
+#     → HMHP-R produces predictive signal at H10, but underperforms TLOB
+#     → Document mch divergence + next-cycle pivot decision deferred
+#
+#   REFUTE — ARCHITECTURE-AXIS CLOSED:
+#     H1.a FAIL (test_h10_ic ≤ 0.30) — HMHP-R cannot recover Stage 6 floor
+#     → Close architecture-axis cleanly
+#     → Pivot recommendations: R-21 reframed (test feature-axis with TLOB
+#       on 128-feat regression corpus once train/val splits extracted) OR
+#       TIER 1 HIGH hygiene cluster
+#
+#   ABORT — INFRASTRUCTURE REGRESSION:
+#     H3.a FAIL (compat_fp drift from Stage 6 anchor) — corpus identity broken
+#     OR H4.a FAIL (agreement_ratio.npy not emitted) — ConfirmationModule
+#     wire-up regression
+#     → Investigate BEFORE issuing scientific verdict
+#     → Likely cause: regression in Phase Y composer / signal_export between
+#       Stage 6 (2026-05-05) and Cycle 12 (2026-05-19)
+#
+# =============================================================================
+# OPERATIONAL REQUIREMENTS
+# =============================================================================
+#
+#   **--force flag**: NOT required for single-seed (no prior R-20-class
+#   record to collide with). Mention for cycle integrity discipline only.
+#
+#   **keep_top_k_checkpoints=1**: configured in train block below to bound
+#   disk (~10 MB best.pt).
+#
+#   **Cost-model anchor**: backtest invocations below use stages.backtesting
+#   default cost model (POST-HF-1 IV=0.25 mode-aware via OpraCalibratedCosts.deep_itm()).
+#
+#   **Analyzer**: NEW analyze_r20_hmhp_r.py (~150-200 LOC; to be authored Phase 4
+#   continuation). Single-record analysis (no bootstrap CI needed for single-seed;
+#   Lesson #12 multi-seed mandate applies to "X > Y" CLAIMS — this is direction
+#   assessment per H1 floor / partial / clear bands).
+#
+# =============================================================================
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/cycle12_r20_hmhp_r.yaml
+#   hft-ops sweep run     experiments/sweeps/cycle12_r20_hmhp_r.yaml --gpus 1
+#   hft-ops sweep results experiments/sweeps/cycle12_r20_hmhp_r.yaml
+#   python hft-ops/scripts/analyze_r20_hmhp_r.py <sweep_id>
+# =============================================================================
+
+experiment:
+  name: "cycle12_r20_hmhp_r"
+  description: >
+    R-20 HMHP-R cascading-decoder architecture-axis test on e5_timebased_60s_v3p0
+    (98 feat, 230 days, H=[10,60,300]). Single-seed=42 production cycle (100
+    epochs / patience 15) targeting test_h10_ic > 0.30 floor + comparison vs
+    TLOB Stage 2 baseline (0.3747). Pre-registered H1-H5 gates locked PRE-RUN
+    per Agent X design. GO-CLEAR-LIFT → close TLOB direction; PARTIAL-LIFT →
+    multi-seed N=3 follow-up; REFUTE → close architecture-axis cleanly.
+  hypothesis: >
+    H1 PRIMARY (3-band): test_h10_ic > 0.30 floor / 0.3247 partial-lift / 0.3747
+    clear-lift vs TLOB Stage 2 baseline 0.3747. H2 BASELINE: test_h60_ic > 0.10 +
+    test_h300_ic > 0.05 (multi-horizon signal capture). H3 INVARIANT: compat_fp
+    matches Stage 6 anchor cdd723ae5024b877..., epH populated. H4 CONFIRMATION:
+    agreement_ratio.npy emitted + non-degenerate (mean ∈ [0.4,0.9], std > 0.05).
+    H5 COST informational (not binding per L106).
+  contract_version: "3.0"
+  tags:
+    - nvda
+    - cycle12
+    - r20
+    - hmhp_r
+    - cascading-decoder
+    - confirmation-module
+    - regression
+    - h10
+    - 60s
+    - huber
+    - v3p0
+    - phase_y_composability
+    - tlob-stage-2-comparison
+    - architecture-axis
+
+pipeline_root: ".."
+
+stages:
+  # EXTRACTION DISABLED: e5_timebased_60s_v3p0 already on disk
+  # Path: data/exports/e5_timebased_60s_v3p0/ (98 features, 60s bins, H=[10,60,300])
+  # Stage 6 (2026-05-05) trained HMHP-R on this corpus; ledger entry at
+  # EXPERIMENT_INDEX.md L2046-2073.
+  extraction:
+    enabled: false
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s_v3p0.toml"
+    output_dir: "data/exports/e5_timebased_60s_v3p0"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  # VALIDATION DISABLED (per cycle10 R-19 precedent + Stage 6 baseline):
+  # IC gate (fast_gate) is regression-oriented for point-return labels; v3p0
+  # corpus uses smoothed-return labels via LabelFactory at trainer load-time
+  # which the IC gate is not currently aware of. Stage 6 / R-19 ran without
+  # IC gate; R-20 matches protocol.
+  validation:
+    enabled: false
+
+  training:
+    enabled: true
+    horizon_value: 10  # H10 primary (idx=0 in [10,60,300]); matches r20 leaf
+                       # YAML hmhp_primary_horizon_idx=0 + horizons[0]=10
+    trainer_config:
+      name: cycle12_r20_hmhp_r_base
+      description: >
+        R-20 HMHP-R base. Inline-merged from r20_hmhp_r_v3p0_h10_primary.yaml
+        _base composition: hmhp_cascade_regression.yaml + nvda_e5_60s.yaml +
+        regression_huber.yaml + regression_default.yaml + R-20 production
+        overrides (epochs=100, patience=15, seed=42, hmhp_horizons=[10,60,300],
+        hmhp_loss_weights H10-primary, hmhp_primary_horizon_idx=0 EXPLICIT).
+
+      data:
+        # From nvda_e5_60s.yaml base + r20 override:
+        data_dir: "../data/exports/e5_timebased_60s_v3p0"
+        # From nvda_e5_60s.yaml base:
+        feature_count: 98
+        # FeatureSet registry reference (Phase Y composer requirement —
+        # without this, experiment_provenance_hash composition skipped per
+        # graceful-degradation at experiment_record.py:780). Same PRODUCT as
+        # nvda_r19_tb_v3p0_98feat_v1 (indices 0-97, SFC=98, cv=3.0) → same
+        # content_hash 122fe5cbfb657bf91... by canonical_hash SSoT.
+        feature_set: "nvda_short_term_98_src98_v1"
+        # From regression_huber.yaml + r20 override:
+        sequence:
+          window_size: 20
+          stride: 1
+        # From nvda_e5_60s.yaml base:
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+        labels:
+          source: "forward_prices"   # multi-horizon smoothed-return labels
+                                     # via LabelFactory at trainer load-time
+          task: "regression"
+          return_type: "smoothed_return"
+          horizons: [10, 60, 300]
+          primary_horizon_idx: 0     # H10 primary (idx=0)
+          # NOTE: smoothing_window is NOT a LabelsConfig field — it's baked
+          # into the v3p0 corpus's forward_prices.npy via Rust extractor's
+          # `smoothing_window_offset`. Trainer reads via LabelFactory at
+          # load-time without per-config smoothing_window override.
+        cache_in_memory: true
+
+      model:
+        # From r20 override (model_type=hmhp_regression):
+        model_type: "hmhp_regression"
+        input_size: 98
+        # HMHP-R architecture-specific (Stage 6 + r20 overrides):
+        hmhp_horizons: [10, 60, 300]
+        hmhp_primary_horizon_idx: 0   # EXPLICIT per Agent X anti-drift
+        hmhp_loss_weights:            # H10-primary weighting (Stage 6 exact)
+          H10: 0.50
+          H60: 0.25
+          H300: 0.15
+          consistency: 0.10
+        hmhp_pool_mode: "mean"        # Phase S legacy preservation (Stage 6)
+        hmhp_use_confirmation: true   # ConfirmationModule → agreement_ratio.npy
+        # HMHP encoder hyperparameters (Stage 6 defaults; note Pydantic schema
+        # field name is `hmhp_num_encoder_layers`, NOT `hmhp_encoder_num_layers`):
+        hmhp_encoder_hidden_dim: 64
+        hmhp_num_encoder_layers: 2
+        # Huber regression loss delta lives on ModelConfig (NOT TrainConfig):
+        # per Pydantic schema regression_loss_delta is the canonical field.
+        # 60s bin H10 produces kurtosis≈26.5 → δ=12.6 bps per CLAUDE.md
+        # Huber δ calibration table (Stage 6 + E5 precedent).
+        regression_loss_delta: 12.6
+        # Generic regularization:
+        dropout: 0.1
+
+      train:
+        # Production-scale parameters (R-17a/R-19 parity):
+        task_type: "regression"
+        loss_type: "huber"
+        # NOTE: huber_delta moved to model.regression_loss_delta (canonical
+        # Pydantic schema location); keep_top_k_checkpoints not a schema field
+        # (deferred to checkpointing harness defaults).
+        batch_size: 64
+        learning_rate: 1.0e-4
+        weight_decay: 1.0e-5
+        epochs: 100
+        early_stopping_patience: 15
+        gradient_clip_norm: 1.0
+        scheduler: "cosine"
+        num_workers: 0                 # OOM-on-fork guard + cache_in_memory=true
+        pin_memory: true
+        mixed_precision: false
+        seed: 42                        # Single-seed (R-17a/R-19/Stage 6 parity)
+
+      output_dir: "outputs/experiments/cycle12_r20_hmhp_r_base"
+      log_level: INFO
+      tags:
+        - cycle12
+        - r20
+        - hmhp_r
+        - cascading-decoder
+        - regression
+        - h10
+        - v3p0
+        - tlob-comparison
+        - production
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_signals.py"
+    checkpoint: "${stages.training.output_dir}/checkpoints/final.pt"
+    split: test
+    output_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_regression_backtest.py"
+    signals_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+    # **COST MODEL ANCHOR**: POST-HF-1 (IV=0.25 for Deep ITM via mode-aware
+    # factory OpraCalibratedCosts.deep_itm(); HF-1 commit 175307c shipped
+    # 2026-05-16 LATE NIGHT). Comparison artifacts: TLOB Stage 2 at
+    # outputs/experiments/nvda_e5_60s_huber_nocvml/.
+    # --zero-dte defaults to True at run_regression_backtest.py:184 (regression
+    # script's intended default ZeroDte transformation). Do NOT pass --no-zero-dte.
+    # --deep-itm enables Deep ITM 0DTE cost-model via OpraCalibratedCosts.deep_itm()
+    # factory (POST-HF-1 IV=0.25 mode-aware). --bin-seconds=60 mandatory per
+    # FIND-NEW-01 sister-cycle closure (`b9a6d6b`).
+    extra_args:
+      - "--exchange"
+      - "XNAS"
+      - "--primary-horizon-idx"
+      - "0"             # H10 primary (idx=0 in regression_labels.npy [N, 3])
+      - "--deep-itm"    # Deep ITM 0DTE cost-model anchor
+      - "--bin-seconds"
+      - "60"            # MANDATORY post sister-cycle FIND-NEW-01 (`b9a6d6b`)
+
+# =============================================================================
+# Sweep definition — single-axis, 1 grid point (single-seed=42 production cycle)
+# =============================================================================
+
+sweep:
+  name: "cycle12_r20_hmhp_r"
+  strategy: "grid"
+  axes:
+    - name: "train_seed"
+      values:
+        - label: "seed_42"
+          overrides:
+            train.seed: 42
