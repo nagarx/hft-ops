@@ -35,6 +35,19 @@ run):
     bit-exact-identical predicted_returns.npy files per
     (model, return_type) cell. ABORT if any within-cell SHA differs.
 
+    **H4-APPLICABILITY SPLIT NOTE (added 2026-05-19 per E2-A' L1 lesson)**:
+    H4 invariance is MODEL-AXIS-CONDITIONAL. Ridge cells are RNG-free
+    (Phase A.3 REDESIGN); H4 is ALWAYS-TRUE by construction within a Ridge
+    cell. TLOB cells have RNG state (Phase A.2); H4 is a non-trivial
+    invariant verifying RNG seed properly perturbs training. Pre-registered
+    "N seeds + walk-forward" remediation paths for INDETERMINATE Ridge
+    primary cells are degenerate (N=1 effective for both axes); when an
+    INDETERMINATE clause depends on remediation that's degenerate for the
+    failing model axis, the gate TERMINATES (do NOT cherry-pick surviving
+    half of CONJUNCTIVE remediation per §13 pre-registration discipline).
+    See E2-A' Path A docs closure 2026-05-18 + `POST_PY243_CYCLE_COMPLETE_2026_05_19.md`
+    §3 Lesson L43 for full reasoning chain.
+
   H6 LABEL-EXECUTION DIAGNOSTIC (E8 root-cause validation at H60-hold):
     Both smoothed × {Ridge, TLOB} arms produce mean OptRet ≤ 0% at
     H60-hold → E8 is STRUCTURAL (label-side), NOT hold-mismatch artifact.

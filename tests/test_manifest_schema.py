@@ -105,11 +105,21 @@ class TestVariableResolution:
         resolved = _resolve_variables(raw, now=now)
         assert resolved["c"]["ref"] == "hello_world"
 
-    def test_unresolvable_preserved(self):
+    def test_unresolvable_raises_per_F1(self):
+        """F-1 (audit §4.1, 2026-05-19): unresolvable ``${...}`` references
+        now raise ValueError per hft-rules §8 (never silently drop / clamp /
+        fix data). Pre-F-1 behavior of preserving the literal post-resolution
+        is RETIRED — silent literals propagating downstream as broken state
+        was a CRITICAL contract violation. ``${resolved.*}`` and ``${sweep.*}``
+        remain legitimately deferred (excluded from F-1 fail-loud gate); see
+        ``test_loader_cyclic_variable_resolution.py::test_deferred_resolved_prefix_does_not_raise``
+        + ``test_variable_resolution_post_expansion.py::test_sweep_point_name_injection``
+        for the deferred-prefix coverage.
+        """
         raw = {"x": "${nonexistent.key}"}
         now = datetime(2026, 3, 5, tzinfo=timezone.utc)
-        resolved = _resolve_variables(raw, now=now)
-        assert resolved["x"] == "${nonexistent.key}"
+        with pytest.raises(ValueError, match=r"unresolved reference"):
+            _resolve_variables(raw, now=now)
 
     def test_list_resolution(self):
         raw = {
@@ -249,11 +259,21 @@ class TestSignalExportStage:
         assert stage.extra_args == ["--verbose"]
 
     def test_loaded_from_yaml(self, tmp_path: Path):
+        # F-1 (audit §4.1, 2026-05-19): manifest variable resolver now fails
+        # loud on unresolvable ${...} references. Pre-F-1 the test used
+        # `${stages.training.output_dir}` without defining a training stage —
+        # post-F-1 we provide a concrete training.output_dir so the cross-stage
+        # reference resolves cleanly. (Sweep manifests use `${sweep.point_name}`
+        # which is F-1-LOAD-excluded; here we test a concrete cross-stage ref.)
         yaml_text = """
 experiment:
   name: test_se
 pipeline_root: ".."
 stages:
+  training:
+    enabled: true
+    config: "configs/test.yaml"
+    output_dir: "outputs/test_se"
   signal_export:
     enabled: true
     script: "scripts/export_hmhp_signals.py"
@@ -267,8 +287,11 @@ stages:
         assert m.stages.signal_export.enabled is True
         assert m.stages.signal_export.script == "scripts/export_hmhp_signals.py"
         assert m.stages.signal_export.split == "test"
-        # ${...} variables remain as strings until resolution
-        assert "${" in m.stages.signal_export.checkpoint
+        # F-1 (audit §4.1, 2026-05-19): post-F-1 cross-stage refs RESOLVE at
+        # load time (not preserved as ${...} literals). Pre-F-1 asserted
+        # `"${" in checkpoint`; post-F-1 the ref resolves to concrete path.
+        assert m.stages.signal_export.checkpoint == "outputs/test_se/checkpoints/best.pt"
+        assert m.stages.signal_export.output_dir == "outputs/test_se/signals/test"
 
     def test_signal_export_present_in_stages(self):
         from hft_ops.manifest.schema import Stages, SignalExportStage

@@ -158,6 +158,20 @@
 #     H1 (a) borderline (CI crosses zero by < 1% margin) AND H1 (b) > 0
 #     → Plan R-16e-extended N=20 seeds + 30-day walk-forward.
 #
+#     **H4-APPLICABILITY SPLIT NOTE (added 2026-05-19 per E2-A' L1 lesson)**:
+#     The pre-registered "N=20 seeds + 30-day walk-forward" remediation is
+#     CONJUNCTIVE and MODEL-AXIS-CONDITIONAL. Per Phase A.3 REDESIGN (H4),
+#     Ridge models are RNG-FREE — both seed-extension AND walk-forward on
+#     Ridge bit-exact predictions produce N=1 effective. Only TLOB cells
+#     have genuine seed variance. If a Ridge primary cell is INDETERMINATE,
+#     the documented remediation paths TERMINATE for that model axis (do
+#     NOT cherry-pick "the half that supports the preferred verdict"); the
+#     gate fails and the direction closes. Future cycle authors specifying
+#     "N+walk-forward" remediation MUST annotate model-axis-applicability
+#     explicitly. See `POST_PY243_CYCLE_COMPLETE_2026_05_19.md` §3 Lesson
+#     L43 + topic memory `project_2026_05_18_e2_a_prime_docs_closure.md`
+#     L87 for full reasoning chain.
+#
 #   ABORT (architectural ship-blocker):
 #     H4 fails (Ridge non-deterministic across seeds within cell)
 #     → Halt + adversarial-debug Phase A.3 REDESIGN invariant.

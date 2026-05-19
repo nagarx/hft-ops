@@ -21,7 +21,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -48,6 +48,18 @@ if TYPE_CHECKING:
 _VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 _DEFERRED_PREFIXES = ("resolved.",)
+# Note: `resolved.*` IS short-circuited in `_substitute` (returns literal without
+# attempting resolution) because runtime-resolved variables MUST NOT be touched at
+# load OR expand time — they're populated by stage runners during execution.
+
+_F1_LOAD_EXCLUDED_PREFIXES = ("resolved.", "sweep.")
+# F-1 (audit §4.1, 2026-05-19): F-1 walker excludes these from fail-loud at LOAD
+# time per pre-commit gate hft-architect B-1 CRITICAL finding. Sweep manifests use
+# `${sweep.point_name}` / `${sweep.axis_values.*}` literals that resolve at sweep
+# EXPAND time (`manifest/resolver.py:157` via extra_vars), NOT at load time. The
+# walker treats them as legitimate-literal AT LOAD. At expand time, `_substitute`
+# does NOT short-circuit `sweep.*` (only `resolved.*` per `_DEFERRED_PREFIXES`),
+# so `sweep.*` resolves via the extras → builtin → raw fallback chain.
 
 
 from hft_ops.utils import get_nested as _get_nested
@@ -201,7 +213,65 @@ def _resolve_variables(
         if str(resolved) == prev:
             break
 
+    # F-1 (audit §4.1; 2026-05-19): fail-loud on any unresolved ${...} literal
+    # left over post-fixed-point (e.g., cyclic ${A.x} ↔ ${B.x}, unresolvable
+    # dotted-path refs, or stuck-state from partially-resolved chains). Walks
+    # the entire resolved tree + collects every (dotted_path, key) pair; raises
+    # ValueError listing ALL with actionable diagnostics. Per hft-rules §8:
+    # `${...}` literals propagating downstream as silent broken state is a
+    # CRITICAL contract violation. _DEFERRED_PREFIXES are LEGITIMATELY left as
+    # literals (resolved at stage-runner time); excluded from the gate.
+    unresolved_refs: List[Tuple[str, str]] = []
+    _collect_unresolved_refs(resolved, "", unresolved_refs)
+    if unresolved_refs:
+        lines = [f"  ${{{key}}} at {path or '<root>'}" for path, key in unresolved_refs]
+        raise ValueError(
+            f"Manifest variable resolution failed after {max_passes} passes; "
+            f"{len(unresolved_refs)} unresolved reference(s) remain (excluding "
+            f"deferred prefixes {_F1_LOAD_EXCLUDED_PREFIXES}). Either cyclic refs "
+            f"(e.g., ${{A.x}} ↔ ${{B.x}}) or unresolvable dotted-paths. "
+            f"Unresolved references:\n" + "\n".join(lines)
+        )
+
     return resolved
+
+
+def _collect_unresolved_refs(
+    value: Any,
+    current_path: str,
+    accumulator: List[Tuple[str, str]],
+) -> None:
+    """F-1 (audit §4.1, 2026-05-19): walk resolved tree + collect every
+    unresolved ``${...}`` reference NOT covered by ``_F1_LOAD_EXCLUDED_PREFIXES``.
+
+    Mutates ``accumulator`` in-place with ``(dotted_path, var_key)`` pairs.
+    Pre-impl gate APPROVE-WITH-MICRO-FIX: collects ALL unresolved refs (not
+    just first); excludes ``_F1_LOAD_EXCLUDED_PREFIXES`` (resolved later at
+    expand/stage-runner time, not manifest LOAD time). Pre-commit gate
+    hft-architect B-1: ``_F1_LOAD_EXCLUDED_PREFIXES`` is a SUPERSET of
+    ``_DEFERRED_PREFIXES`` — substitute short-circuits only `resolved.*`
+    (runtime-only), but F-1 LOAD walker additionally excludes `sweep.*`
+    (expand-time-only).
+    """
+    if isinstance(value, str):
+        for match in _VAR_PATTERN.finditer(value):
+            key = match.group(1)
+            if not any(key.startswith(p) for p in _F1_LOAD_EXCLUDED_PREFIXES):
+                accumulator.append((current_path, key))
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            sub_path = f"{current_path}.{k}".lstrip(".")
+            _collect_unresolved_refs(v, sub_path, accumulator)
+    elif isinstance(value, (list, tuple)):
+        # List/tuple indices not part of dotted-path taxonomy; descend with
+        # current_path unchanged (matches _substitute() convention). Tuple
+        # included defensively per Wave 2Y D1 (2026-05-19) — YAML loader emits
+        # dict/list only, but Python callers (test fixtures, sweep expansion,
+        # future Pydantic models) may pre-populate the tree with tuples;
+        # silent skip would let ${...} literals propagate as silent broken
+        # state (hft-rules §8 violation).
+        for v in value:
+            _collect_unresolved_refs(v, current_path, accumulator)
 
 
 def _build_backtest_params(raw: Dict[str, Any]) -> BacktestParams:

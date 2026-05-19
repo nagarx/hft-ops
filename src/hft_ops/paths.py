@@ -8,6 +8,7 @@ paths anywhere else in the codebase.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -133,8 +134,53 @@ class PipelinePaths:
         stage runners, ledger). NONE of these need symlink-deref; they all
         pass through `os.path.relpath` or file existence checks where
         symlink-source preservation is correct.
+
+        F-2 (audit §4.1; 2026-05-19): traversal guard. `.absolute()` does NOT
+        normalize `..` segments, so pre-F-2 `paths.resolve("../../../etc/passwd")`
+        returned a literal cross-tree path that 47+ callsites accepted as
+        legitimate. Post-F-2: probe `.relative_to(pipeline_root.absolute())`
+        and raise ValueError on escape. Phase α-1.1 / #PY-83 symlink-source
+        invariant PRESERVED — `.absolute()` keeps the symlink-source in the
+        path so legitimate symlinked-data callsites (e.g., `data/exports/foo`)
+        still pass lexical containment. The `canonical()` escape hatch is
+        UNAFFECTED — it returns the dereferenced filesystem path without
+        traversal check (its consumers are trusted-internal: cache keys,
+        lineage hashes).
+
+        Pre-impl gate APPROVE-WITH-MICRO-FIX 2026-05-19: NO `data/` allowlist
+        env-var (audit's proposed allowlist was unnecessary — `.absolute()`
+        preserves symlink-source so `data/...` resolves lexically under
+        `pipeline_root` regardless of where the symlink target actually
+        lives on disk).
+
+        Raises:
+            ValueError: if `relative_path` escapes `pipeline_root` (e.g.,
+                contains `../..` traversal OR is an absolute path outside
+                `pipeline_root`).
         """
-        return (self.pipeline_root / relative_path).absolute()
+        result = (self.pipeline_root / relative_path).absolute()
+        # F-2 traversal guard (audit §4.1; 2026-05-19): normalize `..` segments
+        # via `os.path.normpath` (does NOT dereference symlinks) + lexical
+        # containment check via `.relative_to()`. Pathlib's `.absolute()` is
+        # stdlib-doc'd as NOT-normalizing; raw `result.relative_to()` accepts
+        # `..` as a path-component which defeats the check. `normpath` resolves
+        # `..` syntactically without filesystem access — keeps symlink-source.
+        # Wave 2Y D3 (2026-05-19): return the NORMALIZED path (no literal `..`
+        # segments) so consumers get a canonical lexical form that Path equality
+        # / hashing / string-comparison-based dedup all work as expected.
+        normalized = Path(os.path.normpath(str(result)))
+        pipeline_root_normalized = Path(os.path.normpath(str(self.pipeline_root.absolute())))
+        try:
+            normalized.relative_to(pipeline_root_normalized)
+        except ValueError as exc:
+            raise ValueError(
+                f"paths.resolve({relative_path!r}) escapes pipeline_root "
+                f"{str(pipeline_root_normalized)!r}: resolved + normalized to "
+                f"{str(normalized)!r}. Untrusted-manifest path traversal "
+                f"hazard per hft-rules §8. If symlink-equivalence collapse is "
+                f"required, use `paths.canonical()` (escape hatch)."
+            ) from exc
+        return normalized
 
     def canonical(self, relative_path: str) -> Path:
         """Resolve a path to its canonical filesystem location (DEREFERENCES symlinks).
