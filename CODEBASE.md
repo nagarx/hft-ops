@@ -1,6 +1,6 @@
 # hft-ops — Codebase Reference
 
-> **Version**: 0.3.0-dev | **Schema**: 3.0 (Phase G G.6.A bump 2.2 → 3.0 MAJOR per CLAUDE.md root rule: any modification to stable features 0-97 = BREAKING) | **Tests**: 633 pass (Phase G.6.A→G.6.E cascade validated; 5 env-dep `test_validation_stage.py` failures resolved earlier — REV 3.1 Phase G test suite all-green). | **Last Updated**: 2026-04-27 (REV 3.1 Phase G G.6.A→G.6.F — SchemaVersion bump cascade)
+> **Version**: 0.3.0-dev | **Schema**: 3.0 (Phase G G.6.A bump 2.2 → 3.0 MAJOR per CLAUDE.md root rule: any modification to stable features 0-97 = BREAKING) | **Tests**: 1054 pass (Phase 8B envelope auto-rebuild + Phase 8A scheduler + Phase 8C-α post-stage artifact routing + Phase V.A.4 trust-column harvest + R-NN cycle hygiene cumulative; +421 since 633 banner). | **Last Updated**: 2026-05-21 (Cycle A-rev #PY-341 doc-hygiene bundle — banner refresh per validation cycle Wave 2K finding)
 >
 > **Phase 7.5 SHIPPED (2026-04-23)** — orchestrator integration gaps closed; first `hft-ops validate` + `hft-ops run --dry-run` successful in pipeline history:
 >   - **Task 1a** (`680ba77`): 3 HMHP manifests re-pointed from archived `export_hmhp_signals.py` (Phase 6 6D fossil) to canonical `lob-model-trainer/scripts/export_signals.py`.
