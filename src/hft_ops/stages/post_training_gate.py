@@ -47,6 +47,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from hft_contracts.atomic_io import atomic_write_json  # #PY-371 SSoT (Class A)
 from hft_ops.config import OpsConfig
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.stages.base import StageResult, StageStatus
@@ -348,11 +349,9 @@ class PostTrainingGateRunner:
             match_signature=match_signature,
         )
 
-        # Persist report
+        # Persist report (#PY-371: atomic_write_json SSoT — closes SIGKILL-mid-write hazard)
         report_path = output_dir_path / "gate_report.json"
-        with open(report_path, "w") as f:
-            json.dump(report.to_dict(), f, indent=2, default=str)
-            f.write("\n")
+        atomic_write_json(report_path, report.to_dict())
 
         result.duration_seconds = time.monotonic() - start
         result.output_dir = str(output_dir_path)
