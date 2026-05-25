@@ -80,7 +80,7 @@ import numpy as np
 
 from hft_contracts.provenance import hash_file
 from hft_metrics import block_bootstrap_ci
-from hft_metrics._sanitize import assert_finite_array
+from hft_metrics import assert_finite_array
 
 from hft_ops.ledger.signal_dir import resolve_signal_dir
 from hft_ops.paths import PipelinePaths
