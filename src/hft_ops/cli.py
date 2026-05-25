@@ -31,7 +31,7 @@ from hft_contracts.signal_manifest import CONTENT_HASH_RE
 from hft_ops.config import OpsConfig
 from hft_ops.ledger.comparator import compare_experiments, diff_experiments
 from hft_ops.ledger.dedup import check_duplicate, compute_fingerprint
-from hft_ops.ledger.experiment_record import ExperimentRecord
+from hft_contracts.experiment_record import ExperimentRecord
 from hft_ops.ledger.ledger import ExperimentLedger, StaleLedgerIndexError
 from hft_ops.manifest.loader import load_manifest
 from hft_ops.manifest.validator import (
@@ -40,7 +40,7 @@ from hft_ops.manifest.validator import (
     validate_manifest,
 )
 from hft_ops.paths import PipelinePaths
-from hft_ops.provenance.lineage import build_provenance
+from hft_contracts.provenance import build_provenance
 from hft_ops.stages.backtesting import BacktestRunner
 from hft_ops.stages.post_training_gate import PostTrainingGateRunner
 from hft_ops.stages.signal_export import SignalExportRunner
@@ -55,6 +55,29 @@ console = Console()
 
 # cli-local module logger (Closure C harvest_errors WARN sink).
 _logger = logging.getLogger(__name__)
+
+
+def _build_stage_runners(manifest):
+    """Single source of truth for stage runner dispatch order.
+
+    Both ``run`` (single experiment) and ``sweep run`` (grid point) use
+    this list.  Keeping it in one place prevents the two call-sites from
+    diverging when a new stage is added.
+    """
+    return [
+        ("extraction", manifest.stages.extraction.enabled, ExtractionRunner()),
+        ("raw_analysis", manifest.stages.raw_analysis.enabled, RawAnalysisRunner()),
+        ("dataset_analysis", manifest.stages.dataset_analysis.enabled, DatasetAnalysisRunner()),
+        ("validation", manifest.stages.validation.enabled, ValidationRunner()),
+        ("training", manifest.stages.training.enabled, TrainingRunner()),
+        (
+            "post_training_gate",
+            manifest.stages.post_training_gate.enabled,
+            PostTrainingGateRunner(),
+        ),
+        ("signal_export", manifest.stages.signal_export.enabled, SignalExportRunner()),
+        ("backtesting", manifest.stages.backtesting.enabled, BacktestRunner()),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -373,28 +396,7 @@ def run(
     if stages:
         requested_stages = set(stages.split(","))
 
-    # Stage order mirrors the schema's pipeline: extraction → raw/dataset
-    # analysis → validation (Rule-13 IC gate) → training → signal_export →
-    # backtesting. Order matters: validation MUST run before training so a
-    # failing gate under on_fail=abort prevents wasted training compute.
-    stage_runners = [
-        ("extraction", manifest.stages.extraction.enabled, ExtractionRunner()),
-        ("raw_analysis", manifest.stages.raw_analysis.enabled, RawAnalysisRunner()),
-        ("dataset_analysis", manifest.stages.dataset_analysis.enabled, DatasetAnalysisRunner()),
-        ("validation", manifest.stages.validation.enabled, ValidationRunner()),
-        ("training", manifest.stages.training.enabled, TrainingRunner()),
-        # Phase 7 Stage 7.4 (2026-04-19): post-training regression-detection
-        # gate. Runs between training and signal_export so a researcher gets
-        # quality signal BEFORE compute-intensive signal export + backtest.
-        # Default enabled=False; opt-in via manifest.
-        (
-            "post_training_gate",
-            manifest.stages.post_training_gate.enabled,
-            PostTrainingGateRunner(),
-        ),
-        ("signal_export", manifest.stages.signal_export.enabled, SignalExportRunner()),
-        ("backtesting", manifest.stages.backtesting.enabled, BacktestRunner()),
-    ]
+    stage_runners = _build_stage_runners(manifest)
 
     results: dict[str, StageResult] = {}
     total_start = time.monotonic()
@@ -529,8 +531,12 @@ def _record_experiment(
                 import yaml as _yaml
                 with open(effective_config_path, "r") as f:
                     training_config = _yaml.safe_load(f) or {}
-            except (OSError, Exception):
-                pass  # Best effort — config may not exist in dry-run or failure
+            except (OSError, _yaml.YAMLError, ValueError) as exc:
+                _logger.warning(
+                    "Could not load effective trainer config at %s: %s",
+                    effective_config_path,
+                    exc,
+                )
 
     # Phase 7 Stage 7.4 Round 4 generic gate-report harvest (orchestrator-specific):
     # every stage that emits a gate writes its serialized report under the uniform
@@ -1250,7 +1256,7 @@ def ledger_backfill(
     import json as _json
     from datetime import datetime as _datetime, timezone as _timezone
     from hft_ops.manifest.loader import load_manifest as _load_manifest
-    from hft_ops.provenance.lineage import build_provenance, NOT_GIT_TRACKED_SENTINEL
+    from hft_contracts.provenance import build_provenance, NOT_GIT_TRACKED_SENTINEL
 
     pipeline_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
     paths = PipelinePaths(pipeline_root=pipeline_root)
@@ -1712,22 +1718,7 @@ def sweep_run(
         resolved_ctx = resolve_manifest_context(exp, paths)
         apply_resolved_context(exp, resolved_ctx)
 
-        # Build stage runners (same as `run` command)
-        stage_runners = [
-            ("extraction", exp.stages.extraction.enabled, ExtractionRunner()),
-            ("raw_analysis", exp.stages.raw_analysis.enabled, RawAnalysisRunner()),
-            ("dataset_analysis", exp.stages.dataset_analysis.enabled, DatasetAnalysisRunner()),
-            ("validation", exp.stages.validation.enabled, ValidationRunner()),
-            ("training", exp.stages.training.enabled, TrainingRunner()),
-            # Phase 7 Stage 7.4 (2026-04-19): post-training regression gate
-            (
-                "post_training_gate",
-                exp.stages.post_training_gate.enabled,
-                PostTrainingGateRunner(),
-            ),
-            ("signal_export", exp.stages.signal_export.enabled, SignalExportRunner()),
-            ("backtesting", exp.stages.backtesting.enabled, BacktestRunner()),
-        ]
+        stage_runners = _build_stage_runners(exp)
 
         results: dict[str, StageResult] = {}
         point_start = time.monotonic()

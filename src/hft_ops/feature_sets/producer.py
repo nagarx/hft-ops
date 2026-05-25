@@ -42,13 +42,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from hft_ops.feature_sets.schema import (
+from hft_contracts.feature_sets.schema import (
     FeatureSet,
     FeatureSetAppliesTo,
     FeatureSetProducedBy,
 )
 from hft_ops.paths import PipelinePaths
-from hft_ops.provenance.lineage import hash_directory_manifest, hash_file
+from hft_contracts.provenance import hash_directory_manifest, hash_file
 
 
 class EvaluatorNotInstalled(ImportError):

@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from hft_ops.feature_sets.schema import (
+from hft_contracts.feature_sets.schema import (
     FeatureSet,
     FeatureSetRef,
     FeatureSetValidationError,

@@ -453,10 +453,14 @@ class TestValidationInputErrors:
             "cli.py must instantiate ValidationRunner() in stage_runners "
             "(orphan-bug regression check). Phase 2b fix."
         )
-        # Also check it appears in both the run and sweep paths.
-        assert source.count("ValidationRunner()") >= 2, (
-            "ValidationRunner must be registered in BOTH `run` and `sweep run` "
-            f"loops; found {source.count('ValidationRunner()')} occurrence(s)."
+        assert "_build_stage_runners" in source, (
+            "cli.py must define the _build_stage_runners factory (M-6 DRY fix). "
+            "Both `run` and `sweep run` call it — single source for stage dispatch."
+        )
+        assert source.count("_build_stage_runners(") >= 3, (
+            "_build_stage_runners must be defined once (def) and called from "
+            "both `run` and `sweep run` code paths; found "
+            f"{source.count('_build_stage_runners(')} occurrence(s)."
         )
         # Order invariant: validation must come BEFORE training.
         run_validation_idx = source.index('"validation"')

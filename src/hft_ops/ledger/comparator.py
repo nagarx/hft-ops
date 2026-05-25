@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from hft_ops.ledger.experiment_record import ExperimentRecord
+from hft_contracts.experiment_record import ExperimentRecord
 
 
 from hft_ops.utils import get_nested as _get_nested

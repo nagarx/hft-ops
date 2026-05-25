@@ -20,6 +20,7 @@ Test matrix (8 cases):
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -584,6 +585,30 @@ class TestConstraintTableSanity:
             f"gate it with `if TYPE_CHECKING:` or an inline `import X` "
             f"inside the function body."
         )
+
+    def test_contract_preflight_runtime_torch_free(self):
+        """Runtime sys.modules sentinel — defense-in-depth for the AST test.
+
+        Imports the module in a subprocess and asserts torch/lobmodels never
+        entered sys.modules.  Catches dynamic imports that AST analysis misses.
+        """
+        import subprocess
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                "import sys; "
+                "import hft_ops.stages.contract_preflight; "
+                "bad = [m for m in sys.modules if m.startswith(('torch', 'lobmodels', 'lobtrainer'))]; "
+                "assert not bad, f'torch-free violation: {bad}'; "
+                "print('TORCH_FREE_OK')",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"Runtime torch-free sentinel FAILED.\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "TORCH_FREE_OK" in result.stdout
 
     def test_table_entries_have_required_fields(self):
         required_keys = {

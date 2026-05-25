@@ -25,7 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 from hft_contracts import INDEX_SCHEMA_VERSION
 from hft_contracts.atomic_io import atomic_write_json
 from hft_contracts.canonical_hash import sha256_hex
-from hft_ops.ledger.experiment_record import ExperimentRecord
+from hft_contracts.experiment_record import ExperimentRecord
 
 # ---------------------------------------------------------------------------
 # Phase 8C-α Stage C.3: post-stage artifact routing

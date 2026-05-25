@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.paths import PipelinePaths
-from hft_ops.provenance.lineage import hash_directory_manifest
+from hft_contracts.provenance import hash_directory_manifest
 
 
 class FingerprintNormalizationError(ValueError):

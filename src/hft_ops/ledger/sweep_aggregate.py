@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from hft_ops.ledger.experiment_record import ExperimentRecord
+from hft_contracts.experiment_record import ExperimentRecord
 from hft_ops.manifest.schema import ExperimentManifest
 
 

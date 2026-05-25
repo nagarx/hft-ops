@@ -54,7 +54,7 @@ from pathlib import Path
 # hft_contracts.atomic_io (public; ``_atomic_io`` is the pre-REV-2 shim).
 from hft_contracts.atomic_io import AtomicWriteError, atomic_write_json
 
-from hft_ops.feature_sets.schema import (
+from hft_contracts.feature_sets.schema import (
     FeatureSet,
     FeatureSetValidationError,
     validate_feature_set_dict,
