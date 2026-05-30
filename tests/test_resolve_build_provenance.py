@@ -449,3 +449,72 @@ def test_extraction_stage_run_populates_producer_commits(tmp_path, monkeypatch):
     assert set(pc.keys()) == _EXPECTED_KEYS  # locked vocabulary — no drift
     # tmp pipeline_root has no git checkouts → fail-open partial, NOT a crash:
     assert pc["completeness"] == "partial"
+
+
+def test_extraction_cache_hit_populates_producer_commits(tmp_path, monkeypatch):
+    """Component/integration: ``ExtractionRunner.run()`` on the cache-HIT path
+    (extraction.py:141) ALSO writes ``captured_metrics["producer_commits"]`` with
+    the locked 5-key vocabulary.
+
+    ``test_extraction_stage_run_populates_producer_commits`` locks the
+    completed-subprocess capture (extraction.py:200); THIS locks the SECOND,
+    structurally-distinct capture site — a refactor that drops ONLY the cache-hit
+    capture line would leave cache-hit experiment records with empty
+    ``producer_commits`` yet pass every other test. The three cache calls are
+    stubbed to force a deterministic hit without the real cache machinery; the
+    subprocess is wired to explode if reached (the hit path must NOT shell out)."""
+    import types
+
+    from hft_ops.config import OpsConfig
+    from hft_ops.manifest.schema import (
+        ExperimentHeader,
+        ExperimentManifest,
+        ExtractionStage,
+        Stages,
+    )
+    from hft_ops.stages.base import StageStatus
+    from hft_ops.stages.extraction import ExtractionRunner
+
+    # Force a deterministic cache HIT without the real cache machinery.
+    monkeypatch.setattr(
+        "hft_ops.stages.extraction.prepare_cache_key_inputs",
+        lambda **kw: types.SimpleNamespace(),  # opaque; never inspected on the hit path
+    )
+    monkeypatch.setattr(
+        "hft_ops.stages.extraction.compute_cache_key",
+        lambda inputs: "a" * 64,
+    )
+    monkeypatch.setattr(
+        "hft_ops.stages.extraction.resolve_or_link",
+        lambda key, out, root: types.SimpleNamespace(
+            status="hit", seconds_saved=1.0, linked_files=8, link_type="reflink"
+        ),
+    )
+    # On a cache hit the stage must NOT shell out — blow up if it tries.
+    monkeypatch.setattr(
+        "hft_ops.stages.extraction.run_subprocess",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("subprocess ran on a cache hit")
+        ),
+    )
+
+    config = OpsConfig.from_pipeline_root(pipeline_root=tmp_path, cache_extraction=True)
+    manifest = ExperimentManifest(
+        experiment=ExperimentHeader(name="test_extraction_cache_hit_pc"),
+        stages=Stages(
+            extraction=ExtractionStage(
+                config="feature-extractor-MBO-LOB/configs/x.toml",
+                output_dir="data/exports/test_out_hit",  # not None → cache path eligible
+            ),
+        ),
+    )
+
+    result = ExtractionRunner().run(manifest, config)
+
+    assert result.status == StageStatus.SKIPPED  # cache hit → SKIPPED
+    assert result.captured_metrics.get("cache_hit") is True  # proves the hit branch ran
+    pc = result.captured_metrics.get("producer_commits")
+    assert isinstance(pc, dict), "cache-hit path must populate producer_commits"
+    assert set(pc.keys()) == _EXPECTED_KEYS  # locked vocabulary — no drift
+    # tmp pipeline_root has no git checkouts → fail-open partial, NOT a crash:
+    assert pc["completeness"] == "partial"
