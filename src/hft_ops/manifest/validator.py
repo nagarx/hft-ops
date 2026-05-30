@@ -377,8 +377,20 @@ def _validate_existing_exports(
     paths: PipelinePaths,
     result: ValidationResult,
 ) -> None:
-    """If extraction output already exists, validate its metadata using
-    the full ``hft_contracts.validate_export_contract()`` function.
+    """If extraction output already exists, validate the WHOLE directory for
+    internal consistency + producer provenance via the
+    ``hft_contracts.validate_export_dir()`` SSoT.
+
+    Consolidated 2026-05-29 (Foundation Integrity). The prior implementation
+    sampled only the FIRST day-metadata of the FIRST subdir and then ``break``-ed,
+    so it could not see manifest<->disk count drift or cross-day
+    schema_version / producer-commit pollution (the realized victim:
+    ``e5_timebased_60s`` co-mingled ``{2.2, 3.0}`` schema + two producer commits
+    while its manifest claimed a single version). ``validate_export_dir``
+    reconciles per-split + total on-disk file counts against the manifest's
+    attempted-day accounting (via ``partial_failure`` / ``skipped_days``), checks
+    cross-day schema + commit uniformity, and runs the per-day
+    ``validate_day_metadata`` SSoT over EVERY day — see hft_contracts.validation.
     """
     if not manifest.stages.extraction.output_dir:
         return
@@ -387,59 +399,41 @@ def _validate_existing_exports(
     if not output_dir.exists():
         return
 
-    for subdir in sorted(output_dir.iterdir()):
-        if not subdir.is_dir():
-            continue
-        metadata_files = sorted(subdir.glob("*_metadata.json"))
-        if not metadata_files:
-            continue
+    # Only validate a populated export. An MBO export directory carries
+    # dataset_manifest.json; if there is NEITHER a manifest NOR any day-data,
+    # nothing has been extracted here yet — skip. If day-data exists WITHOUT a
+    # manifest (a defective/incomplete MBO export), do NOT silently skip:
+    # ``validate_export_dir`` will flag the missing manifest as an error.
+    has_manifest = (output_dir / "dataset_manifest.json").exists()
+    has_daydata = any(output_dir.glob("*/*_metadata.json"))
+    if not has_manifest and not has_daydata:
+        return
 
-        sample_meta_path = metadata_files[0]
-        try:
-            with open(sample_meta_path, "r") as f:
-                metadata = json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            result.error(
-                f"Failed to read export metadata: {sample_meta_path}: {e}",
-                context="stages.extraction.output_dir",
-            )
-            continue
+    # Import separately so an ImportError here cannot leave ``_CE`` unbound for
+    # the except clause below (defensive — mirrors the prior pattern).
+    try:
+        from hft_contracts.validation import (
+            ContractError as _CE,
+            validate_export_dir as _validate_dir,
+        )
+    except ImportError:
+        # hft_contracts not installed / validation module missing — skip
+        # contract checks but don't fail the manifest.
+        return
 
-        if "schema_version" not in metadata:
-            result.warning(
-                f"Metadata {sample_meta_path.name} has no schema_version. "
-                "Re-export with latest extractor for full validation.",
-                context=f"export_metadata:{subdir.name}",
-            )
-            continue
-
-        # Import hft_contracts.validation separately so that an ImportError
-        # here cannot cause the downstream `except _CE` clause to raise
-        # UnboundLocalError (which happens when _CE never gets bound).
-        try:
-            from hft_contracts.validation import (
-                ContractError as _CE,
-                validate_export_contract as _validate,
-                validate_provenance_present as _prov,
-            )
-        except ImportError:
-            # hft_contracts not installed / validation module missing — skip
-            # contract checks but don't fail the manifest.
-            break
-
-        try:
-            warnings_list = _validate(metadata, strict_completeness=False)
-            for w in warnings_list:
-                result.warning(w, context=f"export_metadata:{subdir.name}")
-
-            prov_warnings = _prov(metadata)
-            for w in prov_warnings:
-                result.warning(w, context=f"provenance:{subdir.name}")
-
-        except _CE as exc:
-            result.error(str(exc), context=f"export_contract:{subdir.name}")
-
-        break
+    # strict=False: collect ALL issues (each hard violation ERROR-prefixed)
+    # in one preflight pass rather than raising on the first, so the
+    # ValidationResult surfaces the full picture to the operator at once.
+    try:
+        for item in _validate_dir(output_dir, strict=False):
+            if item.startswith("ERROR: "):
+                result.error(item[len("ERROR: "):], context="export_dir")
+            else:
+                result.warning(item, context="export_dir")
+    except _CE as exc:  # defensive — strict=False should not raise on content
+        result.error(str(exc), context="export_dir")
+    except (FileNotFoundError, OSError) as exc:  # defensive — dir vanished mid-check
+        result.error(str(exc), context="export_dir")
 
 
 def validate_manifest(

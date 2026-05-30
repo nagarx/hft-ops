@@ -25,6 +25,7 @@ from hft_ops.scheduler.extraction_cache import (
     compute_cache_key,
     populate,
     prepare_cache_key_inputs,
+    resolve_build_provenance,
     resolve_or_link,
 )
 from hft_ops.stages.base import (
@@ -132,6 +133,15 @@ class ExtractionRunner:
                     result.captured_metrics["cache_seconds_saved"] = outcome.seconds_saved
                     result.captured_metrics["cache_linked_files"] = outcome.linked_files
                     result.captured_metrics["cache_link_type"] = outcome.link_type
+                    # P1a producer provenance (finding A-PROV): a cache HIT means
+                    # the current producer git shas equal the cached entry's (the
+                    # shas are part of the cache key), so capturing them now is
+                    # correct lineage for the linked data. Fail-open observation —
+                    # never blocks the run; harvested by cli._record_experiment.
+                    result.captured_metrics["producer_commits"] = resolve_build_provenance(
+                        extractor_dir=config.paths.extractor_dir,
+                        reconstructor_dir=config.paths.reconstructor_dir,
+                    )
                     return result
                 elif outcome.status == "poisoned":
                     logger.warning(
@@ -183,6 +193,14 @@ class ExtractionRunner:
                 result.status = StageStatus.COMPLETED
                 if stage.output_dir:
                     result.output_dir = str(config.paths.resolve(stage.output_dir))
+                # P1a producer provenance (finding A-PROV): capture the producer
+                # git state at extraction time — the correct instant for build
+                # lineage of the data we just produced. Fail-open observation —
+                # never blocks; harvested by cli._record_experiment.
+                result.captured_metrics["producer_commits"] = resolve_build_provenance(
+                    extractor_dir=config.paths.extractor_dir,
+                    reconstructor_dir=config.paths.reconstructor_dir,
+                )
             else:
                 result.status = StageStatus.FAILED
                 # Phase α-2 / #PY-80 (2026-05-10) — surface stderr.

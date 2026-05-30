@@ -566,6 +566,19 @@ def _record_experiment(
             if key in extraction_captured:
                 cache_info[key] = extraction_captured[key]
 
+    # P1a producer-provenance harvest (orchestrator-specific, finding A-PROV):
+    # the extraction stage captures ``producer_commits`` (extractor/reconstructor/
+    # hft_statistics git shas + reconstructor_source + completeness) at extraction
+    # time — the correct instant for build lineage. Absent when extraction did not
+    # run this cycle (training-only / skip_if_exists / dry-run) → {} (honest
+    # not-applicable). Record-level OBSERVATION — deliberately NOT in the dedup
+    # fingerprint (compute_fingerprint reads the manifest config, never Provenance).
+    producer_commits: Dict[str, str] = {}
+    if "extraction" in results:
+        pc = results["extraction"].captured_metrics.get("producer_commits")
+        if isinstance(pc, dict):
+            producer_commits = pc
+
     # Trust columns: harvested INSIDE record_from_artifacts SSoT.
     # Pass the signal_export captured_metrics through; SSoT validates each
     # of the 4 fields, WARN-logs harvest errors, and injects model_config_hash
@@ -600,6 +613,7 @@ def _record_experiment(
         trainer_config_path=train_config_path,
         trainer_config_dict=train_config_dict,
         data_dir=data_dir,
+        producer_commits=producer_commits,
         gate_reports=gate_reports,
         cache_info=cache_info,
         stages_completed=stages_completed,

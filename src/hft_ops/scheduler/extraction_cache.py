@@ -120,6 +120,8 @@ __all__ = [
     "populate",
     "replicate_tree",
     "gc_cache",
+    "resolve_build_provenance",
+    "resolve_patched_crate_dir",
 ]
 
 
@@ -1148,6 +1150,82 @@ def _git_rev_parse_head(repo_dir: Path) -> Optional[str]:
         return None
 
 
+def _git_status_porcelain_dirty(repo_dir: Path) -> Optional[bool]:
+    """Return True if ``git status --porcelain`` in repo_dir is non-empty
+    (uncommitted changes present), False if clean, or None if it cannot be
+    determined (not a git checkout / git unavailable / timeout).
+
+    Fail-soft — never raises; producer provenance is a best-effort observation,
+    not a gate. Mirrors the error policy of ``_git_rev_parse_head``.
+    """
+    if not (repo_dir / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        return bool(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
+def resolve_patched_crate_dir(
+    extractor_dir: Path, crate_name: str, git_url_substring: str
+) -> Optional[Path]:
+    """Resolve a Cargo path-override directory from
+    ``extractor_dir/.cargo/config.toml``.
+
+    SSoT parser for git-URL-keyed ``[patch]`` tables, e.g.::
+
+        [patch."https://github.com/nagarx/hft-statistics.git"]
+        hft-statistics = { path = "../hft-statistics" }
+
+    Returns the resolved override ``Path`` (relative to ``extractor_dir``) when a
+    patch table whose key contains ``git_url_substring`` declares ``crate_name``
+    with a ``path``; else ``None``. Fail-soft — returns ``None`` on a missing or
+    corrupt config.
+
+    hft-rules §0: this is the ONE parser of ``.cargo/config.toml`` patch tables,
+    consumed by BOTH ``_resolve_hft_statistics_sha`` (cache-key path) and
+    ``resolve_build_provenance`` (record-level provenance). The prior inline
+    tier-2 read the WRONG key (``patch.crates-io.<crate>.path``); real configs
+    use git-URL table keys (``[patch."https://…<repo>.git"]``), so that tier was
+    dead and the sibling fallback silently did the work.
+    """
+    cargo_config = extractor_dir / ".cargo" / "config.toml"
+    if not cargo_config.exists():
+        return None
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover — py<3.11 fallback
+        import tomli as tomllib  # type: ignore
+    try:
+        data = tomllib.loads(cargo_config.read_text())
+    except Exception:  # pragma: no cover — corrupt toml
+        return None
+    patch = data.get("patch")
+    if not isinstance(patch, dict):
+        return None
+    for table_key, table in patch.items():
+        if git_url_substring not in table_key or not isinstance(table, dict):
+            continue
+        entry = table.get(crate_name)
+        # ``path`` MUST be a non-empty str — a valid Cargo path always is, but a
+        # syntactically-valid TOML could carry a truthy non-string (``path = 12``),
+        # which would crash ``PosixPath / <non-str>``. Guard with isinstance(str)
+        # so the resolver stays fail-soft (never raises) per its contract.
+        path = entry.get("path") if isinstance(entry, dict) else None
+        if isinstance(path, str) and path:
+            return (extractor_dir / path).resolve()
+    return None
+
+
 def _resolve_hft_statistics_sha(
     hft_statistics_dir: Optional[Path],
     extractor_dir: Path,
@@ -1156,34 +1234,26 @@ def _resolve_hft_statistics_sha(
 
     Resolution order:
       1. Explicit ``hft_statistics_dir`` argument (test / CLI override).
-      2. Parse ``extractor_dir/.cargo/config.toml`` for a
-         ``patch.crates-io.hft-statistics.path`` override, resolve relative
-         to extractor_dir, rev-parse there.
+      2. Path override from ``extractor_dir/.cargo/config.toml`` — the
+         git-URL-keyed ``[patch."https://…hft-statistics.git"]`` table (parsed
+         via the ``resolve_patched_crate_dir`` SSoT). NOTE: pre-2026-05-30 this
+         read the WRONG key (``patch.crates-io.hft-statistics.path``) and was
+         dead code; tier 3 (the sibling fallback) silently did the work. In the
+         standard layout the override path (``../hft-statistics``) resolves to
+         the SAME dir as the sibling, so the fix is behavior-preserving here and
+         correct for layouts where they would differ.
       3. Fallback: sibling dir ``extractor_dir.parent / "hft-statistics"``.
     """
     if hft_statistics_dir is not None:
         return _git_rev_parse_head(hft_statistics_dir)
 
-    cargo_config = extractor_dir / ".cargo" / "config.toml"
-    if cargo_config.exists():
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore
-        try:
-            data = tomllib.loads(cargo_config.read_text())
-        except Exception:  # pragma: no cover — corrupt toml
-            data = {}
-        # Navigate: [patch.crates-io.hft-statistics]\npath = "..."
-        patch_section = data.get("patch", {}).get("crates-io", {})
-        hft_stats = patch_section.get("hft-statistics", {})
-        if isinstance(hft_stats, dict):
-            patch_path = hft_stats.get("path")
-            if patch_path:
-                candidate = (extractor_dir / patch_path).resolve()
-                sha = _git_rev_parse_head(candidate)
-                if sha:
-                    return sha
+    override = resolve_patched_crate_dir(
+        extractor_dir, "hft-statistics", "hft-statistics.git"
+    )
+    if override is not None:
+        sha = _git_rev_parse_head(override)
+        if sha:
+            return sha
 
     # Fallback: sibling dir
     sibling = extractor_dir.parent / "hft-statistics"
@@ -1191,6 +1261,111 @@ def _resolve_hft_statistics_sha(
         return _git_rev_parse_head(sibling)
 
     return None
+
+
+# Sentinel for a producer whose git sha could not be resolved (fail-open).
+_PROVENANCE_UNRESOLVED: str = "unresolved"
+
+
+def resolve_build_provenance(
+    *,
+    extractor_dir: Path,
+    reconstructor_dir: Path,
+    hft_statistics_dir: Optional[Path] = None,
+) -> Dict[str, str]:
+    """Best-effort producer-code provenance for the Rust binaries that built an
+    export. FAIL-OPEN: captures whatever resolves, marks the rest
+    ``"unresolved"``, and NEVER raises — ``producer_commits`` is a record-level
+    OBSERVATION, not a gate.
+
+    Returns a flat ``Dict[str, str]`` with the keys locked by
+    ``hft_contracts.provenance.Provenance.producer_commits``::
+
+        extractor_git_sha      = <40-hex> | "unresolved"
+        reconstructor_git_sha  = <40-hex> | "unresolved"
+        hft_statistics_git_sha = <40-hex> | "unresolved"
+        reconstructor_source   = "path-override@<sha>+<clean|dirty|unknown>" | "git-pin"
+        completeness           = "full" | "partial"
+
+    ``completeness`` is ``"full"`` iff all three shas resolved, else ``"partial"``.
+
+    CONTRAST with the fail-CLOSED cache-key resolver: ``prepare_cache_key_inputs``
+    returns ``None`` to DISABLE caching when any input is missing (a missing input
+    must not silently weaken the cache key). Here a missing input degrades the
+    observation field, never the run — DO NOT reuse the cache-key None contract.
+    Reuses ``_git_rev_parse_head`` + the shared ``resolve_patched_crate_dir``
+    parser (hft-rules §0 — no second ``.cargo/config.toml`` parser).
+
+    Scope (P1a, finding A-PROV): the THREE MBO-pipeline producers whose git state
+    is otherwise un-pinned in the experiment record — ``extractor`` (also in the
+    NPY metadata via build.rs, captured here for completeness), ``reconstructor``
+    + ``hft_statistics`` (path-override Rust deps, invisible to BOTH the NPY
+    metadata AND the monorepo-root git which is NOT_GIT_TRACKED). Deliberately
+    EXCLUDED, NOT forgotten: ``databento-ingest`` (raw-data lineage already pinned
+    by CONTENT via the cache-key ``raw_input_manifest_hash`` — stronger than a git
+    sha) and ``basic-quote-processor`` (the BASIC/off-exchange pipeline has zero
+    orchestrated ``hft-ops run`` wiring today; a future BASIC extraction stage
+    MUST extend this resolver in the same change).
+
+    Args:
+        extractor_dir: feature-extractor-MBO-LOB checkout (also holds the
+            ``.cargo/config.toml`` patch tables consulted for path overrides).
+        reconstructor_dir: MBO-LOB-reconstructor checkout. In path-override mode
+            its HEAD is the built reconstructor commit (reported as
+            ``reconstructor_git_sha``); in git-pin mode the build uses the Cargo
+            pin instead, so the field is ``"unresolved"`` (not the local HEAD).
+        hft_statistics_dir: explicit hft-statistics dir; ``None`` auto-detects via
+            the ``.cargo/config.toml`` git-URL patch table, else sibling fallback.
+
+    Returns:
+        ``Dict[str, str]`` (see vocabulary above) — never empty, never raises.
+    """
+    extractor_sha = _git_rev_parse_head(extractor_dir) or _PROVENANCE_UNRESOLVED
+
+    # The local-checkout HEAD of reconstructor_dir. It is the reported
+    # ``reconstructor_git_sha`` ONLY in path-override mode (where the checkout IS
+    # the built crate). In git-pin mode it is NOT the built commit and is NOT
+    # reported — see the git-pin branch below.
+    reconstructor_head = (
+        _git_rev_parse_head(reconstructor_dir) or _PROVENANCE_UNRESOLVED
+    )
+    recon_override = resolve_patched_crate_dir(
+        extractor_dir, "mbo-lob-reconstructor", "MBO-LOB-reconstructor.git"
+    )
+    if recon_override is not None:
+        # Path-override (dev): the checkout HEAD IS the built reconstructor commit.
+        # Tag the source so a researcher can tell the working tree was clean,
+        # dirty, or indeterminate at build time.
+        dirty = _git_status_porcelain_dirty(reconstructor_dir)
+        dirty_tag = "dirty" if dirty else ("unknown" if dirty is None else "clean")
+        reconstructor_source = f"path-override@{reconstructor_head}+{dirty_tag}"
+        reconstructor_git_sha = reconstructor_head
+    else:
+        # git-pin (CI / no .cargo override): the build uses the Cargo.toml git pin,
+        # NOT the local checkout — so the local HEAD is NOT guaranteed to be the
+        # built commit (and in real CI the checkout may be absent entirely).
+        # Report ``unresolved`` rather than the local HEAD, to avoid recording
+        # silently-wrong lineage (matches the Provenance.producer_commits
+        # docstring). Recovering the true pinned commit would require parsing the
+        # Cargo pin — deferred (P1b). completeness is therefore ``partial`` here.
+        reconstructor_source = "git-pin"
+        reconstructor_git_sha = _PROVENANCE_UNRESOLVED
+
+    hft_statistics_sha = (
+        _resolve_hft_statistics_sha(hft_statistics_dir, extractor_dir)
+        or _PROVENANCE_UNRESOLVED
+    )
+
+    resolved = (extractor_sha, reconstructor_git_sha, hft_statistics_sha)
+    completeness = "full" if _PROVENANCE_UNRESOLVED not in resolved else "partial"
+
+    return {
+        "extractor_git_sha": extractor_sha,
+        "reconstructor_git_sha": reconstructor_git_sha,
+        "hft_statistics_git_sha": hft_statistics_sha,
+        "reconstructor_source": reconstructor_source,
+        "completeness": completeness,
+    }
 
 
 def _compute_raw_input_manifest_hash(

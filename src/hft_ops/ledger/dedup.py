@@ -695,6 +695,20 @@ def _extract_fingerprint_fields(config: Dict[str, Any]) -> Dict[str, Any]:
         # a future refactor ever bleeds checkpoint dict into fingerprint
         # inputs, this strip prevents the leak.
         "callback_state",
+        # P1a (2026-05-30, finding A-PROV) defensive add — sister to
+        # ``rng_state`` / ``callback_state`` / ``artifacts``: ``producer_commits``
+        # lives on ``Provenance`` (record/output side — extractor / reconstructor
+        # / hft_statistics git shas captured by the extraction stage) and
+        # structurally does NOT flow into ``compute_fingerprint`` (which reads the
+        # manifest config tree, never Provenance). Defense-in-depth: it is an
+        # OBSERVATION of WHICH CODE BUILT the data, NOT a treatment-axis — two
+        # identical configs built from different producer commits MUST dedup to
+        # the SAME fingerprint (else producer churn re-creates the C2 mass-
+        # invalidation / Phase-3-§3.3b ledger-conflation class). If a future
+        # refactor ever bleeds the record into fingerprint inputs, this strip
+        # catches the leak. Locked by
+        # ``test_producer_commits_excluded_from_fingerprint``.
+        "producer_commits",
     }
 
     def _strip(d: Dict[str, Any]) -> Dict[str, Any]:

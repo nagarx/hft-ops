@@ -336,6 +336,55 @@ class TestComputeFingerprint:
             "Sibling keys under stripped-parent paths must survive"
         )
 
+    def test_producer_commits_excluded_from_fingerprint(
+        self, sample_manifest_yaml: Path, tmp_pipeline: Path
+    ):
+        """P1a (2026-05-30, finding A-PROV): lock the fingerprint-vs-
+        producer_commits invariant. ``producer_commits`` lives on
+        ``Provenance`` (record/output side — WHICH producer code BUILT the
+        data) and structurally does NOT flow into ``compute_fingerprint``
+        (which reads only the manifest config tree). It is an OBSERVATION,
+        NOT a treatment: two identical configs built from different producer
+        commits MUST dedup to the SAME fingerprint. Mirror of
+        ``test_artifacts_field_excluded_from_fingerprint`` / ``rng_state``
+        defense-in-depth — ``dedup.py:exclude_keys`` includes
+        ``producer_commits``; this makes the exclusion enforceable so a
+        future refactor that bleeds the record into fingerprint inputs
+        cannot silently re-create the Phase-3-§3.3b ledger-conflation class.
+        """
+        from hft_ops.ledger.dedup import _extract_fingerprint_fields
+
+        config_with_producer_commits = {
+            "data": {"batch_size": 128},
+            "producer_commits": {  # hypothetical future leak (record side)
+                "reconstructor_git_sha": "2b74523",
+                "reconstructor_source": "path-override@2b74523+dirty",
+                "completeness": "full",
+            },
+            "model": {
+                "type": "tlob",
+                "producer_commits": {"deeply": "nested"},
+            },
+        }
+
+        stripped = _extract_fingerprint_fields(config_with_producer_commits)
+
+        _assert_no_field_in_canonical_input(
+            stripped,
+            field_name="producer_commits",
+            rationale=(
+                "producer_commits is an observation (WHICH producer code "
+                "built the data), not a treatment. Including it breaks dedup "
+                "(producer churn → spurious cache mass-invalidation / "
+                "Phase-3-§3.3b ledger conflation). Deleting 'producer_commits' "
+                "from exclude_keys MUST fail this test."
+            ),
+        )
+        # Positive check: non-excluded treatment keys still survive the strip.
+        assert "data" in stripped, (
+            "Non-producer_commits treatment keys must survive strip"
+        )
+
     def test_fingerprint_invariants_via_manifest_with_importance(
         self, sample_manifest_yaml: Path, tmp_pipeline: Path
     ):
