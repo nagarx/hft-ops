@@ -190,9 +190,12 @@ class TestBacktestingStageScript:
     """BacktestingStage.script field (Phase 0.1) enables multi-script backtests."""
 
     def test_default_script(self):
+        # C2 (2026-05-31): NO default — an unset script fails loud at
+        # validate-time (the former scripts/backtest_deeplob.py default never
+        # resolved + its argparse rejected the runner's flags).
         from hft_ops.manifest.schema import BacktestingStage
         stage = BacktestingStage()
-        assert stage.script == "scripts/backtest_deeplob.py"
+        assert stage.script == ""
 
     def test_custom_script(self):
         from hft_ops.manifest.schema import BacktestingStage

@@ -122,8 +122,12 @@ class TestBackCompatInvariant:
         existing `components["backtest"]` (asdict of params) contributes.
         """
         paths, exp_dir = scratch
+        # C2 (2026-05-31): "" is now the default script (was backtest_deeplob.py).
+        # The back-compat invariant — default script -> no fingerprint component
+        # — is unchanged (dedup's _DEFAULT_BACKTEST_SCRIPT self-heals from
+        # fields(BacktestingStage), so production fingerprints stay stable).
         m = _write_manifest(exp_dir, "default_bt",
-                            backtesting_overrides={"script": "scripts/backtest_deeplob.py"})
+                            backtesting_overrides={"script": ""})
         fp, components = compute_fingerprint_explain(load_manifest(m), paths)
         assert "backtest" in components, "existing backtest-params hash should still be there"
         assert "backtest_script" not in components, (
@@ -202,8 +206,10 @@ class TestSignalExportCoverage:
 class TestBacktestScriptCoverage:
     def test_non_default_backtest_script_flips_fingerprint(self, scratch):
         paths, exp_dir = scratch
+        # C2 (2026-05-31): "" is now the default (was backtest_deeplob.py); m1 uses
+        # the default -> no backtest_script component, m2 a non-default -> flips fp.
         m1 = _write_manifest(exp_dir, "bt_default",
-                             backtesting_overrides={"script": "scripts/backtest_deeplob.py"})
+                             backtesting_overrides={"script": ""})
         m2 = _write_manifest(exp_dir, "bt_regression",
                              backtesting_overrides={"script": "scripts/run_regression_backtest.py"})
         fp1, c1 = compute_fingerprint_explain(load_manifest(m1), paths)

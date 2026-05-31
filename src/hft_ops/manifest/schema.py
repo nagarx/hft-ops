@@ -237,15 +237,17 @@ class BacktestingStage:
         enabled: Whether to run this stage.
         script: Backtest script path, RELATIVE TO PIPELINE ROOT (not
             backtester_dir — Phase V.1.5 Frame-5 Task-1c unified the
-            script-path convention). Defaults to
-            ``scripts/backtest_deeplob.py`` for back-compat; production
-            manifests should use one of:
-            ``lob-backtester/scripts/run_readability_backtest.py`` (HMHP
-            classification + confirmation gate),
+            script-path convention). REQUIRED — no default (C2, 2026-05-31:
+            the former ``scripts/backtest_deeplob.py`` default did not resolve
+            and its argparse rejected the runner's flags). An enabled
+            backtesting stage with no script fails loud at validate-time.
+            Production manifests MUST use one of:
             ``lob-backtester/scripts/run_regression_backtest.py`` (TLOB /
-            HMHP-R regression), or
+            HMHP-R regression — backtest_metrics harvested), or
+            ``lob-backtester/scripts/run_readability_backtest.py`` (HMHP
+            classification + confirmation gate).
             ``lob-backtester/scripts/run_spread_signal_backtest.py``
-            (spread-based signals, NON-ORCHESTRATABLE — see docstring).
+            (spread-based signals) is NON-ORCHESTRATABLE — see docstring.
         signals_dir: Path to signals output from SignalExportStage (for
             signal-based backtests). Runner passes this as ``--signals``
             (renamed from ``--signals-dir`` in Phase 7.5-B.1).
@@ -274,7 +276,14 @@ class BacktestingStage:
     """
 
     enabled: bool = True
-    script: str = "scripts/backtest_deeplob.py"
+    # C2 (2026-05-31): NO default. The former ``scripts/backtest_deeplob.py``
+    # default was pipeline-root-relative -> ``<root>/scripts/backtest_deeplob.py``
+    # (which does not exist; the real script is under ``lob-backtester/scripts/``)
+    # AND backtest_deeplob.py's argparse rejects the runner's flags. An unset
+    # script now fails loud at validate-time (BacktestRunner.validate_inputs)
+    # instead of "script not found" / a mid-run "is a directory" error.
+    # Mirrored in manifest/loader.py::_build_backtesting (keep both in sync).
+    script: str = ""
     # DEPRECATED as of Phase 7.5-B.1 (2026-04-23); removal 2026-10-31
     model_checkpoint: str = ""
     # DEPRECATED — no backtester script accepts --data-dir; removal 2026-10-31

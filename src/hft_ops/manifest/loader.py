@@ -476,7 +476,10 @@ def _build_backtesting(raw: Dict[str, Any]) -> BacktestingStage:
 
     return BacktestingStage(
         enabled=raw.get("enabled", True),
-        script=raw.get("script", "scripts/backtest_deeplob.py"),
+        # C2 (2026-05-31): NO default — mirror schema.py BacktestingStage.script.
+        # An omitted script fails loud at validate-time (was a silent broken
+        # `scripts/backtest_deeplob.py` default that never resolved).
+        script=raw.get("script", ""),
         model_checkpoint=raw.get("model_checkpoint", ""),
         data_dir=raw.get("data_dir", ""),
         signals_dir=raw.get("signals_dir", ""),

@@ -649,6 +649,22 @@ def _record_experiment(
         ledger_path=None,  # ledger.register() below handles the save.
     )
 
+    # H6 (backtest-metrics harvest): move the backtesting stage's harvested
+    # metrics onto the record BEFORE persistence. ExperimentRecord is a
+    # non-frozen dataclass and record_from_artifacts has no backtest_metrics
+    # parameter (backtest_metrics is an OBSERVATION populated outside the SSoT
+    # builder — exactly as the retroactive backfill path does at cli.py:1346).
+    # ledger.register() below saves the record AND projects index_entry(), so
+    # the just-set value reaches records/<id>.json, index.json, and
+    # `hft-ops compare`. This ONE site covers single-run + sweep-serial +
+    # sweep-parallel (all route through _record_experiment). Skipped/failed
+    # grid points carry no backtesting result -> backtest_metrics stays {}.
+    bt_result = results.get("backtesting")
+    if bt_result is not None:
+        bt_metrics = bt_result.captured_metrics.get("backtest_metrics")
+        if isinstance(bt_metrics, dict) and bt_metrics:
+            record.backtest_metrics = bt_metrics
+
     ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     # Phase 8C-α Stage C.3 (2026-04-20): route post-stage artifacts into

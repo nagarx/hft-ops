@@ -14,10 +14,13 @@ or ``params_file``.
 
 from __future__ import annotations
 
+import json
+import logging
+import math
 import sys
 import time
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 from hft_ops.config import OpsConfig
 from hft_ops.manifest.schema import ExperimentManifest
@@ -28,6 +31,152 @@ from hft_ops.stages.base import (
     run_subprocess,
     _tail,
 )
+
+_logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------
+# H6 — backtest-metrics harvest (regression path).
+#
+# Greenfield: BacktestRunner.run previously set NO captured_metrics, so every
+# orchestrated backtest recorded ExperimentRecord.backtest_metrics == {} (the
+# live 98/98 monitorability blackout). These module-private helpers read the
+# backtester's deterministic regression summary and reduce it to a flat
+# snake_case dict that the ledger index whitelist + `hft-ops compare` consume.
+# Mirrors the signal_export.py `_harvest_*` convention. Observation-tier +
+# fail-soft (never raises -> never fails the backtest stage).
+# --------------------------------------------------------------------------
+
+# Regression summary (lob-backtester run_regression_backtest.py) per-threshold
+# PascalCase -> flat snake_case. PURE key-rename (raw values preserved) so that
+# `hft-ops compare` (which reads the index-projected backtest_metrics whitelist
+# {total_return, sharpe_ratio, max_drawdown, win_rate, total_trades}) sees them.
+_REGRESSION_METRIC_MAP = {
+    "TotalReturn": "total_return",
+    "SharpeRatio": "sharpe_ratio",
+    "MaxDrawdown": "max_drawdown",
+    "WinRate": "win_rate",
+}
+# 0DTE option scalars — emitted only when the summary's zero_dte_enabled is set.
+_REGRESSION_OPTION_MAP = {
+    "option_return_pct": "option_return_pct",
+    "option_win_rate": "option_win_rate",
+}
+
+
+def _finite_or_none(value: Any) -> Any:
+    """Return ``value`` iff it is a finite real number, else ``None``.
+
+    Guards NaN/Inf out of the ledger: ``atomic_write_json`` uses
+    ``json.dump(allow_nan=True)``, so a NaN would silently serialize as the
+    non-standard ``NaN`` literal (breaks strict parsers) AND NaN-compares-False
+    silently corrupts ``hft-ops compare`` ranking. Verified necessary even on
+    the regression path: a losing experiment's best-by-``option_return_pct`` row
+    is the do-nothing threshold, which carries NaN sharpe/win_rate
+    (cycle12_r20_hmhp_r__seed_42.json, 2026-05-31).
+    """
+    return value if isinstance(value, (int, float)) and math.isfinite(value) else None
+
+
+def _finite_sort_key(result: Dict[str, Any], key: str) -> float:
+    """Best-threshold selection key: non-finite -> ``-inf`` so it never wins."""
+    v = result.get(key)
+    return float(v) if isinstance(v, (int, float)) and math.isfinite(v) else float("-inf")
+
+
+def _harvest_regression_metrics(summary_path: Path) -> Dict[str, Any]:
+    """Reduce a regression ``<NAME>.json`` summary to a flat snake_case dict.
+
+    Replicates the backtester's own best-threshold selection
+    (run_regression_backtest.py:610-619 — documented-intentional mirror; the
+    sibling script is not importable across the repo boundary): for 0DTE runs
+    pick the threshold with the max ``option_return_pct``, else the max
+    ``TotalReturn``. Remaps the chosen row's PascalCase keys, dropping any
+    non-finite value. ``total_trades`` is intentionally OMITTED (absent from the
+    regression summary; ``n_entries`` counts entries not legs — a misleading
+    proxy).
+
+    SEMANTIC NOTE (read before interpreting ``total_return``): this is the
+    backtester's OWN best-threshold headline (faithful to
+    run_regression_backtest.py:610-619), NOT a "did the model trade well" score.
+    For a LOSING experiment (all current dark records are losers per the
+    validated findings), the best-by-``option_return_pct`` row is the do-nothing
+    ultra-conservative threshold (0 trades), so ``total_return == 0.0`` means
+    "the best achievable outcome was to NOT trade", NOT "neutral performance".
+    Use ``hft-ops ledger show`` for per-threshold detail. A future follow-on
+    (with the readability harvest) may add an ``n_entries``/``traded``
+    disambiguator to the index whitelist so ``hft-ops compare`` can distinguish
+    do-nothing-0.0 from neutral-0.0 (needs an hft-contracts index-schema change).
+    """
+    data = json.loads(summary_path.read_text())
+    results = data.get("results")
+    if not isinstance(results, list) or not results:
+        return {}
+    zero_dte = bool(data.get("zero_dte_enabled"))
+    has_option = any(
+        isinstance(r, dict) and "option_return_pct" in r for r in results
+    )
+    if zero_dte and has_option:
+        best = max(results, key=lambda r: _finite_sort_key(r, "option_return_pct"))
+    else:
+        best = max(results, key=lambda r: _finite_sort_key(r, "TotalReturn"))
+    if not isinstance(best, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for src, dst in _REGRESSION_METRIC_MAP.items():
+        v = _finite_or_none(best.get(src))
+        if v is not None:
+            out[dst] = v
+    if zero_dte:
+        for src, dst in _REGRESSION_OPTION_MAP.items():
+            v = _finite_or_none(best.get(src))
+            if v is not None:
+                out[dst] = v
+    return out
+
+
+def _harvest_backtest_metrics(
+    output_dir: Path, run_name: str, script_name: str
+) -> Dict[str, Any]:
+    """Harvest a flat snake_case ``backtest_metrics`` dict from the backtester's
+    on-disk output. Observation-tier + FAIL-SOFT: any error logs a WARN and
+    returns ``{}`` — it MUST NEVER raise (a harvest failure must not fail the
+    backtest stage, which already succeeded).
+
+    Dispatches on the backtester script: ``run_regression_backtest.py`` writes a
+    deterministic ``<output_dir>/<run_name>.json`` (the only path implemented
+    here — recovers the 93/98 regression dark records + all future regression).
+    Readability (classification) harvest is a deferred follow-on (random run_id
+    index-scan + NaN-sanitizer + single-match rule); ``backtest_deeplob.py`` /
+    spread write no harvestable summary. All non-regression cases return ``{}``.
+    """
+    try:
+        name = Path(script_name).name
+        if "regression" in name:
+            summary = Path(output_dir) / f"{run_name}.json"
+            if not summary.exists():
+                _logger.warning(
+                    "backtest-metrics harvest: regression summary not found at "
+                    "%s — backtest_metrics will be empty for run '%s'.",
+                    summary, run_name,
+                )
+                return {}
+            return _harvest_regression_metrics(summary)
+        if "readability" in name:
+            _logger.warning(
+                "backtest-metrics harvest: readability (classification) harvest "
+                "is a deferred follow-on; backtest_metrics empty for run '%s'.",
+                run_name,
+            )
+            return {}
+        # deeplob / spread / unknown / empty-script: no harvestable summary.
+        return {}
+    except Exception as exc:  # noqa: BLE001 — fail-soft observation tier
+        _logger.warning(
+            "backtest-metrics harvest failed (backtest_metrics empty) for run "
+            "'%s' via '%s': %s", run_name, script_name, exc,
+        )
+        return {}
 
 
 class BacktestRunner:
@@ -60,12 +209,27 @@ class BacktestRunner:
         # path. Bug had never surfaced because backtesting stage had never been
         # exercised live via orchestrator. Unified with
         # `config.paths.resolve(stage.script)` to match pipeline-wide convention.
-        script_path = config.paths.resolve(stage.script)
-        if not script_path.exists():
+        # C2 (2026-05-31): an enabled backtesting stage MUST specify a script —
+        # there is no default. This guard MUST run BEFORE the existence check:
+        # config.paths.resolve("") returns pipeline_root (which EXISTS), so an
+        # empty script would silently pass the existence check and only fail
+        # mid-run with a confusing "is a directory" subprocess error. Fail loud
+        # here with an actionable message (validate_inputs is only called for
+        # enabled stages — see cli.py stage loop).
+        if not stage.script:
             errors.append(
-                f"Backtest script not found: {script_path} "
-                f"(configured via stages.backtesting.script='{stage.script}')"
+                "stages.backtesting.script is required (no default); use "
+                "lob-backtester/scripts/run_regression_backtest.py (regression) "
+                "or lob-backtester/scripts/run_readability_backtest.py "
+                "(classification)."
             )
+        else:
+            script_path = config.paths.resolve(stage.script)
+            if not script_path.exists():
+                errors.append(
+                    f"Backtest script not found: {script_path} "
+                    f"(configured via stages.backtesting.script='{stage.script}')"
+                )
 
         if stage.model_checkpoint:
             checkpoint = config.paths.resolve(stage.model_checkpoint)
@@ -154,10 +318,8 @@ class BacktestRunner:
         # Per-trade .npy files dumped via `atomic_write_npy` post-Sub-cycle-4a
         # (de99f45) land at `<output_dir>/{run_name}__option_trade_pnls__{label}.npy`
         # for downstream R-16c analyzer ingestion.
-        cmd.extend([
-            "--output-dir",
-            str(config.paths.backtester_dir / "outputs" / "backtests"),
-        ])
+        output_dir = config.paths.backtester_dir / "outputs" / "backtests"
+        cmd.extend(["--output-dir", str(output_dir)])
 
         # Pass-through for script-specific args (readability `--min-agreement`
         # / `--min-confidence`, regression `--zero-dte` / `--commission`, all
@@ -183,6 +345,16 @@ class BacktestRunner:
 
             if proc.returncode == 0:
                 result.status = StageStatus.COMPLETED
+                # H6: harvest the backtester's metrics into captured_metrics so
+                # the orchestrator persists them onto ExperimentRecord.
+                # backtest_metrics (the live monitorability fix — previously the
+                # stage recorded nothing -> 98/98 ledger records had {}).
+                # _harvest_backtest_metrics is FAIL-SOFT (never raises) so it
+                # cannot flip a successful backtest to FAILED.
+                result.output_dir = str(output_dir)
+                result.captured_metrics["backtest_metrics"] = _harvest_backtest_metrics(
+                    output_dir, manifest.experiment.name, stage.script
+                )
             else:
                 result.status = StageStatus.FAILED
                 # Phase α-2 / #PY-80 (2026-05-10) — surface stderr.
