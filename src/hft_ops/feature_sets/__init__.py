@@ -14,10 +14,14 @@ Submodule responsibilities:
     - ``producer``: evaluator → FeatureSet orchestration.
 """
 
-from hft_ops.feature_sets.hashing import (
-    compute_feature_set_hash,
-    _sanitize_for_hash,
-)
+# M8 (2026-06-01): re-export from the canonical hft_contracts homes, NOT through
+# the local `hft_ops.feature_sets.hashing` Phase-6 shim, so `import
+# hft_ops.feature_sets` is DeprecationWarning-free at import time (the shim's
+# __getattr__ warns on access; routing the package re-export through it tripped a
+# strict `-W error::DeprecationWarning` CI collection). The shim still warns for
+# code that imports from it directly. Same objects either way.
+from hft_contracts.feature_sets.hashing import compute_feature_set_hash
+from hft_contracts.canonical_hash import sanitize_for_hash as _sanitize_for_hash
 from hft_ops.feature_sets.producer import (
     EvaluatorNotInstalled,
     NoFeaturesSelectedError,
@@ -27,7 +31,8 @@ from hft_ops.feature_sets.registry import (
     FeatureSetNotFound,
     FeatureSetRegistry,
 )
-from hft_ops.feature_sets.schema import (
+# schema is also a Phase-6 re-export shim — same M8 rationale as hashing above.
+from hft_contracts.feature_sets.schema import (
     FEATURE_SET_SCHEMA_VERSION,
     FeatureSet,
     FeatureSetAppliesTo,

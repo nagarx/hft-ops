@@ -944,8 +944,15 @@ def gc_cache(
     for child in cache_root.iterdir():
         if not child.is_dir():
             continue
-        if child.name.endswith(_TMP_SUFFIX) or "-" + _TMP_SUFFIX in child.name:
-            # Orphan staging dir — sweep these separately; not a finalized entry.
+        if child.name.endswith(_TMP_SUFFIX) or _TMP_SUFFIX + "-" in child.name:
+            # M4 (2026-06-01): exclude in-flight / orphan staging dirs from
+            # eviction accounting. Real staging dirs are `<key>.tmp-<pid>`
+            # (see populate() :286 / replicate_tree() :749) — a `.tmp-` infix.
+            # The prior `"-" + _TMP_SUFFIX` (= `-.tmp`) test never matched that
+            # pattern. Behaviorally this is defense-in-depth: the 64-hex
+            # length/charset check below also rejects these names. Orphans are
+            # deliberately NOT deleted here — a `.tmp-<pid>` dir may belong to a
+            # live concurrent populate().
             continue
         if child.name in pinned:
             continue
@@ -1048,7 +1055,14 @@ def prepare_cache_key_inputs(
         import tomli as tomllib  # type: ignore
     try:
         resolved_config = tomllib.loads(extractor_config_path.read_text())
-    except (OSError, Exception) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        # H5 (2026-06-01): narrowed from `(OSError, Exception)` (= bare except),
+        # which masked programming bugs as a silent "cache disabled". A genuine
+        # bug (None path -> AttributeError, downstream TypeError, ...) now
+        # PROPAGATES. The caught set is the full range of EXPECTED config
+        # read/parse anomalies: OSError (missing/unreadable file),
+        # UnicodeDecodeError (non-UTF-8 bytes from read_text() — a ValueError,
+        # NOT an OSError), TOMLDecodeError (malformed TOML).
         logger.warning("Cache disabled: cannot load extractor config %s: %s",
                        extractor_config_path, exc)
         return None
