@@ -168,6 +168,17 @@ def resolve_variables_in_manifest(manifest, ctx: VarResolutionContext):
         tags=list(experiment_raw.get("tags", [])),
     )
     stages_raw = raw.get("stages", {})
+    # R3 invariant (VALIDATION_AND_DESIGN_2026_05_30.md §12 Step 8): this is the
+    # SECOND ``Stages`` build site (the first is ``load_manifest``). It is fed
+    # ``asdict(manifest)`` (above), whose stage keys are EXACTLY the 8 canonical
+    # field names — the manifest was already built by ``load_manifest``, which
+    # dropped any unknown key and (H1) raised on a typo'd stage name. So the H1
+    # unknown-stage RAISE and the H2 per-stage / top-level unknown-key WARNs
+    # cannot (and need not) fire here: the ``_build_*`` helpers see only clean
+    # field keys → 0 spurious warnings. Typo-proofing lives in ``load_manifest``;
+    # do NOT introduce a raw-YAML path into this function without re-instating
+    # those guards. Locked by ``TestResolverRoundTripClean`` (no unknown-key
+    # warnings, no dropped stage fields).
     stages = Stages(
         extraction=_build_extraction(stages_raw.get("extraction", {})),
         raw_analysis=_build_raw_analysis(stages_raw.get("raw_analysis", {})),

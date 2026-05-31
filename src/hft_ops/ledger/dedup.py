@@ -638,83 +638,62 @@ def _resolve_inline_trainer_config(
     return merge_mod.resolve_inheritance(mutable, fake_config_path)
 
 
+# Fingerprint exclude-keys SSoT (VALIDATION_AND_DESIGN_2026_05_30.md §12 Step 6
+# / H4). Module-level so a single source of truth exists that drift-locking
+# tests can compare against BY IDENTITY — a hand-copied literal in a test had
+# silently diverged from this set (12 vs 13, missing ``producer_commits``),
+# which is the false-safety bug H4 closes. These are the keys
+# ``compute_fingerprint`` must NEVER hash: metadata (name / output paths /
+# logging) + OBSERVATIONS (importance / artifacts / rng_state / callback_state /
+# producer_commits) that must not become a treatment-axis (else
+# Phase-3-§3.3b ledger conflation: identical training → different fingerprints).
+#
+# BYTE-IDENTITY: this set is membership-tested ONLY (``if k in
+# _FINGERPRINT_EXCLUDE_KEYS`` inside ``_strip`` below); it is NEVER iterated into
+# the canonical JSON / hash. So ``set`` → ``frozenset`` is byte-identical for
+# every fingerprint — no rotation (verified by the ~100 fingerprint/dedup tests).
+_FINGERPRINT_EXCLUDE_KEYS: frozenset[str] = frozenset({
+    "name", "description", "tags", "version",
+    "output_dir", "log_level", "verbose",
+    "experiment",
+    # Phase 8C-α (2026-04-20): `importance` is post-training permutation
+    # importance — an OBSERVATION, not a treatment (enabling it does not change
+    # what is trained). Including it would create §3.3b ledger conflation.
+    # Locked by `test_importance_field_excluded_from_fingerprint`.
+    "importance",
+    # Round-3 post-audit: `artifacts` lives on ``ExperimentRecord`` (output
+    # side) and does NOT flow into `compute_fingerprint`; blacklisted as
+    # defense-in-depth against a future refactor serializing record fields in.
+    "artifacts",
+    # Phase DESIGN-1 A.2 (2026-05-10): ``rng_state`` lives in the checkpoint
+    # dict — a per-call run-time observation, NOT a treatment-axis.
+    "rng_state",
+    # Phase DESIGN-1 G-1 (2026-05-10), sister to ``rng_state``:
+    # ``callback_state`` (EarlyStopping/ModelCheckpoint/MetricLogger state) is
+    # a per-call training-progress observation, NOT a treatment-axis.
+    "callback_state",
+    # P1a (2026-05-30, finding A-PROV), sister to the above: ``producer_commits``
+    # lives on ``Provenance`` (which code built the data) and does NOT flow into
+    # `compute_fingerprint`. Two identical configs built from different producer
+    # commits MUST dedup to the SAME fingerprint (else producer churn re-creates
+    # the C2 mass-invalidation class). Locked by
+    # `test_producer_commits_excluded_from_fingerprint`.
+    "producer_commits",
+})
+
+
 def _extract_fingerprint_fields(config: Dict[str, Any]) -> Dict[str, Any]:
     """Extract only the fields that affect experiment outcomes.
 
     Strips metadata fields (name, description, tags, output paths, log levels)
     that do not affect numerical results. This ensures that changing only the
-    experiment name does not produce a different fingerprint.
+    experiment name does not produce a different fingerprint. The keys stripped
+    are the module-level ``_FINGERPRINT_EXCLUDE_KEYS`` SSoT.
     """
-    exclude_keys = {
-        "name", "description", "tags", "version",
-        "output_dir", "log_level", "verbose",
-        "experiment",
-        # Phase 8C-α post-audit round-2 (2026-04-20 architect-Q7 wire-in):
-        # `importance` is an OBSERVATION (post-training permutation
-        # importance), NOT a treatment. Enabling importance on an existing
-        # experiment does NOT change what gets trained; it only adds a
-        # post-hoc analysis. Fingerprint-including would create
-        # Phase-3-§3.3b-class ledger conflation: same trained model →
-        # different fingerprints depending on whether the operator asked
-        # for importance. Excluded for the same reason `artifacts[]` /
-        # `gate_reports[]` are excluded. Locked by regression test
-        # `test_importance_field_excluded_from_fingerprint`.
-        "importance",
-        # Round-3 post-audit Agent-3 H2 defensive add: `artifacts` lives
-        # on ``ExperimentRecord`` (output side) and structurally does
-        # NOT flow into `compute_fingerprint` (which reads the manifest
-        # config tree, not the record). Blacklisting it here is
-        # defense-in-depth: if a FUTURE refactor ever serializes record
-        # fields into the fingerprint input — e.g., for "fingerprint
-        # includes observed gate_reports" hypothetical — the strip
-        # catches it before it becomes a Phase-3-§3.3b-class
-        # ledger-conflation bug. Matches the symmetry with
-        # `importance` (both are observations).
-        "artifacts",
-        # Phase DESIGN-1 A.2 (2026-05-10) defensive add per V2 MOD-2:
-        # ``rng_state`` lives in the checkpoint dict at trainer save time
-        # and structurally does NOT flow into ``compute_fingerprint``
-        # (which reads the manifest config tree, not the checkpoint).
-        # Defense-in-depth: same symmetry as ``importance`` and
-        # ``artifacts`` — RNG state is run-time observation per-call, NOT
-        # a treatment-axis. If a future refactor ever serializes
-        # checkpoint contents into fingerprint inputs, this strip catches
-        # the leak before it becomes a Phase-3-§3.3b-class ledger
-        # conflation. Phase A.1 fingerprint-stability tests verify
-        # rng_state never enters compatibility_fingerprint or
-        # model_config_hash.
-        "rng_state",
-        # Phase DESIGN-1 G-1 (2026-05-10) defensive add — sister to
-        # ``rng_state``: ``callback_state`` lives in the checkpoint dict
-        # at trainer save time (EarlyStopping wait_count + best_value,
-        # ModelCheckpoint best_value, MetricLogger history). Structurally
-        # does NOT flow into ``compute_fingerprint`` today. Defense-in-depth
-        # symmetry with ``rng_state`` + ``importance`` + ``artifacts`` —
-        # callback state is a run-time observation per-call (training
-        # progress through patience counter), NOT a treatment-axis. If
-        # a future refactor ever bleeds checkpoint dict into fingerprint
-        # inputs, this strip prevents the leak.
-        "callback_state",
-        # P1a (2026-05-30, finding A-PROV) defensive add — sister to
-        # ``rng_state`` / ``callback_state`` / ``artifacts``: ``producer_commits``
-        # lives on ``Provenance`` (record/output side — extractor / reconstructor
-        # / hft_statistics git shas captured by the extraction stage) and
-        # structurally does NOT flow into ``compute_fingerprint`` (which reads the
-        # manifest config tree, never Provenance). Defense-in-depth: it is an
-        # OBSERVATION of WHICH CODE BUILT the data, NOT a treatment-axis — two
-        # identical configs built from different producer commits MUST dedup to
-        # the SAME fingerprint (else producer churn re-creates the C2 mass-
-        # invalidation / Phase-3-§3.3b ledger-conflation class). If a future
-        # refactor ever bleeds the record into fingerprint inputs, this strip
-        # catches the leak. Locked by
-        # ``test_producer_commits_excluded_from_fingerprint``.
-        "producer_commits",
-    }
-
     def _strip(d: Dict[str, Any]) -> Dict[str, Any]:
         result = {}
         for k, v in d.items():
-            if k in exclude_keys:
+            if k in _FINGERPRINT_EXCLUDE_KEYS:
                 continue
             if isinstance(v, dict):
                 stripped = _strip(v)

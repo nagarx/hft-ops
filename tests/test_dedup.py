@@ -459,6 +459,65 @@ class TestComputeFingerprint:
             "fingerprints must be 64-char SHA-256 hex strings"
         )
 
+    def test_contract_version_empty_vs_populated_diverges_fingerprint(
+        self, sample_manifest_yaml: Path, tmp_pipeline: Path
+    ):
+        """H4 §12 Step 6 companion to the 2.2→3.0 bump test: an EMPTY
+        ``contract_version`` ("") vs a populated one MUST also diverge.
+
+        The existing ``test_g6_e_contract_version_bump_diverges_fingerprint``
+        locks a populated→populated bump; this locks the edge where a manifest
+        omits contract_version entirely (a real pre-validation state) — it must
+        not collide with a populated one. Guards a regression that drops
+        contract_version from ``compute_fingerprint``'s canonical input.
+        """
+        paths = PipelinePaths(pipeline_root=tmp_pipeline)
+
+        m_empty = load_manifest(sample_manifest_yaml)
+        m_empty.experiment.contract_version = ""
+
+        m_pop = load_manifest(sample_manifest_yaml)
+        m_pop.experiment.contract_version = "3.0"
+
+        fp_empty = compute_fingerprint(m_empty, paths)
+        fp_pop = compute_fingerprint(m_pop, paths)
+
+        assert fp_empty != fp_pop, (
+            "contract_version '' vs '3.0' MUST diverge fingerprint; got "
+            f"identical {fp_empty!r} — compute_fingerprint dropped "
+            "contract_version from its canonical input."
+        )
+
+    def test_backtest_cost_field_divergence_changes_fingerprint(
+        self, sample_manifest_yaml: Path, tmp_pipeline: Path
+    ):
+        """H4 §12 Step 6: a change to a backtest COST parameter (``spread_bps``)
+        MUST change the fingerprint.
+
+        Cost is a TREATMENT (it changes the P&L outcome), NOT an observation.
+        Guards against a regression that drops ``backtesting.params`` from the
+        fingerprint's canonical input — which would merge experiments that
+        traded at materially different cost assumptions under one fingerprint.
+        """
+        paths = PipelinePaths(pipeline_root=tmp_pipeline)
+
+        m_lo = load_manifest(sample_manifest_yaml)
+        m_lo.stages.backtesting.enabled = True
+        m_lo.stages.backtesting.params.spread_bps = 1.0
+
+        m_hi = load_manifest(sample_manifest_yaml)
+        m_hi.stages.backtesting.enabled = True
+        m_hi.stages.backtesting.params.spread_bps = 5.0
+
+        fp_lo = compute_fingerprint(m_lo, paths)
+        fp_hi = compute_fingerprint(m_hi, paths)
+
+        assert fp_lo != fp_hi, (
+            "backtest spread_bps 1.0 vs 5.0 MUST diverge fingerprint (cost is a "
+            f"treatment); got identical {fp_lo!r} — compute_fingerprint dropped "
+            "backtesting.params from its canonical input."
+        )
+
 
 def _assert_no_field_in_canonical_input(
     canonical_input: Any,

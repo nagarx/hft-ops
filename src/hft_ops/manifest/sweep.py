@@ -39,35 +39,26 @@ from dataclasses import fields as dataclass_fields, is_dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
+from hft_ops.manifest._field_introspection import stage_dataclass, stage_names
 from hft_ops.manifest.schema import (
-    BacktestingStage,
     ExperimentManifest,
-    ExtractionStage,
-    RawAnalysisStage,
-    DatasetAnalysisStage,
-    SignalExportStage,
     Stages,
     SweepConfig,
     SweepAxis,
     SweepAxisValue,
-    TrainingStage,
-    ValidationStage,
 )
 
 # Label must be alphanumeric + underscore + hyphen (no dots, spaces, slashes)
 _LABEL_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-# Stage-dataclass mapping for cross-stage override routing.
-# The set of valid field names per stage is derived at call-time via
-# dataclasses.fields(STAGE) — single source of truth (no drift with schema.py).
+# Stage-name → stage-dataclass map for cross-stage override routing, DERIVED
+# from the introspection SSoT (manifest/_field_introspection) so it can never
+# drift from schema.py's ``Stages``. This was previously a hand-typed 7-entry
+# literal that silently omitted ``post_training_gate`` — sweep axes targeting
+# ``post_training_gate.*`` were wrongly rejected as an "unknown stage prefix".
+# See VALIDATION_AND_DESIGN_2026_05_30.md §3 A3 / §12 Step 2.
 _STAGE_DATACLASSES: Dict[str, type] = {
-    "extraction": ExtractionStage,
-    "raw_analysis": RawAnalysisStage,
-    "dataset_analysis": DatasetAnalysisStage,
-    "validation": ValidationStage,
-    "training": TrainingStage,
-    "signal_export": SignalExportStage,
-    "backtesting": BacktestingStage,
+    name: stage_dataclass(name) for name in stage_names()
 }
 
 # Field names that are SET via specialized mechanisms, NOT direct setattr dispatch:

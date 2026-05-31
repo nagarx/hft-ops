@@ -98,6 +98,22 @@ class TestSingleStagePrefix:
         assert m0.stages.signal_export.script == "scripts/export_signals.py"
         assert m1.stages.signal_export.script == "scripts/export_hmhp_signals.py"
 
+    def test_post_training_gate_axis_routes_to_ptg_stage(self):
+        """T1d (PTG): `post_training_gate.min_metric_floor` axis routes to
+        stages.post_training_gate. Regression for the ``_STAGE_DATACLASSES``
+        7-entry hand-mirror that silently omitted ``post_training_gate`` —
+        such axes were wrongly rejected as an "unknown stage prefix"
+        (VALIDATION_AND_DESIGN_2026_05_30.md §12 Step 2)."""
+        axes = [SweepAxis(name="floor", values=[
+            SweepAxisValue(label="lo", overrides={"post_training_gate.min_metric_floor": 0.01}),
+            SweepAxisValue(label="hi", overrides={"post_training_gate.min_metric_floor": 0.20}),
+        ])]
+        results = expand_sweep_with_axis_values(_build_manifest(axes))
+        m0, _ = results[0]
+        m1, _ = results[1]
+        assert m0.stages.post_training_gate.min_metric_floor == 0.01
+        assert m1.stages.post_training_gate.min_metric_floor == 0.20
+
 
 # -----------------------------------------------------------------------------
 # T1d: hard-fail with guidance

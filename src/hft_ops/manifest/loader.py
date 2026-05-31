@@ -19,12 +19,18 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from hft_ops.manifest._field_introspection import (
+    known_keys_for_stage,
+    stage_dataclass,
+    stage_names,
+)
 from hft_ops.manifest.schema import (
     BacktestingStage,
     BacktestParams,
@@ -281,7 +287,83 @@ def _build_backtest_params(raw: Dict[str, Any]) -> BacktestParams:
     return BacktestParams(**filtered)
 
 
+# ---------------------------------------------------------------------------
+# H2 (VALIDATION_AND_DESIGN_2026_05_30.md §12 Step 5): unknown-key boundaries.
+# hft-rules §8 — never silently drop config. Known-key sets are DERIVED from
+# the introspection SSoT (manifest/_field_introspection) + ExperimentManifest
+# fields, so they never drift from schema.py. Replaces (and generalizes to ALL
+# stages) the former backtesting-only ``_KNOWN_BACKTESTING_KEYS`` hand-copy.
+# These are WARN (not RAISE) because several live manifests carry dead
+# duplicate keys today; the RAISE boundary is reserved for unknown STAGE names
+# (H1) where a typo silently changes which stages run.
+# ---------------------------------------------------------------------------
+
+# Per-stage migration hint appended to the unknown-key WARN. Only backtesting
+# has historically needed one (the readability/holding/costs blocks → the
+# ``extra_args:`` escape hatch); other stages get the generic message.
+_STAGE_UNKNOWN_KEY_HINTS: Dict[str, str] = {
+    "backtesting": (
+        " If you intended these as backtester-script flags, move the values "
+        "into `stages.backtesting.extra_args:` list (e.g., "
+        '`extra_args: ["--exchange", "ARCX", "--min-agreement", "1.0"]`).'
+    ),
+}
+
+
+def _warn_unknown_stage_keys(stage_name: str, raw: Dict[str, Any]) -> None:
+    """Emit ONE consolidated ``RuntimeWarning`` if ``raw`` carries top-level
+    keys not declared on the stage's dataclass schema.
+
+    The known-key set is derived from the introspection SSoT
+    (``known_keys_for_stage``) — this retires the per-stage hand-copied
+    ``_KNOWN_BACKTESTING_KEYS`` and extends the guard (previously
+    backtesting-only) to every stage. The message embeds the stage's dataclass
+    name (``"<StageDataclass> loader"``) so the warning is attributable to a
+    specific stage (and the backtesting-keyed tests can keep filtering on it).
+    Does NOT raise — the operator still gets a functional parse; the WARN
+    converts a silent drop into a visible diagnostic. Nested keys (e.g.
+    ``training.overrides.*``, ``backtesting.params.*``) are intentionally NOT
+    checked here — those live behind known top-level fields.
+    """
+    if not isinstance(raw, dict):
+        return
+    known = known_keys_for_stage(stage_name)
+    unknown = set(raw) - known
+    if not unknown:
+        return
+    dc_name = stage_dataclass(stage_name).__name__
+    hint = _STAGE_UNKNOWN_KEY_HINTS.get(stage_name, "")
+    warnings.warn(
+        f"{dc_name} loader: silently dropping unknown top-level keys "
+        f"{sorted(unknown)!r} (not declared on {dc_name} schema)."
+        f"{hint} Current schema declares: {sorted(known)!r}.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+def _warn_unknown_top_level_keys(raw: Dict[str, Any], manifest_path: Any) -> None:
+    """Emit a ``RuntimeWarning`` on unknown TOP-LEVEL manifest keys (e.g. a
+    dead ``profiler_references:`` block with no consumer). The known set is
+    derived from ``ExperimentManifest`` fields (``manifest_path`` is
+    loader-set; it is harmless in the allow-set since it is never a YAML key).
+    """
+    if not isinstance(raw, dict):
+        return
+    known_top = set(ExperimentManifest.__dataclass_fields__)
+    unknown = set(raw) - known_top
+    if unknown:
+        warnings.warn(
+            f"Manifest {manifest_path}: ignoring unknown top-level keys "
+            f"{sorted(unknown)!r} (not declared on ExperimentManifest). "
+            f"Known top-level keys: {sorted(known_top)!r}.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
 def _build_extraction(raw: Dict[str, Any]) -> ExtractionStage:
+    _warn_unknown_stage_keys("extraction", raw)
     return ExtractionStage(
         enabled=raw.get("enabled", True),
         skip_if_exists=raw.get("skip_if_exists", True),
@@ -291,6 +373,7 @@ def _build_extraction(raw: Dict[str, Any]) -> ExtractionStage:
 
 
 def _build_raw_analysis(raw: Dict[str, Any]) -> RawAnalysisStage:
+    _warn_unknown_stage_keys("raw_analysis", raw)
     return RawAnalysisStage(
         enabled=raw.get("enabled", False),
         profile=raw.get("profile", "standard"),
@@ -302,6 +385,7 @@ def _build_raw_analysis(raw: Dict[str, Any]) -> RawAnalysisStage:
 
 
 def _build_dataset_analysis(raw: Dict[str, Any]) -> DatasetAnalysisStage:
+    _warn_unknown_stage_keys("dataset_analysis", raw)
     return DatasetAnalysisStage(
         enabled=raw.get("enabled", True),
         profile=raw.get("profile", "quick"),
@@ -313,6 +397,7 @@ def _build_dataset_analysis(raw: Dict[str, Any]) -> DatasetAnalysisStage:
 
 
 def _build_training(raw: Dict[str, Any]) -> TrainingStage:
+    _warn_unknown_stage_keys("training", raw)
     trainer_config = raw.get("trainer_config")
     # Normalize empty dicts/lists to None so "unset" is unambiguous
     if trainer_config is not None and not isinstance(trainer_config, dict):
@@ -357,19 +442,6 @@ def _build_training(raw: Dict[str, Any]) -> TrainingStage:
     )
 
 
-_KNOWN_BACKTESTING_KEYS = frozenset({
-    "enabled",
-    "script",
-    "model_checkpoint",
-    "data_dir",
-    "signals_dir",
-    "horizon_idx",
-    "params",
-    "params_file",
-    "extra_args",
-})
-
-
 def _build_backtesting(raw: Dict[str, Any]) -> BacktestingStage:
     # Phase 7.5-B.3 (2026-04-23) — Final-validation-round closure per
     # hft-rules §8 "Never silently drop, clamp, or 'fix' data without
@@ -387,27 +459,13 @@ def _build_backtesting(raw: Dict[str, Any]) -> BacktestingStage:
     # TODAY but silently breaks whenever operator wants non-default values.
     #
     # This fix: emit WARN on unknown top-level keys. Converts silent-drop
-    # to operator-visible diagnostic. Full typed-dataclass migration (adding
-    # `ReadabilityConfig` / `HoldingConfig` / `CostsConfig` sub-fields +
-    # runner-side flag emission) is Phase 8+ scope; this surgical fix is
-    # sufficient to UNBLOCK Task 1d first-live-run without silent-wrong
-    # results.
-    import warnings
-    unknown_keys = set(raw.keys()) - _KNOWN_BACKTESTING_KEYS
-    if unknown_keys:
-        warnings.warn(
-            f"BacktestingStage loader: silently dropping unknown top-level "
-            f"keys {sorted(unknown_keys)!r} (not declared on BacktestingStage "
-            f"schema). If you intended these as backtester-script flags, "
-            f"move the values into `stages.backtesting.extra_args:` list "
-            f"(e.g., `extra_args: [\"--exchange\", \"ARCX\", "
-            f"\"--min-agreement\", \"1.0\"]`). Current schema declares: "
-            f"{sorted(_KNOWN_BACKTESTING_KEYS)!r}. Phase 8+ will add "
-            f"typed sub-dataclasses for `readability`/`holding`/`costs` "
-            f"blocks with structured cmd-flag routing.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    # to operator-visible diagnostic. §12 Step 5 routed this through the
+    # shared ``_warn_unknown_stage_keys`` helper (retiring the hand-copied
+    # ``_KNOWN_BACKTESTING_KEYS``; the backtesting-specific ``extra_args``
+    # migration hint lives in ``_STAGE_UNKNOWN_KEY_HINTS``). Full
+    # typed-dataclass migration (``ReadabilityConfig`` / ``HoldingConfig`` /
+    # ``CostsConfig`` sub-fields + runner-side flag emission) is Phase 8+ scope.
+    _warn_unknown_stage_keys("backtesting", raw)
 
     params_raw = raw.get("params", {})
     horizon_idx = raw.get("horizon_idx")
@@ -430,6 +488,7 @@ def _build_backtesting(raw: Dict[str, Any]) -> BacktestingStage:
 
 
 def _build_signal_export(raw: Dict[str, Any]) -> SignalExportStage:
+    _warn_unknown_stage_keys("signal_export", raw)
     return SignalExportStage(
         enabled=raw.get("enabled", False),
         script=raw.get("script", "scripts/export_signals.py"),
@@ -447,6 +506,8 @@ def _build_validation(raw: Dict[str, Any]) -> ValidationStage:
     input raises early at load time (fail-fast — researchers shouldn't
     discover typos at gate-invocation time).
     """
+    _warn_unknown_stage_keys("validation", raw)
+
     on_fail = raw.get("on_fail", "warn")
     if on_fail not in ("warn", "abort", "record_only"):
         raise ValueError(
@@ -500,6 +561,8 @@ def _build_post_training_gate(raw: Dict[str, Any]) -> "PostTrainingGateStage":
     """
     # Lazy import to avoid circular dependency with schema.py
     from hft_ops.manifest.schema import PostTrainingGateStage
+
+    _warn_unknown_stage_keys("post_training_gate", raw)
 
     on_regression = raw.get("on_regression", "warn")
     if on_regression not in ("warn", "abort", "record_only"):
@@ -637,6 +700,10 @@ def load_manifest(
 
     raw = _resolve_variables(raw, now=now, paths=paths)
 
+    # H2 (§12 Step 5): WARN on unknown TOP-LEVEL manifest keys (e.g. a dead
+    # ``profiler_references:`` block with no consumer).
+    _warn_unknown_top_level_keys(raw, manifest_path)
+
     experiment_raw = raw.get("experiment", {})
     if not experiment_raw.get("name"):
         raise ValueError(
@@ -652,6 +719,25 @@ def load_manifest(
     )
 
     stages_raw = raw.get("stages", {})
+    # H1 (VALIDATION_AND_DESIGN_2026_05_30.md §12 Step 4): fail LOUD on an
+    # unknown stage key. Without this, a typo'd stage (e.g. ``trainning:``) is
+    # silently dropped and the real stage runs with its default ``enabled`` —
+    # the experiment silently does the wrong thing, invisible in the ledger.
+    # Runs AFTER ``_resolve_variables`` (:638) and operates on KEYS; variable
+    # substitution preserves dict keys verbatim (only VALUES are substituted),
+    # so ``${...}`` / ``resolved.`` / ``sweep.`` references can never appear as
+    # a stage key here. Derives the valid set from the introspection SSoT
+    # (manifest/_field_introspection) so it never drifts from schema.py.
+    if isinstance(stages_raw, dict):
+        unknown_stages = set(stages_raw) - stage_names()
+        if unknown_stages:
+            raise ValueError(
+                f"Unknown stage(s) in manifest {manifest_path}: "
+                f"{sorted(unknown_stages)}. Valid stages: "
+                f"{sorted(stage_names())}. (Likely a typo — an unrecognized "
+                f"stage key is silently ignored without this guard, so the "
+                f"real stage would run with its default settings.)"
+            )
     stages = Stages(
         extraction=_build_extraction(stages_raw.get("extraction", {})),
         raw_analysis=_build_raw_analysis(stages_raw.get("raw_analysis", {})),

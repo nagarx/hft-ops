@@ -2,7 +2,8 @@
 
 Tests dedup.py `_extract_fingerprint_fields` + nested `_strip` function for:
 
-1. **Frozen baseline** of 12 exclude_keys (additions REQUIRE this test update)
+1. **Baseline set-equality** to the production SSoT (13 exclude_keys; any drift
+   REQUIRES this test update — H4 §12 Step 6 retired the stale len==12 lock)
 2. **Synthetic collapse hazard** (#PY-130) — dormant in production, REAL bug
 3. **List-of-dicts sister-site leak** (#PY-136 / N2-2) — dormant in production
 4. **Production manifest distinctness** — locks empirical 2026-05-10/11 results
@@ -30,7 +31,11 @@ from typing import Any, Dict
 import pytest
 import yaml
 
-from hft_ops.ledger.dedup import _extract_fingerprint_fields, compute_fingerprint
+from hft_ops.ledger.dedup import (
+    _FINGERPRINT_EXCLUDE_KEYS,
+    _extract_fingerprint_fields,
+    compute_fingerprint,
+)
 from hft_ops.manifest.loader import load_manifest
 from hft_ops.paths import PipelinePaths
 
@@ -45,7 +50,8 @@ PIPELINE_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class TestExcludeKeysFrozenBaseline:
-    """Phase R-17 F2: lock the 12 exclude_keys at 2026-05-11 baseline.
+    """Phase R-17 F2 + H4 (§12 Step 6): lock the 13 exclude_keys via set-equality
+    to the production SSoT ``dedup._FINGERPRINT_EXCLUDE_KEYS``.
 
     Strict membership policy per G4 verdict (option a — exact verbatim assertion):
     adding or removing any key REQUIRES updating ``EXPECTED_EXCLUDE_KEYS`` here
@@ -71,14 +77,31 @@ class TestExcludeKeysFrozenBaseline:
         "rng_state",
         # Phase DESIGN-1 G-1 (2026-05-10): callback state in checkpoint — per-call OBSERVATION
         "callback_state",
+        # P1a (2026-05-30): producer_commits on Provenance — which-code-built-it OBSERVATION
+        "producer_commits",
     })
 
-    def test_baseline_count_is_12(self):
-        """The 2026-05-11 baseline locks exactly 12 exclude_keys."""
-        assert len(self.EXPECTED_EXCLUDE_KEYS) == 12, (
-            f"Baseline membership drift: {sorted(self.EXPECTED_EXCLUDE_KEYS)}. "
-            f"If you intentionally added a new exclude_key, update this test "
-            f"AND add a sister regression test for the new key's behavior."
+    def test_baseline_set_equals_production_ssot(self):
+        """The hand-mirrored baseline MUST equal the production SSoT BY VALUE.
+
+        H4 (VALIDATION_AND_DESIGN_2026_05_30.md §12 Step 6): the prior test
+        asserted only ``len == 12`` against its OWN hand-copied set, which had
+        silently diverged from production (12 vs 13 — missing
+        ``producer_commits``, added 2026-05-30). Comparing to the imported
+        production object ``_FINGERPRINT_EXCLUDE_KEYS`` forces any future change
+        to the exclude set to be acknowledged HERE and paired with a sister
+        behavioral test (the parametrized strip tests below auto-cover every key
+        in this set).
+        """
+        assert self.EXPECTED_EXCLUDE_KEYS == _FINGERPRINT_EXCLUDE_KEYS, (
+            "Baseline drift between this test's EXPECTED_EXCLUDE_KEYS and the "
+            "production SSoT dedup._FINGERPRINT_EXCLUDE_KEYS. "
+            f"In production only: "
+            f"{sorted(_FINGERPRINT_EXCLUDE_KEYS - self.EXPECTED_EXCLUDE_KEYS)}. "
+            f"In test only: "
+            f"{sorted(self.EXPECTED_EXCLUDE_KEYS - _FINGERPRINT_EXCLUDE_KEYS)}. "
+            "If you intentionally changed the exclude set, update "
+            "EXPECTED_EXCLUDE_KEYS AND add a sister regression test."
         )
 
     @pytest.mark.parametrize("excluded_key", sorted(EXPECTED_EXCLUDE_KEYS))

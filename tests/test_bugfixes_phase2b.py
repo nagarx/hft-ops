@@ -385,6 +385,45 @@ class TestValidatorEnabledStages:
             f"{no_stages_msgs}"
         )
 
+    def test_post_training_gate_only_manifest_not_flagged_empty(self, tmp_pipeline):
+        """A manifest with ONLY post_training_gate.enabled should not warn
+        'no stages'. Regression for the ``enabled_stages`` ladder that omitted
+        ``post_training_gate`` (VALIDATION_AND_DESIGN_2026_05_30.md §12 Step 2)."""
+        import yaml
+
+        from hft_ops.manifest.loader import load_manifest
+        from hft_ops.manifest.validator import validate_manifest
+        from hft_ops.paths import PipelinePaths
+
+        manifest_dict = {
+            "experiment": {"name": "ptg_only", "contract_version": "2.2"},
+            "pipeline_root": "..",
+            "stages": {
+                "extraction": {"enabled": False},
+                "dataset_analysis": {"enabled": False},
+                "validation": {"enabled": False},
+                "training": {"enabled": False},
+                "post_training_gate": {"enabled": True},
+                "signal_export": {"enabled": False},
+                "backtesting": {"enabled": False},
+            },
+        }
+        manifest_path = tmp_pipeline / "hft-ops" / "experiments" / "ptg_only.yaml"
+        with open(manifest_path, "w") as f:
+            yaml.dump(manifest_dict, f)
+
+        manifest = load_manifest(manifest_path)
+        paths = PipelinePaths(pipeline_root=tmp_pipeline)
+        result = validate_manifest(manifest, paths)
+
+        no_stages_msgs = [
+            str(w) for w in result.warnings if "No stages enabled" in str(w)
+        ]
+        assert not no_stages_msgs, (
+            "post_training_gate-only manifest falsely flagged as empty: "
+            f"{no_stages_msgs}"
+        )
+
     def test_fully_disabled_still_warns(self, tmp_pipeline):
         """A manifest with ALL stages disabled should still surface the warning."""
         import yaml

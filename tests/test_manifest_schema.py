@@ -719,20 +719,21 @@ class TestStagesLoaderParity:
         Fails on the first stage that doesn't honor user YAML — proving
         a loader helper is missing or not wired into `Stages(...)`.
         """
-        from dataclasses import fields
+        from hft_ops.manifest._field_introspection import stage_names
 
-        stage_fields = fields(Stages)
-        # Every stage dataclass in the pipeline has an ``enabled: bool``
-        # field by convention. Set enabled=true in YAML; verify loader
-        # propagates it. If default_factory silently filled, enabled is False.
-        for f in stage_fields:
-            stage_name = f.name
-            # Skip sweep/backtest_params etc. if any non-Stage fields are in Stages;
-            # `Stages` currently only contains Stage subclasses, each with `enabled`.
-            stage_cls = f.type if isinstance(f.type, type) else None
-            if stage_cls is None:
-                continue
-
+        # Iterate the canonical stage set from the introspection SSoT.
+        # NB: do NOT gate on ``Field.type`` here — under ``from __future__
+        # import annotations`` (active in schema.py) ``f.type`` is the *string*
+        # annotation, so ``isinstance(f.type, type)`` is always False and
+        # silently skips every field. That exact trap made this test vacuous
+        # (0 iterations / false-green) before VALIDATION_AND_DESIGN_2026_05_30.md
+        # §12 Step 3. Every stage dataclass has an ``enabled: bool`` field by
+        # convention; set it true in YAML and verify the loader propagates it
+        # (a missing/unwired ``_build_<stage>`` helper would leave a
+        # default-factory ``False`` for the False-default stages).
+        names = sorted(stage_names())
+        assert names, "stage_names() returned empty — introspection SSoT broken"
+        for stage_name in names:
             m_path = tmp_path / f"m_{stage_name}.yaml"
             m_path.write_text(f"""
 experiment:

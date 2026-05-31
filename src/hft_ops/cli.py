@@ -33,6 +33,7 @@ from hft_ops.ledger.comparator import compare_experiments, diff_experiments
 from hft_ops.ledger.dedup import check_duplicate, compute_fingerprint
 from hft_contracts.experiment_record import ExperimentRecord
 from hft_ops.ledger.ledger import ExperimentLedger, StaleLedgerIndexError
+from hft_ops.manifest._field_introspection import stage_names
 from hft_ops.manifest.loader import load_manifest
 from hft_ops.manifest.validator import (
     apply_resolved_context,
@@ -259,6 +260,31 @@ def _resolve_pipeline_root(ctx_root: Optional[str]) -> Path:
         sys.exit(1)
 
 
+def _parse_and_validate_stages(stages: Optional[str]) -> Optional[set]:
+    """Parse a ``--stages`` CSV into a validated set of canonical stage names.
+
+    Fail-loud on an unknown stage name — the symmetric CLI analog of the H1
+    manifest-stage RAISE: without this, ``--stages trainning`` silently matches
+    no stage and that stage just doesn't run (the same drift footgun, on the
+    CLI surface). Valid names are derived from the introspection SSoT
+    (manifest/_field_introspection). Whitespace around each name is stripped.
+    Returns ``None`` for an empty/absent flag (= "run all enabled stages").
+
+    Provenance: VALIDATION_AND_DESIGN_2026_05_30.md §12 Step 7 (R4 / Component 7).
+    """
+    if not stages:
+        return None
+    requested = {s.strip() for s in stages.split(",") if s.strip()}
+    unknown = requested - stage_names()
+    if unknown:
+        raise click.BadParameter(
+            f"unknown stage(s) {sorted(unknown)}; valid stages are "
+            f"{sorted(stage_names())}",
+            param_hint="'--stages'",
+        )
+    return requested
+
+
 @click.group()
 @click.option(
     "--pipeline-root",
@@ -392,9 +418,7 @@ def run(
     resolved_ctx = resolve_manifest_context(manifest, paths)
     apply_resolved_context(manifest, resolved_ctx)
 
-    requested_stages = None
-    if stages:
-        requested_stages = set(stages.split(","))
+    requested_stages = _parse_and_validate_stages(stages)
 
     stage_runners = _build_stage_runners(manifest)
 
@@ -1655,7 +1679,7 @@ def sweep_run(
         return
 
     # Execute each grid point
-    requested_stages = set(stages.split(",")) if stages else None
+    requested_stages = _parse_and_validate_stages(stages)
     completed = 0
     failed = 0
     # Phase R-17 F6 (2026-05-11): #PY-127 closure — track skipped_dupes

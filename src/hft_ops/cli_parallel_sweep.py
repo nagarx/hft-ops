@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from hft_contracts.atomic_io import AtomicWriteError
 from hft_contracts.experiment_record import ExperimentRecord, RecordType
 from hft_contracts.provenance import GitInfo, Provenance
 
@@ -406,20 +407,42 @@ def _write_sweep_aggregate(
     paths: PipelinePaths,
     SweepAggregateWriter,
 ) -> None:
-    """Write the sweep_aggregate record summarizing all grid points.
+    """Write the sweep_aggregate record summarizing all grid points + rebuild
+    the ledger index so the aggregate is queryable.
 
-    Matches the serial-path writer call at ``cli.py::sweep_run`` end.
+    Mirrors the serial-path writer call (keyword-only ``SweepAggregateWriter()
+    .write(...)`` + post-write ``_rebuild_index``). ``completed`` / ``failed``
+    are derived from the per-grid-point statuses carried in ``child_summaries``.
+
+    Fail-loud boundary (VALIDATION_AND_DESIGN_2026_05_30.md §12 Step 9 / R1):
+    only genuine I/O failures (``OSError`` / ``AtomicWriteError``) are
+    swallowed-to-WARN — the per-grid-point records are ALREADY persisted before
+    this point (Step 5 above), so a transient disk error must not crash a long
+    sweep. Anything else (a diverged ``write`` signature → ``TypeError``, a
+    serialization bug, etc.) PROPAGATES with its native traceback instead of
+    being silently downgraded to a warning that hides a zero-aggregate-record
+    bug. That broad swallow was the C1 failure mode: the prior code called a
+    permanently-diverged ``SweepAggregateWriter(paths=...)`` + positional
+    ``write(child_summaries)`` (both ``TypeError``), caught them, and every
+    ``--parallel`` sweep silently produced no aggregate record.
     """
+    completed = sum(1 for s in child_summaries if s.get("status") == "completed")
+    failed = sum(1 for s in child_summaries if s.get("status") == "failed")
+    writer = SweepAggregateWriter()
     try:
-        writer = SweepAggregateWriter(
-            paths=paths,
+        writer.write(
+            ledger_dir=paths.ledger_dir,
             sweep_id=sweep_id,
             sweep_name=sweep_name,
             manifest=manifest,
+            child_summaries=child_summaries,
+            completed=completed,
+            failed=failed,
         )
-        writer.write(child_summaries)
-    except Exception as exc:
+        ExperimentLedger(paths.ledger_dir)._rebuild_index()
+    except (OSError, AtomicWriteError) as exc:
         logger.warning(
-            "sweep_aggregate write failed: %s (per-grid-point records "
-            "are still registered)", exc,
+            "sweep_aggregate write failed: %s (per-grid-point records are "
+            "still registered; rebuild with `hft-ops ledger rebuild-index`)",
+            exc,
         )

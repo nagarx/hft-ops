@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from hft_ops.manifest._field_introspection import stage_names
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.paths import PipelinePaths
 
@@ -476,25 +477,17 @@ def validate_manifest(
 
     _validate_existing_exports(manifest, paths, result)
 
-    # Mirror exactly the stage fields present in ``Stages``. Missing entries
-    # here cause validation-only or signal-export-only manifests to be flagged
-    # as "no stages enabled" — an incorrect warning that confuses users and
-    # retroactive backfill flows.
-    enabled_stages = []
-    if manifest.stages.extraction.enabled:
-        enabled_stages.append("extraction")
-    if manifest.stages.raw_analysis.enabled:
-        enabled_stages.append("raw_analysis")
-    if manifest.stages.dataset_analysis.enabled:
-        enabled_stages.append("dataset_analysis")
-    if manifest.stages.validation.enabled:
-        enabled_stages.append("validation")
-    if manifest.stages.training.enabled:
-        enabled_stages.append("training")
-    if manifest.stages.signal_export.enabled:
-        enabled_stages.append("signal_export")
-    if manifest.stages.backtesting.enabled:
-        enabled_stages.append("backtesting")
+    # Derive the enabled-stage set from the stage-introspection SSoT
+    # (manifest/_field_introspection) over ALL stage fields on ``Stages``.
+    # The previous hand-maintained ladder omitted ``post_training_gate`` — a
+    # post_training_gate-only manifest was falsely flagged "no stages enabled".
+    # Deriving guarantees every current + future stage is counted (no drift).
+    # See VALIDATION_AND_DESIGN_2026_05_30.md §3 A3 / §12 Step 2.
+    enabled_stages = [
+        name
+        for name in sorted(stage_names())
+        if getattr(manifest.stages, name).enabled
+    ]
 
     if not enabled_stages:
         result.warning("No stages enabled in manifest.", context="stages")
