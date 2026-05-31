@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 
 from hft_contracts.experiment_record import ExperimentRecord
+from hft_contracts.provenance import Provenance
 from hft_ops.ledger.comparator import diff_experiments
 
 
@@ -87,6 +88,8 @@ class TestCompatibilityFingerprintDiff:
             # Phase Y / γ-1 LITE / #PY-95 (2026-05-10): also-additive
             "experiment_provenance_hash",
             "model_config_hash",
+            # Step 5 (2026-05-31): producer_commits divergence — also additive
+            "producer_commits",
         ]:
             assert expected_key in result, f"Missing key: {expected_key}"
         assert result["experiment_a"] == "exp_a"
@@ -197,3 +200,54 @@ class TestModelConfigHashDiff:
         assert any(
             "lr" in str(d[0]).lower() for d in result["config_diffs"]
         ), "config_diffs should surface lr divergence even when mch matches"
+
+
+# =============================================================================
+# Step 5 (2026-05-31): diff surfaces producer_commits (Foundation-Integrity
+# producer-code lineage) divergence. The phase CAPTURES it (extraction.py:141,
+# 200) but diff never read record.provenance — so two records built from
+# DIFFERENT reconstructor/extractor commits showed IDENTICAL diff output,
+# defeating the phase's purpose (catch silently-wrong Rust-producer lineage).
+# =============================================================================
+class TestProducerCommitsDiff:
+    @staticmethod
+    def _rec(eid, producer_commits):
+        return ExperimentRecord(
+            experiment_id=eid,
+            provenance=Provenance(producer_commits=producer_commits),
+        )
+
+    def test_matching_producer_commits_yield_none(self):
+        pc = {"extractor_git_sha": "a" * 40, "reconstructor_git_sha": "b" * 40,
+              "completeness": "full"}
+        result = diff_experiments(self._rec("a", pc), self._rec("b", dict(pc)))
+        assert result["producer_commits"] is None
+
+    def test_differing_reconstructor_sha_yields_tuple(self):
+        """Same extractor, DIFFERENT reconstructor commit -> the exact silent
+        lineage drift the phase exists to catch."""
+        pc_a = {"extractor_git_sha": "a" * 40, "reconstructor_git_sha": "b" * 40,
+                "completeness": "full"}
+        pc_b = {"extractor_git_sha": "a" * 40, "reconstructor_git_sha": "c" * 40,
+                "completeness": "full"}
+        result = diff_experiments(self._rec("a", pc_a), self._rec("b", pc_b))
+        assert result["producer_commits"] == (pc_a, pc_b)
+
+    def test_both_empty_yield_none(self):
+        result = diff_experiments(self._rec("a", {}), self._rec("b", {}))
+        assert result["producer_commits"] is None
+
+    def test_asymmetric_one_populated_one_empty_yields_tuple(self):
+        """Post-P1a record (captured) vs a record that ran a path with no
+        capture (e.g. the deferred skip_if_exists) -> surfaced asymmetry."""
+        pc_a = {"extractor_git_sha": "a" * 40, "completeness": "partial"}
+        result = diff_experiments(self._rec("a", pc_a), self._rec("b", {}))
+        assert result["producer_commits"] == (pc_a, {})
+
+    def test_default_provenance_records_yield_none(self):
+        """Records built WITHOUT an explicit provenance (default Provenance has
+        empty producer_commits) -> both empty -> None (no false divergence)."""
+        a = ExperimentRecord(experiment_id="a")
+        b = ExperimentRecord(experiment_id="b")
+        result = diff_experiments(a, b)
+        assert result["producer_commits"] is None

@@ -93,6 +93,28 @@ def compare_experiments(
     return rows
 
 
+def find_unresolved_metric_keys(
+    entries: Sequence[Dict[str, Any]],
+    metric_keys: Sequence[str],
+) -> List[str]:
+    """Return the metric keys that resolve to ``None`` in EVERY entry.
+
+    Such a key contributes nothing to the comparison — almost always a typo or a
+    metric not projected into the ledger index. The CLI surfaces these as a WARN
+    so a blank ``compare`` column becomes distinguishable from a genuine all-blank
+    result (the ``--stages`` footgun's twin; metric keys are an OPEN dotted-path
+    set -> WARN, not the closed-set RAISE). Empty ``entries`` -> all keys unresolved
+    (vacuous: nothing to resolve against — the CLI only WARNs when entries is
+    non-empty, so this never false-alarms). Uses the same ``_get_nested`` resolver
+    the comparison itself uses, so "resolves to None here" == "renders blank there".
+    """
+    return [
+        key
+        for key in metric_keys
+        if all(_get_nested(entry, key) is None for entry in entries)
+    ]
+
+
 def diff_experiments(
     record_a: ExperimentRecord,
     record_b: ExperimentRecord,
@@ -146,6 +168,9 @@ def diff_experiments(
           - compatibility_fingerprint (None | Tuple[Optional[str], Optional[str]])
           - experiment_provenance_hash (None | Tuple[Optional[str], Optional[str]])
           - model_config_hash (None | Tuple[Optional[str], Optional[str]])
+          - producer_commits (None | Tuple[Dict[str, str], Dict[str, str]]) —
+            Foundation-Integrity producer-code lineage divergence (Step 5,
+            2026-05-31); None when equal/both-empty, else the two dicts.
     """
     config_diffs: List[Tuple[str, Any, Any]] = []
     metric_diffs: List[Tuple[str, Any, Any, Any]] = []
@@ -219,6 +244,21 @@ def diff_experiments(
         (mch_a, mch_b) if mch_a != mch_b else None
     )
 
+    # Step 5 (2026-05-31): surface producer_commits (the Foundation-Integrity
+    # producer-code lineage — extractor/reconstructor/hft_statistics git shas +
+    # completeness) divergence as a first-class diff field. The phase CAPTURES it
+    # (extraction.py:141,200 -> record.provenance.producer_commits) but diff never
+    # read provenance, so two records built from DIFFERENT reconstructor commits
+    # showed identical diff output — defeating the phase's purpose (catch
+    # silently-wrong Rust-producer lineage). None when equal (or both empty); a
+    # Tuple of the two dicts when they differ. Defensive getattr: a record
+    # predating the provenance/producer_commits field reads as {}.
+    pc_a = getattr(getattr(record_a, "provenance", None), "producer_commits", {}) or {}
+    pc_b = getattr(getattr(record_b, "provenance", None), "producer_commits", {}) or {}
+    producer_commits_diff: Optional[Tuple[Dict[str, str], Dict[str, str]]] = (
+        (pc_a, pc_b) if pc_a != pc_b else None
+    )
+
     return {
         "experiment_a": record_a.experiment_id,
         "experiment_b": record_b.experiment_id,
@@ -227,6 +267,7 @@ def diff_experiments(
         "compatibility_fingerprint": compatibility_fp_diff,
         "experiment_provenance_hash": experiment_provenance_hash_diff,
         "model_config_hash": model_config_hash_diff,
+        "producer_commits": producer_commits_diff,
     }
 
 

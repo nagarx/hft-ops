@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import click
 from rich.console import Console
@@ -29,7 +29,11 @@ from rich.table import Table
 from hft_contracts.experiment_recorder import record_from_artifacts
 from hft_contracts.signal_manifest import CONTENT_HASH_RE
 from hft_ops.config import OpsConfig
-from hft_ops.ledger.comparator import compare_experiments, diff_experiments
+from hft_ops.ledger.comparator import (
+    compare_experiments,
+    diff_experiments,
+    find_unresolved_metric_keys,
+)
 from hft_ops.ledger.dedup import check_duplicate, compute_fingerprint
 from hft_contracts.experiment_record import ExperimentRecord
 from hft_ops.ledger.ledger import ExperimentLedger, StaleLedgerIndexError
@@ -665,6 +669,16 @@ def _record_experiment(
         if isinstance(bt_metrics, dict) and bt_metrics:
             record.backtest_metrics = bt_metrics
 
+    # Step 6 (2026-05-31): move the dataset_analysis stage's schema-light health
+    # summary onto record.dataset_health (was NEVER populated -> the stage was
+    # dark). Same observation-tier pattern as backtest_metrics above; one site
+    # covers single-run + sweep-serial + sweep-parallel.
+    da_result = results.get("dataset_analysis")
+    if da_result is not None:
+        dataset_health = da_result.captured_metrics.get("dataset_health")
+        if isinstance(dataset_health, dict) and dataset_health:
+            record.dataset_health = dataset_health
+
     ledger = _construct_ledger_or_exit(paths.ledger_dir)
 
     # Phase 8C-α Stage C.3 (2026-04-20): route post-stage artifacts into
@@ -763,6 +777,20 @@ def compare(
         console.print("[yellow]No experiments found in ledger.[/yellow]")
         return
 
+    # Step 3 (2026-05-31): fail loud on an unresolved --metric (a typo, or a
+    # metric not projected into the ledger index) — the `--stages` footgun's
+    # twin. A metric that resolves to None in EVERY entry renders a blank column,
+    # indistinguishable from a genuine all-blank result. Surface it as a WARN
+    # (metric keys are an OPEN dotted-path set -> warn, not raise).
+    unresolved = find_unresolved_metric_keys(entries, [metric])
+    if unresolved:
+        console.print(
+            f"[yellow]Warning:[/yellow] metric '{metric}' resolved to no value in "
+            f"any of the {len(entries)} experiments — likely a typo, or a metric "
+            f"not projected into the ledger index. Projected namespaces: "
+            f"training_metrics.*, backtest_metrics.* (plus top-level index fields)."
+        )
+
     rows = compare_experiments(
         entries,
         metric_keys=[metric],
@@ -793,6 +821,92 @@ def compare(
         )
 
     console.print(table)
+
+
+# --------------------------------------------------------------------------
+# Steps 4 + 5-render (2026-05-31): pure formatters surfacing the
+# Foundation-Integrity producer_commits + the gate_reports (validation IC-gate
+# scalars) in `ledger show`, and the per-key producer_commits divergence in
+# `diff`. Pure (lines/rows) so the render logic is unit-testable without a
+# CliRunner+ledger fixture (matches the `--stages` "test the pure helper" model).
+# --------------------------------------------------------------------------
+def _short_provenance_val(v: Any) -> str:
+    """Short-hash a 40-hex git sha for display; pass through the ``unresolved``
+    sentinel + short values; ``None`` -> ``(none)``."""
+    if v is None:
+        return "(none)"
+    if isinstance(v, str) and v != "unresolved" and len(v) > 16:
+        return v[:12] + "..."
+    return str(v)
+
+
+def _format_producer_commits(pc: Dict[str, Any]) -> List[str]:
+    """`ledger show` lines for ``record.provenance.producer_commits`` (the
+    Foundation-Integrity producer-code lineage). Empty -> ``[]`` (caller omits
+    the section)."""
+    if not pc:
+        return []
+    lines = [f"  Producer commits (completeness={pc.get('completeness', 'unknown')}):"]
+    for key in ("extractor_git_sha", "reconstructor_git_sha", "hft_statistics_git_sha"):
+        val = pc.get(key)
+        if val:
+            lines.append(f"    {key}: {_short_provenance_val(val)}")
+    src = pc.get("reconstructor_source")
+    if src:
+        lines.append(f"    reconstructor_source: {src}")
+    return lines
+
+
+def _format_gate_reports(gate_reports: Dict[str, Any]) -> List[str]:
+    """`ledger show` lines for ``record.gate_reports`` — per-stage status + the
+    numeric gate scalars (e.g. the mandatory validation IC-gate
+    best_feature_ic/ic_count/return_std_bps/stability that ``index_entry`` only
+    projects as ``{status, summary}``). Empty / no valid dict report -> ``[]``."""
+    body: List[str] = []
+    for stage_name, report in sorted(gate_reports.items()):
+        if not isinstance(report, dict):
+            continue
+        body.append(f"  {stage_name}: {report.get('status', '?')}")
+        for k, v in sorted(report.items()):
+            if k == "status":
+                continue
+            if isinstance(v, bool):
+                body.append(f"    {k}: {v}")
+            elif isinstance(v, float):
+                body.append(f"    {k}: {v:.4f}")
+            elif isinstance(v, (int, str)):
+                s = v if not isinstance(v, str) or len(v) <= 120 else v[:120] + "…"
+                body.append(f"    {k}: {s}")
+    if not body:
+        return []
+    return ["[bold]Gate Reports[/bold]"] + body
+
+
+def _format_producer_commits_divergence(
+    pc_a: Dict[str, Any], pc_b: Dict[str, Any]
+) -> List[Tuple[str, str, str]]:
+    """Per-key ``producer_commits`` divergence rows ``(key, a_disp, b_disp)`` for
+    the `diff` command — only keys whose values DIFFER (hex short-hashed,
+    missing -> ``(none)``)."""
+    rows: List[Tuple[str, str, str]] = []
+    for key in sorted(set(pc_a) | set(pc_b)):
+        va, vb = pc_a.get(key), pc_b.get(key)
+        if va != vb:
+            rows.append((key, _short_provenance_val(va), _short_provenance_val(vb)))
+    return rows
+
+
+def _format_dataset_health(dh: Dict[str, Any]) -> List[str]:
+    """`ledger show` lines for ``record.dataset_health`` (the Step 6 schema-light
+    dataset-analysis summary: report dir + analyzers/profile/split — deliberately
+    no report-file count, see ``_summarize_dataset_health``). Empty -> ``[]``."""
+    if not dh:
+        return []
+    lines = ["[bold]Dataset Health[/bold]"]
+    for k, v in sorted(dh.items()):
+        disp = ", ".join(str(x) for x in v) if isinstance(v, list) else v
+        lines.append(f"  {k}: {disp}")
+    return lines
 
 
 @main.command()
@@ -879,6 +993,24 @@ def diff(ctx: click.Context, id_a: str, id_b: str) -> None:
             fb_disp = (fb[:16] + "...") if isinstance(fb, str) and len(fb) > 16 else str(fb)
             table.add_row(field, fa_disp, fb_disp)
         console.print(table)
+
+    # Step 5-render (2026-05-31): surface producer_commits divergence (WHICH Rust
+    # producer commit changed) — the Foundation-Integrity phase captures it but
+    # diff never showed it, so two records built from different reconstructor
+    # commits looked identical.
+    pc_diff = diff_result.get("producer_commits")
+    if pc_diff is not None:
+        pc_a, pc_b = pc_diff
+        pc_rows = _format_producer_commits_divergence(pc_a, pc_b)
+        if pc_rows:
+            console.print("\n[bold]Producer-commit Divergence[/bold]")
+            table = Table()
+            table.add_column("Producer key")
+            table.add_column(f"A ({id_a[:20]})")
+            table.add_column(f"B ({id_b[:20]})")
+            for key, va, vb in pc_rows:
+                table.add_row(key, va, vb)
+            console.print(table)
 
 
 @main.group()
@@ -1182,6 +1314,13 @@ def ledger_show(ctx: click.Context, experiment_id: str) -> None:
     console.print(f"\n[bold]Provenance[/bold]")
     git = record.provenance.git
     console.print(f"  Git: {git.short_hash} ({git.branch}) {'[dirty]' if git.dirty else ''}")
+    # Step 4 (2026-05-31): surface the Foundation-Integrity producer-code lineage
+    # (extractor/reconstructor/hft_statistics git shas) — captured at
+    # extraction.py:141,200 but never rendered until now.
+    for _line in _format_producer_commits(
+        getattr(record.provenance, "producer_commits", {}) or {}
+    ):
+        console.print(_line)
 
     if record.training_metrics:
         console.print(f"\n[bold]Training Metrics[/bold]")
@@ -1198,6 +1337,24 @@ def ledger_show(ctx: click.Context, experiment_id: str) -> None:
                 console.print(f"  {k}: {v:.4f}")
             else:
                 console.print(f"  {k}: {v}")
+
+    # Step 6 (2026-05-31): surface the dataset-health summary — record.dataset_health
+    # was previously never populated (dataset_analysis was a dark stage).
+    _dh_lines = _format_dataset_health(getattr(record, "dataset_health", {}) or {})
+    if _dh_lines:
+        console.print("")
+        for _line in _dh_lines:
+            console.print(_line)
+
+    # Step 4 (2026-05-31): surface gate_reports — the per-stage status + numeric
+    # gate scalars (notably the mandatory validation IC-gate best_feature_ic/
+    # ic_count/return_std_bps/stability, which index_entry only projects as
+    # {status, summary[:256]} and ledger show previously never rendered).
+    _gate_lines = _format_gate_reports(getattr(record, "gate_reports", {}) or {})
+    if _gate_lines:
+        console.print("")
+        for _line in _gate_lines:
+            console.print(_line)
 
     console.print(f"\n  Stages completed: {', '.join(record.stages_completed)}")
 

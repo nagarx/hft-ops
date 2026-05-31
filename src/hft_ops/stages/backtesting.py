@@ -20,7 +20,7 @@ import math
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from hft_ops.config import OpsConfig
 from hft_ops.manifest.schema import ExperimentManifest
@@ -135,20 +135,53 @@ def _harvest_regression_metrics(summary_path: Path) -> Dict[str, Any]:
     return out
 
 
+# Readability (classification) summary keys. Already snake_case in the producer's
+# deterministic ledger record (run_readability_backtest.py:480-504), and every key
+# is in the ledger index whitelist {total_return, sharpe_ratio, max_drawdown,
+# win_rate, total_trades} -> `hft-ops compare` sees them with NO index-schema
+# change. Readability UNIQUELY supplies total_trades (a real round-trip count);
+# the regression summary has none. No sharpe_ratio in this record (the registry
+# carries it, but that index is the NaN-laden path we avoid).
+_READABILITY_METRIC_KEYS = ("total_return", "win_rate", "max_drawdown", "total_trades")
+
+
+def _harvest_readability_metrics(record_path: Path) -> Dict[str, Any]:
+    """Reduce the readability producer's deterministic ledger record to a flat
+    snake_case dict. The record (run_readability_backtest.py:478-513) already uses
+    snake_case top-level keys with CLEAN finite values (unlike the 425/447
+    NaN-laden registry index, which this path deliberately AVOIDS) — so this is a
+    direct finite-guarded extract: no PascalCase remap, no best-threshold pick
+    (readability runs a single gated strategy, not a threshold sweep).
+    """
+    data = json.loads(record_path.read_text())
+    if not isinstance(data, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for key in _READABILITY_METRIC_KEYS:
+        v = _finite_or_none(data.get(key))
+        if v is not None:
+            out[key] = v
+    return out
+
+
 def _harvest_backtest_metrics(
-    output_dir: Path, run_name: str, script_name: str
+    output_dir: Path, run_name: str, script_name: str,
+    manifest_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Harvest a flat snake_case ``backtest_metrics`` dict from the backtester's
     on-disk output. Observation-tier + FAIL-SOFT: any error logs a WARN and
     returns ``{}`` — it MUST NEVER raise (a harvest failure must not fail the
     backtest stage, which already succeeded).
 
-    Dispatches on the backtester script: ``run_regression_backtest.py`` writes a
-    deterministic ``<output_dir>/<run_name>.json`` (the only path implemented
-    here — recovers the 93/98 regression dark records + all future regression).
-    Readability (classification) harvest is a deferred follow-on (random run_id
-    index-scan + NaN-sanitizer + single-match rule); ``backtest_deeplob.py`` /
-    spread write no harvestable summary. All non-regression cases return ``{}``.
+    Dispatches on the backtester script:
+    - ``run_regression_backtest.py`` -> the deterministic
+      ``<output_dir>/<run_name>.json`` summary (best-threshold reduce).
+    - ``run_readability_backtest.py`` -> the deterministic ``--manifest``-relative
+      ledger record ``<manifest>.parent.parent/ledger/runs/{exp}_backtest_{exp}.json``
+      (run_readability_backtest.py:478-513; clean finite snake_case keys, NOT the
+      NaN-laden registry index). Requires ``manifest_path``; without it -> ``{}``.
+    - ``backtest_deeplob.py`` / spread / unknown / empty-script -> no harvestable
+      summary -> ``{}``.
     """
     try:
         name = Path(script_name).name
@@ -163,12 +196,38 @@ def _harvest_backtest_metrics(
                 return {}
             return _harvest_regression_metrics(summary)
         if "readability" in name:
-            _logger.warning(
-                "backtest-metrics harvest: readability (classification) harvest "
-                "is a deferred follow-on; backtest_metrics empty for run '%s'.",
-                run_name,
+            if not manifest_path:
+                _logger.warning(
+                    "backtest-metrics harvest: readability needs --manifest to "
+                    "locate the ledger record; backtest_metrics empty for run "
+                    "'%s'.", run_name,
+                )
+                return {}
+            # The producer writes f"{on-disk-manifest-experiment-name}_backtest_
+            # {--name}.json" (run_readability_backtest.py:478,505). Under a SWEEP the
+            # orchestrator's --name is the per-arm name (manifest.experiment.name,
+            # mutated in-memory by sweep expansion) while the on-disk manifest keeps
+            # the SWEEP-ROOT name -> the FIRST half is NOT run_name. But run_name
+            # (the --name) IS the second half and is unique per arm, so match on the
+            # unambiguous "_backtest_{run_name}.json" suffix (subsumes the single-run
+            # case where the first half == run_name). String suffix (not glob) avoids
+            # any glob-metacharacter hazard in the experiment name.
+            ledger_runs = Path(manifest_path).parent.parent / "ledger" / "runs"
+            suffix = f"_backtest_{run_name}.json"
+            matches = (
+                [p for p in ledger_runs.iterdir() if p.name.endswith(suffix)]
+                if ledger_runs.is_dir()
+                else []
             )
-            return {}
+            if len(matches) != 1:
+                _logger.warning(
+                    "backtest-metrics harvest: expected exactly 1 readability ledger "
+                    "record matching *%s in %s, found %d; backtest_metrics empty for "
+                    "run '%s'.",
+                    suffix, ledger_runs, len(matches), run_name,
+                )
+                return {}
+            return _harvest_readability_metrics(matches[0])
         # deeplob / spread / unknown / empty-script: no harvestable summary.
         return {}
     except Exception as exc:  # noqa: BLE001 — fail-soft observation tier
@@ -177,6 +236,18 @@ def _harvest_backtest_metrics(
             "'%s' via '%s': %s", run_name, script_name, exc,
         )
         return {}
+
+
+# C3 — backtest scripts INCOMPATIBLE with the orchestrator's signal-based flow.
+# The runner emits --name/--signals/--initial-capital/--position-size/
+# --max-spread-bps (accepted by regression/readability/deeplob), but
+# run_spread_signal_backtest.py's argparse takes only --export-dir/--output-dir/
+# --manifest and reads RAW exports from a hardcoded --export-dir default
+# (e5_timebased_60s_point_return). Named as a backtesting.script it would exit-2
+# on the runner's flags (a confusing run-time failure) or, run standalone, would
+# silently backtest the wrong data. validate_inputs rejects it loudly at validate
+# time. A frozenset (not a one-off literal) so future incompatible scripts add here.
+_ORCHESTRATOR_INCOMPATIBLE_BACKTEST_SCRIPTS = frozenset({"run_spread_signal_backtest.py"})
 
 
 class BacktestRunner:
@@ -230,6 +301,25 @@ class BacktestRunner:
                     f"Backtest script not found: {script_path} "
                     f"(configured via stages.backtesting.script='{stage.script}')"
                 )
+
+        # C3 (2026-05-31): reject scripts intrinsically incompatible with the
+        # orchestrator's signal-based backtesting CLI contract — independent of
+        # existence (the incompatibility is the script's argparse, not its path).
+        if (
+            stage.script
+            and Path(stage.script).name in _ORCHESTRATOR_INCOMPATIBLE_BACKTEST_SCRIPTS
+        ):
+            errors.append(
+                f"stages.backtesting.script='{stage.script}' is incompatible with "
+                "the orchestrator's signal-based backtesting flow: the runner "
+                "passes --name/--signals/--initial-capital/--position-size/"
+                "--max-spread-bps, but run_spread_signal_backtest.py accepts only "
+                "--export-dir/--output-dir/--manifest and reads raw exports from a "
+                "hardcoded --export-dir default (it would exit-2 on the runner's "
+                "flags, or backtest the wrong data). Use run_regression_backtest.py "
+                "or run_readability_backtest.py, or run the spread backtest "
+                "standalone outside the orchestrator."
+            )
 
         if stage.model_checkpoint:
             checkpoint = config.paths.resolve(stage.model_checkpoint)
@@ -353,7 +443,8 @@ class BacktestRunner:
                 # cannot flip a successful backtest to FAILED.
                 result.output_dir = str(output_dir)
                 result.captured_metrics["backtest_metrics"] = _harvest_backtest_metrics(
-                    output_dir, manifest.experiment.name, stage.script
+                    output_dir, manifest.experiment.name, stage.script,
+                    manifest.manifest_path,
                 )
             else:
                 result.status = StageStatus.FAILED

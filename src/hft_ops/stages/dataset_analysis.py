@@ -7,10 +7,11 @@ profile, split, and data directory.
 
 from __future__ import annotations
 
+import logging
 import sys
 import time
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 from hft_ops.config import OpsConfig
 from hft_ops.manifest.schema import ExperimentManifest
@@ -21,6 +22,44 @@ from hft_ops.stages.base import (
     run_subprocess,
     _tail,
 )
+
+_logger = logging.getLogger(__name__)
+
+
+def _summarize_dataset_health(stage: Any, config: OpsConfig) -> Dict[str, Any]:
+    """Schema-light, FAIL-SOFT dataset-analysis summary for
+    ``record.dataset_health``: the resolved report dir + the requested
+    analyzers/profile/split. NOT per-analyzer scalars — run_analysis.py writes N
+    idx-prefixed per-analyzer JSONs (``{idx:02d}_{snake}.json``) with no stable
+    aggregate, and harvesting specific health scalars (NaN fractions, kurtosis, ...)
+    would couple to 47 analyzer ``to_dict()`` schemas + a run-config-dependent
+    filename set — a deliberate follow-on needing a pinned analyzer-output contract.
+
+    Deliberately NO report-file COUNT: run_analysis.py never clears its output dir
+    (``mkdir(exist_ok=True)``) and ALL manifests share the default ``outputs/analysis``,
+    so a glob count would OVER-report (a 5-analyzer ``quick`` run after a 47-analyzer
+    ``full`` run reads back 47 stale files) — a misleading scalar. The dir + config
+    make the stage non-dark on the record (it links to its reports) without that
+    hazard. Observation-tier: never raises.
+    """
+    try:
+        if stage.output_dir:
+            report_dir = config.paths.resolve(stage.output_dir)
+        else:
+            # run_analysis.py default is outputs/analysis relative to its cwd,
+            # and DatasetAnalysisRunner.run runs it with cwd=dataset_analyzer_dir.
+            report_dir = config.paths.dataset_analyzer_dir / "outputs" / "analysis"
+        out: Dict[str, Any] = {"report_dir": str(report_dir)}
+        if stage.analyzers:
+            out["analyzers"] = list(stage.analyzers)
+        elif stage.profile:
+            out["profile"] = stage.profile
+        if stage.split:
+            out["split"] = stage.split
+        return out
+    except Exception as exc:  # noqa: BLE001 — fail-soft observation tier
+        _logger.warning("dataset-health summary failed (dataset_health empty): %s", exc)
+        return {}
 
 
 class DatasetAnalysisRunner:
@@ -106,6 +145,13 @@ class DatasetAnalysisRunner:
 
             if proc.returncode == 0:
                 result.status = StageStatus.COMPLETED
+                # Step 6 (2026-05-31): surface a dataset-health summary so the
+                # stage is no longer dark on the record (record.dataset_health was
+                # NEVER populated). Schema-light + FAIL-SOFT (report dir + config,
+                # not per-analyzer scalars). Harvested by cli._record_experiment.
+                result.captured_metrics["dataset_health"] = _summarize_dataset_health(
+                    stage, config
+                )
             else:
                 result.status = StageStatus.FAILED
                 # Phase α-2 / #PY-80 (2026-05-10) — surface stderr.

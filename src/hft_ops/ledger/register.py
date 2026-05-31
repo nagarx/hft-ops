@@ -208,10 +208,13 @@ class RecordFields:
         - ``notes``, ``sweep_id``, ``axis_values``, ``record_type``,
           ``sub_records``, ``parent_experiment_id`` (default values on
           ExperimentRecord; not part of standard build-phase output)
-        - ``extraction_config``, ``backtest_params``, ``backtest_metrics``,
-          ``dataset_health``, ``sweep_failure_info`` (not populated by
-          ``_record_experiment`` body — defaults to empty dict on
+        - ``extraction_config``, ``backtest_params``, ``sweep_failure_info``
+          (not populated by ``_record_experiment`` — defaults to empty dict on
           ExperimentRecord)
+        - ``backtest_metrics`` (H6), ``dataset_health`` (Step 6, 2026-05-31) —
+          OBSERVATIONS NOT built here, but populated by ``_record_experiment``
+          AFTER this build, from the backtesting / dataset_analysis stage
+          ``captured_metrics``, and set on the record before ``ledger.register``
 
         Returns
         -------

@@ -70,6 +70,41 @@ def _write_summary(output_dir: Path, name: str, *, zero_dte: bool, results: list
     (output_dir / f"{name}.json").write_text(json.dumps(summary))
 
 
+def _write_readability_record(manifest_root: Path, name: str, *, total_trades,
+                              total_return, win_rate, max_drawdown,
+                              base_name=None) -> Path:
+    """Write the readability producer's DETERMINISTIC hft-ops ledger record.
+
+    Faithful to run_readability_backtest.py:478-513 — the producer writes this at
+    ``<manifest>.parent.parent / ledger / runs / {base}_backtest_{name}.json`` where
+    ``base`` is the ON-DISK manifest's experiment.name (the producer re-reads it) and
+    ``name`` is the orchestrator's ``--name``. For single-run the two coincide; for a
+    SWEEP the on-disk (sweep-root) ``base`` differs from the per-arm ``name`` —
+    exactly the case the harvest's suffix-match must handle. ``base_name`` defaults
+    to ``name`` (single-run). Returns the record path.
+    """
+    base = base_name if base_name is not None else name
+    runs = manifest_root / "ledger" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    record = {
+        "experiment_name": base,
+        "stage": "backtesting",
+        "status": "completed",
+        "run_id": f"{name}_20260519T000000_abcd",
+        "holding_policy": "horizon_aligned",
+        "total_trades": total_trades,
+        "total_return": total_return,
+        "win_rate": win_rate,
+        "max_drawdown": max_drawdown,
+        "resolved_periods_per_day": 390.0,
+        "annualization_factor": 98280.0,
+        "manifest": str(manifest_root / "experiments" / f"{base}.yaml"),
+    }
+    record_path = runs / f"{base}_backtest_{name}.json"
+    record_path.write_text(json.dumps(record))
+    return record_path
+
+
 # --------------------------------------------------------------------------
 # Regression — happy paths
 # --------------------------------------------------------------------------
@@ -205,9 +240,89 @@ def test_all_nonfinite_best_row_returns_empty(tmp_path):
 # --------------------------------------------------------------------------
 # Non-regression scripts — deferred / unsupported -> {}
 # --------------------------------------------------------------------------
-def test_readability_script_deferred_returns_empty(tmp_path):
-    """Readability (classification) harvest is a deferred follow-on -> {}."""
+# --------------------------------------------------------------------------
+# Readability (classification) — harvest the producer's DETERMINISTIC ledger
+# record (run_readability_backtest.py:478-513), NOT the NaN-laden registry index.
+# --------------------------------------------------------------------------
+def test_readability_harvests_deterministic_ledger_record(tmp_path):
+    """Ground-truth (cycle10_r19 seeds): the readability ledger record carries
+    clean finite snake_case {total_trades, total_return, win_rate, max_drawdown}.
+    Readability UNIQUELY contributes a real total_trades (regression omits it)."""
+    name = "cls_run"
+    _write_readability_record(tmp_path, name, total_trades=1450,
+                              total_return=-0.0464, win_rate=0.4055, max_drawdown=0.0477)
+    manifest_path = str(tmp_path / "experiments" / f"{name}.yaml")
+    out = _harvest_backtest_metrics(tmp_path / "outputs", name, READABILITY_SCRIPT, manifest_path)
+    assert out == {
+        "total_trades": 1450, "total_return": -0.0464,
+        "win_rate": 0.4055, "max_drawdown": 0.0477,
+    }, out
+
+
+def test_readability_includes_total_trades(tmp_path):
+    """Explicit contract: readability emits total_trades (a real round-trip
+    count from result.total_trades) — the metric regression could not provide."""
+    name = "cls_tt"
+    _write_readability_record(tmp_path, name, total_trades=712,
+                              total_return=0.01, win_rate=0.5, max_drawdown=0.02)
+    manifest_path = str(tmp_path / "experiments" / f"{name}.yaml")
+    out = _harvest_backtest_metrics(tmp_path / "outputs", name, READABILITY_SCRIPT, manifest_path)
+    assert out["total_trades"] == 712
+
+
+def test_readability_finite_guard_drops_nonfinite(tmp_path):
+    """A non-finite metric in the readability record is dropped (never reaches
+    the ledger), same finite-guard as the regression path."""
+    name = "cls_nan"
+    _write_readability_record(tmp_path, name, total_trades=10,
+                              total_return=0.02, win_rate=NAN, max_drawdown=float("inf"))
+    manifest_path = str(tmp_path / "experiments" / f"{name}.yaml")
+    out = _harvest_backtest_metrics(tmp_path / "outputs", name, READABILITY_SCRIPT, manifest_path)
+    assert out == {"total_trades": 10, "total_return": 0.02}, out
+    assert all(math.isfinite(v) for v in out.values())
+
+
+def test_readability_no_manifest_path_returns_empty(tmp_path):
+    """The readability record is --manifest-relative; without a manifest path the
+    harvest cannot locate it -> {} (fail-soft). (Was the 'deferred' case.)"""
     out = _harvest_backtest_metrics(tmp_path, "some_classification_run", READABILITY_SCRIPT)
+    assert out == {}
+
+
+def test_readability_record_not_found_returns_empty(tmp_path):
+    """manifest_path given but no ledger record on disk -> {} (fail-soft)."""
+    manifest_path = str(tmp_path / "experiments" / "missing.yaml")
+    out = _harvest_backtest_metrics(tmp_path / "outputs", "missing", READABILITY_SCRIPT, manifest_path)
+    assert out == {}
+
+
+def test_readability_sweep_first_half_differs_from_run_name(tmp_path):
+    """REGRESSION (adversarial review): for a SWEEP the producer's FIRST filename
+    half is the on-disk sweep-ROOT experiment.name, NOT run_name (the per-arm
+    --name set in-memory by sweep expansion). The harvest must match the record by
+    the unique "_backtest_{run_name}.json" suffix — else every readability sweep arm
+    (e.g. the live cycle10_r19_multi_seed 5-seed sweep) silently harvests {}."""
+    run_name = "cycle10_r19_multi_seed__seed_43"   # orchestrator --name (per arm)
+    base = "cycle10_r19_multi_seed"                 # on-disk sweep-root experiment.name
+    _write_readability_record(tmp_path, run_name, base_name=base, total_trades=900,
+                              total_return=-0.02, win_rate=0.42, max_drawdown=0.03)
+    manifest_path = str(tmp_path / "experiments" / f"{run_name}.yaml")  # parent.parent = tmp_path
+    out = _harvest_backtest_metrics(tmp_path / "outputs", run_name, READABILITY_SCRIPT, manifest_path)
+    assert out == {
+        "total_trades": 900, "total_return": -0.02, "win_rate": 0.42, "max_drawdown": 0.03,
+    }, out
+
+
+def test_readability_ambiguous_multiple_matches_returns_empty(tmp_path):
+    """Defensive: >1 record matching the suffix (should never happen — run_name is
+    unique per arm) -> {} rather than guessing which to harvest."""
+    run_name = "shared_name"
+    _write_readability_record(tmp_path, run_name, base_name="base_a", total_trades=1,
+                              total_return=0.0, win_rate=0.5, max_drawdown=0.0)
+    _write_readability_record(tmp_path, run_name, base_name="base_b", total_trades=2,
+                              total_return=0.0, win_rate=0.5, max_drawdown=0.0)
+    manifest_path = str(tmp_path / "experiments" / f"{run_name}.yaml")
+    out = _harvest_backtest_metrics(tmp_path / "outputs", run_name, READABILITY_SCRIPT, manifest_path)
     assert out == {}
 
 
@@ -297,6 +412,41 @@ class TestBacktestRunnerWire:
         result, _ = self._run(tmp_path, monkeypatch, returncode=0, write_summary=True, dry_run=True)
         assert result.status == StageStatus.SKIPPED
         assert "backtest_metrics" not in result.captured_metrics
+
+    def test_readability_success_harvests_from_manifest_relative_ledger_record(self, tmp_path, monkeypatch):
+        """End-to-end runner wire for the readability path: run() must THREAD
+        manifest.manifest_path into the harvest, which reads the deterministic
+        --manifest-relative ledger record (NOT an output-dir regression summary)."""
+        import subprocess
+        from hft_ops.config import OpsConfig, PipelinePaths
+        from hft_ops.manifest.schema import (
+            ExperimentManifest, ExperimentHeader, Stages, BacktestingStage,
+        )
+        from hft_ops.stages import backtesting as bt_mod
+        from hft_ops.stages.base import StageStatus
+
+        paths = PipelinePaths(pipeline_root=tmp_path)
+        paths.backtester_dir.mkdir(parents=True, exist_ok=True)
+        name = "cls_wire"
+        _write_readability_record(tmp_path, name, total_trades=900,
+                                  total_return=-0.02, win_rate=0.42, max_drawdown=0.03)
+        manifest = ExperimentManifest(
+            experiment=ExperimentHeader(name=name),
+            stages=Stages(backtesting=BacktestingStage(enabled=True, script=READABILITY_SCRIPT)),
+            manifest_path=str(tmp_path / "experiments" / f"{name}.yaml"),
+        )
+        ops = OpsConfig(paths=paths, dry_run=False, verbose=False)
+        monkeypatch.setattr(
+            bt_mod, "run_subprocess",
+            lambda *a, **k: subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ok", stderr="",
+            ),
+        )
+        result = bt_mod.BacktestRunner().run(manifest, ops)
+        assert result.status == StageStatus.COMPLETED
+        assert result.captured_metrics["backtest_metrics"] == {
+            "total_trades": 900, "total_return": -0.02, "win_rate": 0.42, "max_drawdown": 0.03,
+        }
 
 
 # ==========================================================================
@@ -413,6 +563,50 @@ class TestC2ScriptRequiredFailLoud:
         errors = BacktestRunner().validate_inputs(manifest, ops)
         assert not any("script is required" in e for e in errors), errors
         assert not any("Backtest script not found" in e for e in errors), errors
+
+
+# ==========================================================================
+# C3 — fail loud at VALIDATE time on a backtest script incompatible with the
+# orchestrator's signal-based flow (run_spread_signal_backtest.py reads a
+# hardcoded --export-dir and rejects the runner's --name/--signals flags ->
+# a confusing run-time argparse exit-2 or, standalone, silent-wrong-data).
+# ==========================================================================
+class TestC3SpreadScriptIncompatible:
+    @staticmethod
+    def _validate(tmp_path, script_rel):
+        from hft_ops.config import OpsConfig, PipelinePaths
+        from hft_ops.manifest.schema import (
+            ExperimentManifest, ExperimentHeader, Stages, BacktestingStage,
+        )
+        from hft_ops.stages.backtesting import BacktestRunner
+
+        paths = PipelinePaths(pipeline_root=tmp_path)
+        script_abs = paths.resolve(script_rel)
+        script_abs.parent.mkdir(parents=True, exist_ok=True)  # also creates backtester_dir
+        script_abs.write_text("# stub")
+        manifest = ExperimentManifest(
+            experiment=ExperimentHeader(name="x"),
+            stages=Stages(backtesting=BacktestingStage(enabled=True, script=script_rel)),
+        )
+        ops = OpsConfig(paths=paths, dry_run=False, verbose=False)
+        return BacktestRunner().validate_inputs(manifest, ops)
+
+    def test_spread_script_rejected_at_validate_even_when_file_exists(self, tmp_path):
+        """The incompatibility is INTRINSIC (CLI contract), not about existence:
+        a spread script that EXISTS on disk must still be rejected, and the
+        existence check must NOT also fire (the file is present)."""
+        errors = self._validate(tmp_path, "lob-backtester/scripts/run_spread_signal_backtest.py")
+        assert any("incompatible with the orchestrator" in e for e in errors), errors
+        assert any("run_spread_signal_backtest.py" in e for e in errors), errors
+        assert not any("Backtest script not found" in e for e in errors), errors
+
+    def test_regression_script_not_rejected(self, tmp_path):
+        errors = self._validate(tmp_path, "lob-backtester/scripts/run_regression_backtest.py")
+        assert not any("incompatible with the orchestrator" in e for e in errors), errors
+
+    def test_readability_script_not_rejected(self, tmp_path):
+        errors = self._validate(tmp_path, "lob-backtester/scripts/run_readability_backtest.py")
+        assert not any("incompatible with the orchestrator" in e for e in errors), errors
 
 
 # ==========================================================================
