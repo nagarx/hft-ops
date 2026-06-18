@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from hft_contracts.atomic_io import atomic_write_json  # #PY-371 SSoT (Class A)
+from hft_metrics.testing import deflated_proportion_test  # Phase 3c E8 tripwire stat engine
 from hft_ops.config import OpsConfig
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.stages.base import StageResult, StageStatus
@@ -103,6 +104,15 @@ _REGRESSION_VAL_MIN_KEYS = (
     "val_mae",
     "val_rmse",
 )
+
+# E8 point-return-DA tripwire (Phase 3c, FINDING-001 / FINDING-008). The
+# smoothing-residual signature is a green smoothed-label IC alongside a
+# point-return DA that is SIGNIFICANTLY below a coin — tested one-sided with
+# AR(1) overlap deflation (hft_metrics.deflated_proportion_test), NOT a hard
+# DA<=0.50 cut (which would fire on noise once point-return overlap is honored).
+# WARN-only honesty rail.
+_E8_DA_NULL = 0.50
+_E8_ALPHA = 0.05
 
 
 @dataclass
@@ -323,6 +333,18 @@ class PostTrainingGateRunner:
             _check_cost_breakeven(
                 metrics=metrics,
                 cost_breakeven_bps=stage.cost_breakeven_bps,
+            )
+        )
+
+        # Check 4: E8 point-return-DA tripwire (regression only; informational).
+        # Fires WARN on the smoothing-residual signature — green smoothed-label
+        # IC ∧ point-return DA significantly below a coin (Phase 3c / FINDING-001).
+        checks.append(
+            _check_e8_tripwire(
+                metrics=metrics,
+                primary_name=primary_name,
+                primary_value=primary_value,
+                floor=stage.min_metric_floor,
             )
         )
 
@@ -874,4 +896,96 @@ def _check_cost_breakeven(
         ),
         metric_value=magnitude,
         threshold=cost_breakeven_bps,
+    )
+
+
+def _check_e8_tripwire(
+    metrics: Dict[str, float],
+    primary_name: str,
+    primary_value: Optional[float],
+    floor: float,
+) -> CheckResult:
+    """E8 point-return-DA tripwire (Phase 3c; FINDING-001 / FINDING-008).
+
+    Fires WARN on the smoothing-residual signature: a green smoothed-label IC
+    (primary IC >= floor) alongside a point-return directional accuracy that is
+    SIGNIFICANTLY below a coin — tested one-sided with AR(1) effective-sample-size
+    deflation (``hft_metrics.deflated_proportion_test``). This is the canonical
+    E8 failure: a model trained on ``smoothed_return`` that scores well on its
+    training label yet is orthogonal to (or inverted from) the tradeable point
+    return. A hard ``DA <= 0.50`` cut is NOT used — overlapping point returns are
+    autocorrelated, so the raw-n test is anti-conservative and would fire on noise
+    (DA=0.483/n=8337 reads p<0.001 under iid but p~=0.35 at rho~=0.97).
+
+    Skips (status="skipped", never warn) when:
+      - the point-return-DA scalars are absent (classification / no
+        forward_prices — the trainer emits them only on the regression path);
+      - the primary metric is not an IC metric (the signature is IC-specific);
+      - the IC leg is not met (primary IC < floor — a low-IC failure is a
+        DIFFERENT mode, caught by the floor check, not E8).
+
+    Informational only — returns "warn"/"pass"/"skipped", never "fail".
+    """
+    da = metrics.get("test_point_return_da")
+    n = metrics.get("test_point_return_n")
+    rho1 = metrics.get("test_point_return_rho1", 0.0)
+
+    if da is None or n is None or not primary_name.endswith("ic"):
+        return CheckResult(
+            name="e8_point_return_da",
+            status="skipped",
+            message=(
+                "point-return DA not emitted (classification / no forward_prices) "
+                "or primary metric is not IC; E8 tripwire N/A"
+            ),
+        )
+
+    if (
+        primary_value is None
+        or not math.isfinite(primary_value)
+        or primary_value < floor
+    ):
+        return CheckResult(
+            name="e8_point_return_da",
+            status="skipped",
+            message=(
+                f"IC leg not met ({primary_name}={primary_value} < floor={floor}); "
+                f"a low-IC failure is a different mode (floor check), not E8"
+            ),
+        )
+
+    res = deflated_proportion_test(
+        float(da), int(n), p0=_E8_DA_NULL, rho1=float(rho1), alternative="less"
+    )
+    smoothed_da = metrics.get("test_directional_accuracy")  # the trained-label DA
+
+    if (da < _E8_DA_NULL) and math.isfinite(res.p_value) and (res.p_value < _E8_ALPHA):
+        contrast = (
+            f"; trained smoothed-DA={smoothed_da:.4f} (Δ={smoothed_da - da:+.4f})"
+            if smoothed_da is not None and math.isfinite(smoothed_da)
+            else ""
+        )
+        return CheckResult(
+            name="e8_point_return_da",
+            status="warn",
+            message=(
+                f"E8 SIGNATURE: {primary_name}={primary_value:.4f} >= floor={floor:.4f} "
+                f"but point-return DA={da:.4f} is significantly below 0.50 (one-sided "
+                f"p={res.p_value:.4g}, n_eff={res.n_eff:.0f} after rho1={res.rho_used:.3f} "
+                f"overlap-deflation, raw n={int(n)}){contrast}. Model likely predicts the "
+                f"smoothing residual, not tradeable direction — see FINDING-001 / FINDING-008."
+            ),
+            metric_value=float(da),
+            threshold=_E8_DA_NULL,
+        )
+
+    return CheckResult(
+        name="e8_point_return_da",
+        status="pass",
+        message=(
+            f"point-return DA={da:.4f} not significantly below 0.50 "
+            f"(one-sided p={res.p_value:.4g}, n_eff={res.n_eff:.0f}); no E8 signature."
+        ),
+        metric_value=float(da),
+        threshold=_E8_DA_NULL,
     )

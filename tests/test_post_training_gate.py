@@ -66,6 +66,7 @@ from hft_ops.stages.post_training_gate import (
     _PRIMARY_METRIC_FALLBACK_ORDER,
     _build_match_signature,
     _check_cost_breakeven,
+    _check_e8_tripwire,
     _check_floor,
     _check_prior_best_ratio,
     _find_prior_best_experiment,
@@ -205,6 +206,63 @@ class TestCheckCostBreakeven:
             metrics={"best_val_accuracy": 0.55}, cost_breakeven_bps=1.4
         )
         assert r.status == "skipped"
+
+
+class TestCheckE8Tripwire:
+    """E8 point-return-DA tripwire (Phase 3c, FINDING-001/008) — fires WARN on the
+    smoothing-residual signature: green smoothed-label IC ∧ point-return DA
+    significantly < 0.50 (overlap-deflated via hft_metrics.deflated_proportion_test)."""
+
+    def _e8_metrics(self, da=0.483, n=8337, rho1=0.0, smoothed_da=0.64):
+        # Canonical E8 numbers (CLAUDE.md §Validated Findings): DA=0.483, n=8337.
+        return {
+            "test_point_return_da": da,
+            "test_point_return_n": n,
+            "test_point_return_rho1": rho1,
+            "test_directional_accuracy": smoothed_da,
+        }
+
+    def test_fires_warn_on_iid_e8_signature(self):
+        r = _check_e8_tripwire(self._e8_metrics(rho1=0.0),
+                               primary_name="test_ic", primary_value=0.38, floor=0.05)
+        assert r.status == "warn"
+        assert "E8 SIGNATURE" in r.message
+        assert "FINDING-001" in r.message
+        assert "n_eff" in r.message
+
+    def test_no_fire_when_overlap_kills_significance(self):
+        """Same DA, but rho1=0.97 overlap -> p~=0.35 -> NOT significant -> pass."""
+        r = _check_e8_tripwire(self._e8_metrics(rho1=0.97),
+                               primary_name="test_ic", primary_value=0.38, floor=0.05)
+        assert r.status == "pass"
+
+    def test_no_fire_when_da_above_coin(self):
+        r = _check_e8_tripwire(self._e8_metrics(da=0.55, rho1=0.0),
+                               primary_name="test_ic", primary_value=0.38, floor=0.05)
+        assert r.status == "pass"
+
+    def test_skipped_when_ic_leg_not_met(self):
+        """Low-IC failure is a different mode (floor check), not E8 -> skipped."""
+        r = _check_e8_tripwire(self._e8_metrics(rho1=0.0),
+                               primary_name="test_ic", primary_value=0.02, floor=0.05)
+        assert r.status == "skipped"
+
+    def test_skipped_when_point_da_absent(self):
+        """Classification / no forward_prices -> point-DA scalars absent -> skipped."""
+        r = _check_e8_tripwire({"test_directional_accuracy": 0.6},
+                               primary_name="test_ic", primary_value=0.38, floor=0.05)
+        assert r.status == "skipped"
+
+    def test_skipped_when_primary_not_ic(self):
+        """The E8 signature is IC-specific; a non-IC primary -> skipped."""
+        r = _check_e8_tripwire(self._e8_metrics(rho1=0.0),
+                               primary_name="best_val_macro_f1", primary_value=0.6, floor=0.05)
+        assert r.status == "skipped"
+
+    def test_message_shows_smoothed_vs_point_contrast(self):
+        r = _check_e8_tripwire(self._e8_metrics(rho1=0.0, smoothed_da=0.64),
+                               primary_name="test_ic", primary_value=0.38, floor=0.05)
+        assert "0.64" in r.message  # the trained smoothed-DA contrast (the smoking gun)
 
 
 # =============================================================================

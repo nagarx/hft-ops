@@ -54,7 +54,11 @@ dependencies = [
     # paired=False single-array mode. hft-ops/ledger/r16c_analysis.py NOW CONSUMES
     # paired=False directly (the bootstrap-loop body lives in SSoT post-#PY-255).
     # Pre-v0.1.11 installs would raise TypeError on the paired= keyword arg.
-    "hft-metrics>=0.1.11",
+    # >=0.1.21 after Phase 3c (2026-06-18): post_training_gate `_check_e8_tripwire`
+    # consumes `deflated_proportion_test` (the overlap-deflated proportion z-test
+    # for the E8 point-return-DA rail). Pre-v0.1.21 installs raise ImportError at
+    # gate-module import time.
+    "hft-metrics>=0.1.21",
 ]
 
 [project.optional-dependencies]
