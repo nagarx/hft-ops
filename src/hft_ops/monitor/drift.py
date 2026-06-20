@@ -24,9 +24,13 @@ from typing import Optional, Sequence
 @dataclass(frozen=True)
 class DriftFinding:
     kind: str
-    severity: str   # "info" | "warn" | "error"
-    subject: str    # experiment_id / probe_id / path
+    severity: str       # "info" | "warn" | "error"
+    subject: str        # the value to match a row against
     detail: str
+    subject_kind: str   # "name" | "experiment_id" | "probe_id" | "path" — how `subject`
+    #                     routes to a MonitorRow. F5-BUG-3: name-keyed findings
+    #                     (fingerprint_divergence) were dropped because the table only
+    #                     looked rows up by id; routing by subject_kind fixes it.
 
 
 @dataclass(frozen=True)
@@ -77,18 +81,21 @@ def ledger_index_disk_drift(records_dir: Path | str) -> list[DriftFinding]:
     index_path = records_dir.parent / "index.json"
     if not index_path.exists():
         return [DriftFinding("ledger_index_disk_drift", "info", str(index_path),
-                             f"no index.json envelope; {disk_count} records on disk")]
+                             f"no index.json envelope; {disk_count} records on disk",
+                             subject_kind="path")]
     try:
         env = json.loads(index_path.read_text())
     except Exception as exc:
         return [DriftFinding("ledger_index_disk_drift", "warn", str(index_path),
-                             f"index.json unreadable ({type(exc).__name__}); {disk_count} records on disk")]
+                             f"index.json unreadable ({type(exc).__name__}); {disk_count} records on disk",
+                             subject_kind="path")]
     entries = env.get("entries") if isinstance(env, dict) else env
     idx_count = len(entries) if isinstance(entries, (list, dict)) else 0
     if idx_count != disk_count:
         return [DriftFinding("ledger_index_disk_drift", "warn", str(index_path),
                              f"index.json caches {idx_count} entries but {disk_count} records on disk "
-                             f"(stale envelope — the monitor reads records/* directly)")]
+                             f"(stale envelope — the monitor reads records/* directly)",
+                             subject_kind="path")]
     return []
 
 
@@ -104,6 +111,7 @@ def fingerprint_divergence(ledger_rows: Sequence) -> list[DriftFinding]:
                 "fingerprint_divergence", "warn", name,
                 f"{len(group)} records share name {name!r} but have {len(fps)} distinct "
                 f"fingerprints (config drift between re-runs)",
+                subject_kind="name",
             ))
         by_fp: dict[str, set] = defaultdict(set)
         for r in group:
@@ -115,6 +123,7 @@ def fingerprint_divergence(ledger_rows: Sequence) -> list[DriftFinding]:
                     "fingerprint_divergence", "warn", name,
                     f"name {name!r} fingerprint {fp[:12]} has {len(phs)} distinct "
                     f"experiment_provenance_hash (data/feature/model drift under one config)",
+                    subject_kind="name",
                 ))
     return findings
 
@@ -130,6 +139,7 @@ def stale_verdict_drift(verdicts: Sequence, installed_version: Optional[str]) ->
                 "stale_verdict", "info", v.probe_id,
                 f"verdict produced under hft_metrics {ver} < installed {installed_version}; "
                 f"re-validate per hft-rules §9 measurement-context",
+                subject_kind="probe_id",
             ))
     return findings
 
@@ -144,12 +154,14 @@ def schema_version_mismatch_drift(
                 findings.append(DriftFinding(
                     "schema_version_mismatch", "info", r.experiment_id,
                     f"record contract_version {r.contract_version} != current {current_contract_version}",
+                    subject_kind="experiment_id",
                 ))
     for v in verdicts:
         if v.parse_warnings:
             findings.append(DriftFinding(
                 "schema_version_mismatch", "info", v.probe_id,
                 f"discovery verdict normalized with warnings: {'; '.join(v.parse_warnings)}",
+                subject_kind="probe_id",
             ))
     return findings
 

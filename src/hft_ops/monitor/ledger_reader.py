@@ -24,11 +24,18 @@ _TRAINING_METRIC_PRIORITY = (
     "test_accuracy",
     "best_val_accuracy",
 )
+# Only keys ExperimentRecord.index_entry() actually projects (its whitelist:
+# total_return / sharpe_ratio / max_drawdown / win_rate / total_trades). A key the
+# producer never emits is dead — _first_finite does an exact metrics.get(key), so the
+# removed `option_return` and bare `sharpe` (the whitelist has `sharpe_ratio`, not
+# `sharpe`) could never resolve (F5-BUG-4). Locked by test_monitor_backtest_metric.py.
+# NOTE (F5-BUG-4, producer-side — tracked separately): realized backtest P&L is NOT
+# surfaced today because no record is typed `backtest`/`backtesting` and training
+# records carry backtest_metrics={}. This dispatch is correct for when such records
+# exist; the fix to populate them is upstream (ledger/orchestrator), out of scope here.
 _BACKTEST_METRIC_PRIORITY = (
     "total_return",
-    "option_return",
     "sharpe_ratio",
-    "sharpe",
     "win_rate",
 )
 

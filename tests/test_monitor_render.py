@@ -55,7 +55,7 @@ def test_render_text_is_string_with_ids():
 
 
 def test_render_drift_text_and_json():
-    rep = DriftReport((DriftFinding("ledger_index_disk_drift", "warn", "idx", "stale envelope"),))
+    rep = DriftReport((DriftFinding("ledger_index_disk_drift", "warn", "idx", "stale envelope", subject_kind="path"),))
     assert "stale envelope" in render_drift_text(rep)
     data = json.loads(render_drift_json(rep))
     assert data["n_warn"] == 1

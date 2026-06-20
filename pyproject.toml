@@ -59,6 +59,14 @@ dependencies = [
     # for the E8 point-return-DA rail). Pre-v0.1.21 installs raise ImportError at
     # gate-module import time.
     "hft-metrics>=0.1.21",
+    # F5 monitor (2026-06-20): hft_ops.monitor.discovery_reader imports the root
+    # `discovery_verdict` package (the normalized verdict schema + per-harness adapters)
+    # at module scope. It is a local monorepo package (root `discovery_verdict/`,
+    # stdlib-only) — installed editable like the sibling locals (hft-contracts /
+    # hft-metrics). Declared here so the monitor's import contract is explicit and a
+    # fresh env does not silently break on `import discovery_verdict` (the import only
+    # worked before via a stray editable install in the dev venv).
+    "discovery-verdict>=0.1.0",
 ]
 
 [project.optional-dependencies]

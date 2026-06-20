@@ -46,7 +46,26 @@ class MonitorTable:
     discovery_read_errors: tuple[str, ...]
 
 
-def _ledger_to_row(row: LedgerRow, flags: dict) -> MonitorRow:
+def _index_findings(findings) -> dict:
+    """Index drift findings by ``(subject_kind, subject) -> {kinds}`` so each row
+    collects the flags it owns by BOTH its id and its name. F5-BUG-3: fingerprint
+    findings are name-keyed, but rows were previously looked up by id only, so the
+    name-keyed flags were always dropped (name != experiment_id on every record)."""
+    idx: dict = defaultdict(set)
+    for f in findings:
+        idx[(f.subject_kind, f.subject)].add(f.kind)
+    return idx
+
+
+def _row_drift_flags(idx: dict, *keys) -> tuple:
+    """Union the drift kinds across the ``(subject_kind, subject)`` keys a row owns."""
+    out: set = set()
+    for key in keys:
+        out |= idx.get(key, set())
+    return tuple(sorted(out))
+
+
+def _ledger_to_row(row: LedgerRow, idx: dict) -> MonitorRow:
     prov_id = (row.experiment_provenance_hash or row.fingerprint or "")[:12]
     return MonitorRow(
         kind="ledger",
@@ -62,12 +81,12 @@ def _ledger_to_row(row: LedgerRow, flags: dict) -> MonitorRow:
         provenance_id=prov_id,
         stats_version=row.contract_version,
         created_at=row.created_at,
-        drift_flags=tuple(sorted(flags.get(row.experiment_id, ()))),
+        drift_flags=_row_drift_flags(idx, ("experiment_id", row.experiment_id), ("name", row.name)),
         source_path=row.source_path,
     )
 
 
-def _verdict_to_row(v, flags: dict) -> MonitorRow:
+def _verdict_to_row(v, idx: dict) -> MonitorRow:
     prov_id = (v.provenance.config_sha256 or "")[:12]
     return MonitorRow(
         kind="discovery",
@@ -83,7 +102,7 @@ def _verdict_to_row(v, flags: dict) -> MonitorRow:
         provenance_id=prov_id,
         stats_version=v.provenance.hft_metrics_version or "",
         created_at=v.provenance.run_timestamp_utc or "",
-        drift_flags=tuple(sorted(flags.get(v.probe_id, ()))),
+        drift_flags=_row_drift_flags(idx, ("probe_id", v.probe_id), ("name", v.study)),
         source_path=v.source_path,
     )
 
@@ -114,12 +133,9 @@ def build_monitor_table(
         if with_drift
         else DriftReport(findings=())
     )
-    flags: dict = defaultdict(set)
-    for f in drift.findings:
-        flags[f.subject].add(f.kind)
-
-    rows = [_ledger_to_row(r, flags) for r in ledger_rows]
-    rows += [_verdict_to_row(v, flags) for v in verdicts]
+    idx = _index_findings(drift.findings)
+    rows = [_ledger_to_row(r, idx) for r in ledger_rows]
+    rows += [_verdict_to_row(v, idx) for v in verdicts]
 
     if kind:
         rows = [r for r in rows if r.kind == kind]
