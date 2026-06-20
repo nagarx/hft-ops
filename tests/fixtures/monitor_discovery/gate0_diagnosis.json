@@ -1,0 +1,756 @@
+{
+  "ESZ5": {
+    "contemporaneous": {
+      "ofi_l1": {
+        "mean_ic": 0.9001410258716048,
+        "ci": [
+          0.8815524667358856,
+          0.9170633906773413
+        ],
+        "n_days": 16
+      },
+      "mlofi": {
+        "mean_ic": 0.9420205161242098,
+        "ci": [
+          0.9271792785452775,
+          0.9560310545929854
+        ],
+        "n_days": 16
+      }
+    },
+    "predictive": {
+      "ofi_l1": {
+        "h1": {
+          "pooled_ic": -0.0052,
+          "pooled_ic_scipy_check": -0.0052,
+          "perday_mean_ic": -0.0033,
+          "perday_ci": [
+            -0.0091,
+            0.0025
+          ],
+          "mean_ic_drop_1120": -0.0035,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 7,
+          "sign_neg": 9,
+          "ic_ir": 0.272,
+          "ret_std_bps": 0.547,
+          "exp_return_bps_at_1sigma": -0.0018
+        },
+        "h5": {
+          "pooled_ic": 0.0001,
+          "pooled_ic_scipy_check": 0.0001,
+          "perday_mean_ic": -0.0008,
+          "perday_ci": [
+            -0.0047,
+            0.003
+          ],
+          "mean_ic_drop_1120": -0.0017,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 8,
+          "sign_neg": 8,
+          "ic_ir": 0.1,
+          "ret_std_bps": 1.206,
+          "exp_return_bps_at_1sigma": -0.001
+        },
+        "h10": {
+          "pooled_ic": 0.0026,
+          "pooled_ic_scipy_check": 0.0026,
+          "perday_mean_ic": 0.0019,
+          "perday_ci": [
+            -0.0017,
+            0.0054
+          ],
+          "mean_ic_drop_1120": 0.0015,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 10,
+          "sign_neg": 6,
+          "ic_ir": 0.256,
+          "ret_std_bps": 1.703,
+          "exp_return_bps_at_1sigma": 0.0033
+        },
+        "h30": {
+          "pooled_ic": 0.0041,
+          "pooled_ic_scipy_check": 0.0041,
+          "perday_mean_ic": 0.0037,
+          "perday_ci": [
+            0.0003,
+            0.0072
+          ],
+          "mean_ic_drop_1120": 0.004,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 12,
+          "sign_neg": 4,
+          "ic_ir": 0.51,
+          "ret_std_bps": 2.925,
+          "exp_return_bps_at_1sigma": 0.0107
+        },
+        "h60": {
+          "pooled_ic": 0.0018,
+          "pooled_ic_scipy_check": 0.0018,
+          "perday_mean_ic": 0.0009,
+          "perday_ci": [
+            -0.0028,
+            0.0043
+          ],
+          "mean_ic_drop_1120": 0.0011,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 10,
+          "sign_neg": 6,
+          "ic_ir": 0.115,
+          "ret_std_bps": 4.006,
+          "exp_return_bps_at_1sigma": 0.0034
+        }
+      },
+      "mlofi": {
+        "h1": {
+          "pooled_ic": -0.0254,
+          "pooled_ic_scipy_check": -0.0254,
+          "perday_mean_ic": -0.0224,
+          "perday_ci": [
+            -0.0281,
+            -0.0165
+          ],
+          "mean_ic_drop_1120": -0.0232,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 0,
+          "sign_neg": 16,
+          "ic_ir": 1.817,
+          "ret_std_bps": 0.547,
+          "exp_return_bps_at_1sigma": -0.0122
+        },
+        "h5": {
+          "pooled_ic": -0.0093,
+          "pooled_ic_scipy_check": -0.0093,
+          "perday_mean_ic": -0.0099,
+          "perday_ci": [
+            -0.0145,
+            -0.0055
+          ],
+          "mean_ic_drop_1120": -0.011,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 1,
+          "sign_neg": 15,
+          "ic_ir": 1.047,
+          "ret_std_bps": 1.206,
+          "exp_return_bps_at_1sigma": -0.0119
+        },
+        "h10": {
+          "pooled_ic": -0.0041,
+          "pooled_ic_scipy_check": -0.0041,
+          "perday_mean_ic": -0.0045,
+          "perday_ci": [
+            -0.0081,
+            -0.0012
+          ],
+          "mean_ic_drop_1120": -0.005,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 6,
+          "sign_neg": 10,
+          "ic_ir": 0.605,
+          "ret_std_bps": 1.703,
+          "exp_return_bps_at_1sigma": -0.0076
+        },
+        "h30": {
+          "pooled_ic": -0.0002,
+          "pooled_ic_scipy_check": -0.0002,
+          "perday_mean_ic": -0.0002,
+          "perday_ci": [
+            -0.0033,
+            0.0033
+          ],
+          "mean_ic_drop_1120": 0.0001,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 7,
+          "sign_neg": 9,
+          "ic_ir": 0.023,
+          "ret_std_bps": 2.925,
+          "exp_return_bps_at_1sigma": -0.0005
+        },
+        "h60": {
+          "pooled_ic": -0.001,
+          "pooled_ic_scipy_check": -0.001,
+          "perday_mean_ic": -0.0018,
+          "perday_ci": [
+            -0.0056,
+            0.0015
+          ],
+          "mean_ic_drop_1120": -0.0017,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 6,
+          "sign_neg": 10,
+          "ic_ir": 0.237,
+          "ret_std_bps": 4.006,
+          "exp_return_bps_at_1sigma": -0.0072
+        }
+      },
+      "vol_imb": {
+        "h1": {
+          "pooled_ic": 0.1409,
+          "pooled_ic_scipy_check": 0.1409,
+          "perday_mean_ic": 0.1549,
+          "perday_ci": [
+            0.1302,
+            0.1795
+          ],
+          "mean_ic_drop_1120": 0.1604,
+          "n_days_abs_gt_0.05": 16,
+          "sign_pos": 16,
+          "sign_neg": 0,
+          "ic_ir": 2.949,
+          "ret_std_bps": 0.547,
+          "exp_return_bps_at_1sigma": 0.0847
+        },
+        "h5": {
+          "pooled_ic": 0.0652,
+          "pooled_ic_scipy_check": 0.0652,
+          "perday_mean_ic": 0.0724,
+          "perday_ci": [
+            0.0586,
+            0.0857
+          ],
+          "mean_ic_drop_1120": 0.0753,
+          "n_days_abs_gt_0.05": 12,
+          "sign_pos": 16,
+          "sign_neg": 0,
+          "ic_ir": 2.523,
+          "ret_std_bps": 1.206,
+          "exp_return_bps_at_1sigma": 0.0872
+        },
+        "h10": {
+          "pooled_ic": 0.0442,
+          "pooled_ic_scipy_check": 0.0442,
+          "perday_mean_ic": 0.0491,
+          "perday_ci": [
+            0.0397,
+            0.0586
+          ],
+          "mean_ic_drop_1120": 0.0516,
+          "n_days_abs_gt_0.05": 8,
+          "sign_pos": 16,
+          "sign_neg": 0,
+          "ic_ir": 2.47,
+          "ret_std_bps": 1.703,
+          "exp_return_bps_at_1sigma": 0.0837
+        },
+        "h30": {
+          "pooled_ic": 0.0219,
+          "pooled_ic_scipy_check": 0.0219,
+          "perday_mean_ic": 0.0242,
+          "perday_ci": [
+            0.0175,
+            0.0308
+          ],
+          "mean_ic_drop_1120": 0.0258,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 16,
+          "sign_neg": 0,
+          "ic_ir": 1.708,
+          "ret_std_bps": 2.925,
+          "exp_return_bps_at_1sigma": 0.0709
+        },
+        "h60": {
+          "pooled_ic": 0.0141,
+          "pooled_ic_scipy_check": 0.0141,
+          "perday_mean_ic": 0.0158,
+          "perday_ci": [
+            0.0104,
+            0.0213
+          ],
+          "mean_ic_drop_1120": 0.017,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 15,
+          "sign_neg": 1,
+          "ic_ir": 1.395,
+          "ret_std_bps": 4.006,
+          "exp_return_bps_at_1sigma": 0.0635
+        }
+      },
+      "cnt_imb": {
+        "h1": {
+          "pooled_ic": 0.1422,
+          "pooled_ic_scipy_check": 0.1422,
+          "perday_mean_ic": 0.1563,
+          "perday_ci": [
+            0.1316,
+            0.181
+          ],
+          "mean_ic_drop_1120": 0.1618,
+          "n_days_abs_gt_0.05": 16,
+          "sign_pos": 16,
+          "sign_neg": 0,
+          "ic_ir": 3.052,
+          "ret_std_bps": 0.547,
+          "exp_return_bps_at_1sigma": 0.0855
+        },
+        "h5": {
+          "pooled_ic": 0.0664,
+          "pooled_ic_scipy_check": 0.0664,
+          "perday_mean_ic": 0.0734,
+          "perday_ci": [
+            0.0604,
+            0.0865
+          ],
+          "mean_ic_drop_1120": 0.0764,
+          "n_days_abs_gt_0.05": 12,
+          "sign_pos": 16,
+          "sign_neg": 0,
+          "ic_ir": 2.643,
+          "ret_std_bps": 1.206,
+          "exp_return_bps_at_1sigma": 0.0885
+        },
+        "h10": {
+          "pooled_ic": 0.0453,
+          "pooled_ic_scipy_check": 0.0453,
+          "perday_mean_ic": 0.0503,
+          "perday_ci": [
+            0.0406,
+            0.0595
+          ],
+          "mean_ic_drop_1120": 0.0527,
+          "n_days_abs_gt_0.05": 8,
+          "sign_pos": 16,
+          "sign_neg": 0,
+          "ic_ir": 2.563,
+          "ret_std_bps": 1.703,
+          "exp_return_bps_at_1sigma": 0.0856
+        },
+        "h30": {
+          "pooled_ic": 0.0223,
+          "pooled_ic_scipy_check": 0.0223,
+          "perday_mean_ic": 0.0248,
+          "perday_ci": [
+            0.0177,
+            0.0317
+          ],
+          "mean_ic_drop_1120": 0.0265,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 15,
+          "sign_neg": 1,
+          "ic_ir": 1.68,
+          "ret_std_bps": 2.925,
+          "exp_return_bps_at_1sigma": 0.0725
+        },
+        "h60": {
+          "pooled_ic": 0.0146,
+          "pooled_ic_scipy_check": 0.0146,
+          "perday_mean_ic": 0.0163,
+          "perday_ci": [
+            0.0105,
+            0.0215
+          ],
+          "mean_ic_drop_1120": 0.0178,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 14,
+          "sign_neg": 2,
+          "ic_ir": 1.414,
+          "ret_std_bps": 4.006,
+          "exp_return_bps_at_1sigma": 0.0655
+        }
+      }
+    },
+    "cost_gate": {
+      "h1": {
+        "ret_std_bps": 0.547,
+        "breakeven_ic_for_RTcost": 0.7858,
+        "RT_cost_bps": 0.43
+      },
+      "h5": {
+        "ret_std_bps": 1.206,
+        "breakeven_ic_for_RTcost": 0.3567,
+        "RT_cost_bps": 0.43
+      },
+      "h10": {
+        "ret_std_bps": 1.703,
+        "breakeven_ic_for_RTcost": 0.2524,
+        "RT_cost_bps": 0.43
+      },
+      "h30": {
+        "ret_std_bps": 2.925,
+        "breakeven_ic_for_RTcost": 0.147,
+        "RT_cost_bps": 0.43
+      },
+      "h60": {
+        "ret_std_bps": 4.006,
+        "breakeven_ic_for_RTcost": 0.1073,
+        "RT_cost_bps": 0.43
+      }
+    }
+  },
+  "NQZ5": {
+    "contemporaneous": {
+      "ofi_l1": {
+        "mean_ic": 0.930467897590445,
+        "ci": [
+          0.9216326840861327,
+          0.9383622223963959
+        ],
+        "n_days": 16
+      },
+      "mlofi": {
+        "mean_ic": 0.981104560000386,
+        "ci": [
+          0.9784212881935382,
+          0.9835365286744553
+        ],
+        "n_days": 16
+      }
+    },
+    "predictive": {
+      "ofi_l1": {
+        "h1": {
+          "pooled_ic": -0.0188,
+          "pooled_ic_scipy_check": -0.0188,
+          "perday_mean_ic": -0.0183,
+          "perday_ci": [
+            -0.0229,
+            -0.0136
+          ],
+          "mean_ic_drop_1120": -0.0192,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 1,
+          "sign_neg": 15,
+          "ic_ir": 1.856,
+          "ret_std_bps": 0.733,
+          "exp_return_bps_at_1sigma": -0.0135
+        },
+        "h5": {
+          "pooled_ic": -0.0041,
+          "pooled_ic_scipy_check": -0.0041,
+          "perday_mean_ic": -0.0052,
+          "perday_ci": [
+            -0.0088,
+            -0.0014
+          ],
+          "mean_ic_drop_1120": -0.0063,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 5,
+          "sign_neg": 11,
+          "ic_ir": 0.649,
+          "ret_std_bps": 1.629,
+          "exp_return_bps_at_1sigma": -0.0085
+        },
+        "h10": {
+          "pooled_ic": -0.0012,
+          "pooled_ic_scipy_check": -0.0012,
+          "perday_mean_ic": -0.0023,
+          "perday_ci": [
+            -0.007,
+            0.0022
+          ],
+          "mean_ic_drop_1120": -0.0033,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 8,
+          "sign_neg": 8,
+          "ic_ir": 0.239,
+          "ret_std_bps": 2.306,
+          "exp_return_bps_at_1sigma": -0.0053
+        },
+        "h30": {
+          "pooled_ic": 0.0014,
+          "pooled_ic_scipy_check": 0.0014,
+          "perday_mean_ic": 0.0007,
+          "perday_ci": [
+            -0.0021,
+            0.0033
+          ],
+          "mean_ic_drop_1120": 0.0009,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 9,
+          "sign_neg": 7,
+          "ic_ir": 0.127,
+          "ret_std_bps": 4.038,
+          "exp_return_bps_at_1sigma": 0.003
+        },
+        "h60": {
+          "pooled_ic": -0.0007,
+          "pooled_ic_scipy_check": -0.0007,
+          "perday_mean_ic": -0.0019,
+          "perday_ci": [
+            -0.0059,
+            0.0017
+          ],
+          "mean_ic_drop_1120": -0.002,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 8,
+          "sign_neg": 8,
+          "ic_ir": 0.234,
+          "ret_std_bps": 5.551,
+          "exp_return_bps_at_1sigma": -0.0105
+        }
+      },
+      "mlofi": {
+        "h1": {
+          "pooled_ic": -0.0202,
+          "pooled_ic_scipy_check": -0.0202,
+          "perday_mean_ic": -0.0196,
+          "perday_ci": [
+            -0.0243,
+            -0.0147
+          ],
+          "mean_ic_drop_1120": -0.0204,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 1,
+          "sign_neg": 15,
+          "ic_ir": 1.963,
+          "ret_std_bps": 0.733,
+          "exp_return_bps_at_1sigma": -0.0144
+        },
+        "h5": {
+          "pooled_ic": -0.006,
+          "pooled_ic_scipy_check": -0.006,
+          "perday_mean_ic": -0.0071,
+          "perday_ci": [
+            -0.0108,
+            -0.0032
+          ],
+          "mean_ic_drop_1120": -0.0082,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 4,
+          "sign_neg": 12,
+          "ic_ir": 0.881,
+          "ret_std_bps": 1.629,
+          "exp_return_bps_at_1sigma": -0.0115
+        },
+        "h10": {
+          "pooled_ic": -0.0032,
+          "pooled_ic_scipy_check": -0.0032,
+          "perday_mean_ic": -0.0042,
+          "perday_ci": [
+            -0.0086,
+            -0.0
+          ],
+          "mean_ic_drop_1120": -0.005,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 6,
+          "sign_neg": 10,
+          "ic_ir": 0.473,
+          "ret_std_bps": 2.306,
+          "exp_return_bps_at_1sigma": -0.0098
+        },
+        "h30": {
+          "pooled_ic": -0.0012,
+          "pooled_ic_scipy_check": -0.0012,
+          "perday_mean_ic": -0.0013,
+          "perday_ci": [
+            -0.0046,
+            0.0019
+          ],
+          "mean_ic_drop_1120": -0.001,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 9,
+          "sign_neg": 7,
+          "ic_ir": 0.184,
+          "ret_std_bps": 4.038,
+          "exp_return_bps_at_1sigma": -0.0053
+        },
+        "h60": {
+          "pooled_ic": -0.003,
+          "pooled_ic_scipy_check": -0.003,
+          "perday_mean_ic": -0.0036,
+          "perday_ci": [
+            -0.0073,
+            -0.0001
+          ],
+          "mean_ic_drop_1120": -0.0033,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 5,
+          "sign_neg": 11,
+          "ic_ir": 0.467,
+          "ret_std_bps": 5.551,
+          "exp_return_bps_at_1sigma": -0.02
+        }
+      },
+      "vol_imb": {
+        "h1": {
+          "pooled_ic": 0.0266,
+          "pooled_ic_scipy_check": 0.0266,
+          "perday_mean_ic": 0.0283,
+          "perday_ci": [
+            0.0228,
+            0.0339
+          ],
+          "mean_ic_drop_1120": 0.0283,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 16,
+          "sign_neg": 0,
+          "ic_ir": 2.396,
+          "ret_std_bps": 0.733,
+          "exp_return_bps_at_1sigma": 0.0207
+        },
+        "h5": {
+          "pooled_ic": 0.0126,
+          "pooled_ic_scipy_check": 0.0126,
+          "perday_mean_ic": 0.0137,
+          "perday_ci": [
+            0.0087,
+            0.0192
+          ],
+          "mean_ic_drop_1120": 0.0133,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 15,
+          "sign_neg": 1,
+          "ic_ir": 1.255,
+          "ret_std_bps": 1.629,
+          "exp_return_bps_at_1sigma": 0.0224
+        },
+        "h10": {
+          "pooled_ic": 0.0107,
+          "pooled_ic_scipy_check": 0.0107,
+          "perday_mean_ic": 0.0117,
+          "perday_ci": [
+            0.007,
+            0.0166
+          ],
+          "mean_ic_drop_1120": 0.0114,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 15,
+          "sign_neg": 1,
+          "ic_ir": 1.18,
+          "ret_std_bps": 2.306,
+          "exp_return_bps_at_1sigma": 0.0271
+        },
+        "h30": {
+          "pooled_ic": 0.0065,
+          "pooled_ic_scipy_check": 0.0065,
+          "perday_mean_ic": 0.0071,
+          "perday_ci": [
+            0.0031,
+            0.0107
+          ],
+          "mean_ic_drop_1120": 0.0068,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 13,
+          "sign_neg": 3,
+          "ic_ir": 0.877,
+          "ret_std_bps": 4.038,
+          "exp_return_bps_at_1sigma": 0.0286
+        },
+        "h60": {
+          "pooled_ic": 0.0039,
+          "pooled_ic_scipy_check": 0.0039,
+          "perday_mean_ic": 0.0046,
+          "perday_ci": [
+            0.0012,
+            0.0081
+          ],
+          "mean_ic_drop_1120": 0.0046,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 10,
+          "sign_neg": 6,
+          "ic_ir": 0.624,
+          "ret_std_bps": 5.551,
+          "exp_return_bps_at_1sigma": 0.0254
+        }
+      },
+      "cnt_imb": {
+        "h1": {
+          "pooled_ic": 0.0264,
+          "pooled_ic_scipy_check": 0.0264,
+          "perday_mean_ic": 0.0283,
+          "perday_ci": [
+            0.0226,
+            0.0342
+          ],
+          "mean_ic_drop_1120": 0.0282,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 16,
+          "sign_neg": 0,
+          "ic_ir": 2.287,
+          "ret_std_bps": 0.733,
+          "exp_return_bps_at_1sigma": 0.0207
+        },
+        "h5": {
+          "pooled_ic": 0.0126,
+          "pooled_ic_scipy_check": 0.0126,
+          "perday_mean_ic": 0.0137,
+          "perday_ci": [
+            0.0086,
+            0.0192
+          ],
+          "mean_ic_drop_1120": 0.0131,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 15,
+          "sign_neg": 1,
+          "ic_ir": 1.224,
+          "ret_std_bps": 1.629,
+          "exp_return_bps_at_1sigma": 0.0223
+        },
+        "h10": {
+          "pooled_ic": 0.0108,
+          "pooled_ic_scipy_check": 0.0108,
+          "perday_mean_ic": 0.0117,
+          "perday_ci": [
+            0.0067,
+            0.0167
+          ],
+          "mean_ic_drop_1120": 0.0112,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 15,
+          "sign_neg": 1,
+          "ic_ir": 1.112,
+          "ret_std_bps": 2.306,
+          "exp_return_bps_at_1sigma": 0.0271
+        },
+        "h30": {
+          "pooled_ic": 0.006,
+          "pooled_ic_scipy_check": 0.006,
+          "perday_mean_ic": 0.0066,
+          "perday_ci": [
+            0.0025,
+            0.0105
+          ],
+          "mean_ic_drop_1120": 0.0061,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 13,
+          "sign_neg": 3,
+          "ic_ir": 0.777,
+          "ret_std_bps": 4.038,
+          "exp_return_bps_at_1sigma": 0.0265
+        },
+        "h60": {
+          "pooled_ic": 0.0038,
+          "pooled_ic_scipy_check": 0.0038,
+          "perday_mean_ic": 0.0044,
+          "perday_ci": [
+            0.0009,
+            0.0079
+          ],
+          "mean_ic_drop_1120": 0.0042,
+          "n_days_abs_gt_0.05": 0,
+          "sign_pos": 11,
+          "sign_neg": 5,
+          "ic_ir": 0.59,
+          "ret_std_bps": 5.551,
+          "exp_return_bps_at_1sigma": 0.0243
+        }
+      }
+    },
+    "cost_gate": {
+      "h1": {
+        "ret_std_bps": 0.733,
+        "breakeven_ic_for_RTcost": 0.1909,
+        "RT_cost_bps": 0.14
+      },
+      "h5": {
+        "ret_std_bps": 1.629,
+        "breakeven_ic_for_RTcost": 0.086,
+        "RT_cost_bps": 0.14
+      },
+      "h10": {
+        "ret_std_bps": 2.306,
+        "breakeven_ic_for_RTcost": 0.0607,
+        "RT_cost_bps": 0.14
+      },
+      "h30": {
+        "ret_std_bps": 4.038,
+        "breakeven_ic_for_RTcost": 0.0347,
+        "RT_cost_bps": 0.14
+      },
+      "h60": {
+        "ret_std_bps": 5.551,
+        "breakeven_ic_for_RTcost": 0.0252,
+        "RT_cost_bps": 0.14
+      }
+    }
+  }
+}

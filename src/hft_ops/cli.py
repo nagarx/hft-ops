@@ -2852,5 +2852,78 @@ def _update_pinned(
     atomic_write_json(pin_file, {"pinned_keys": sorted(pinned)})
 
 
+# ---------------------------------------------------------------------------
+# F5 monitorability — read-only monitor over the ledger + discovery verdicts.
+# Lazy imports inside commands keep the monitor's torch-free modules off the
+# cli import path until invoked.
+# ---------------------------------------------------------------------------
+def _monitor_paths(ctx: click.Context, repo_root, ledger_records_dir):
+    if repo_root is None:
+        repo_root = _resolve_pipeline_root(ctx.obj.get("pipeline_root"))
+    repo_root = Path(repo_root)
+    if ledger_records_dir is None:
+        ledger_records_dir = PipelinePaths(pipeline_root=repo_root).ledger_dir / "records"
+    return repo_root, Path(ledger_records_dir)
+
+
+@main.group()
+def monitor() -> None:
+    """Read-only monitor over the experiment ledger + discovery-harness verdicts (F5)."""
+
+
+@monitor.command(name="table")
+@click.option("--repo-root", type=click.Path(), default=None,
+              help="Repo root (default: auto-detected pipeline root).")
+@click.option("--ledger-records-dir", type=click.Path(), default=None,
+              help="Ledger records dir (default: <root>/hft-ops/ledger/records).")
+@click.option("--kind", type=click.Choice(["ledger", "discovery"]), default=None,
+              help="Restrict to one row kind.")
+@click.option("--source-tree", default=None, help="Restrict discovery rows to one harness tree.")
+@click.option("--edge-only", is_flag=True, default=False,
+              help="Only rows with any_tradeable_edge == True.")
+@click.option("--status", default=None, help="Exact status/verdict match.")
+@click.option("--name-contains", default=None, help="Substring filter on name/study.")
+@click.option("--format", "fmt", type=click.Choice(["text", "markdown", "json"]), default="text")
+@click.pass_context
+def monitor_table(ctx, repo_root, ledger_records_dir, kind, source_tree,
+                  edge_only, status, name_contains, fmt) -> None:
+    """Unified experiment x verdict x provenance x drift table."""
+    from hft_ops.monitor.render import render_json, render_markdown, render_text
+    from hft_ops.monitor.table import build_monitor_table
+
+    rr, lrd = _monitor_paths(ctx, repo_root, ledger_records_dir)
+    table = build_monitor_table(
+        rr, ledger_records_dir=lrd, kind=kind, source_tree=source_tree,
+        edge_only=edge_only, status=status, name_contains=name_contains,
+    )
+    if fmt == "json":
+        click.echo(render_json(table))
+    elif fmt == "markdown":
+        click.echo(render_markdown(table))
+    else:
+        click.echo(render_text(table))
+
+
+@monitor.command(name="drift")
+@click.option("--repo-root", type=click.Path(), default=None)
+@click.option("--ledger-records-dir", type=click.Path(), default=None)
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
+@click.option("--fail-on", type=click.Choice(["warn", "error"]), default=None,
+              help="Exit 1 if drift at/above this severity is present (CI hook).")
+@click.pass_context
+def monitor_drift(ctx, repo_root, ledger_records_dir, fmt, fail_on) -> None:
+    """Report drift: stale index envelope, fingerprint divergence, stale stats, schema mismatch."""
+    from hft_ops.monitor.render import render_drift_json, render_drift_text
+    from hft_ops.monitor.table import build_monitor_table
+
+    rr, lrd = _monitor_paths(ctx, repo_root, ledger_records_dir)
+    report = build_monitor_table(rr, ledger_records_dir=lrd).drift
+    click.echo(render_drift_json(report) if fmt == "json" else render_drift_text(report))
+    if fail_on == "error" and report.n_errors > 0:
+        ctx.exit(1)
+    if fail_on == "warn" and (report.n_warn > 0 or report.n_errors > 0):
+        ctx.exit(1)
+
+
 if __name__ == "__main__":
     main()
