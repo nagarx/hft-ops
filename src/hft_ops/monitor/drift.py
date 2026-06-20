@@ -50,10 +50,28 @@ class DriftReport:
 
 
 def _ver_tuple(s) -> tuple[int, ...]:
-    out = []
+    """Parse a version string into a comparable tuple. A pre-release / dev / rc
+    suffix (any non-numeric trailing characters in a component, e.g. ``0.1.24-dev``,
+    ``0.1.24.dev0``, ``0.1.24rc1``) sorts BEFORE the corresponding final release
+    (``0.1.24``): the numeric release parts are extracted, then a final marker —
+    ``0`` for a pre-release, ``1`` for a final release — is appended so
+    ``0.1.24-dev < 0.1.24`` (M2: the prior strip-to-digits made them compare EQUAL,
+    so a stale dev-build verdict was never flagged). Assumes a consistent component
+    count across the versions compared (true for a single package's version history,
+    which is the only caller — ``hft-metrics``)."""
+    out: list[int] = []
+    is_prerelease = False
     for part in str(s).split("."):
-        digits = "".join(ch for ch in part if ch.isdigit())
-        out.append(int(digits) if digits else 0)
+        # the LEADING digit run is this component's release number; anything after it
+        # (a `-dev` / `rc1` / `dev0` tag) marks a pre-release. Joining ALL digits was
+        # the bug — it pulled the `1` out of `24rc1` and read 241.
+        i = 0
+        while i < len(part) and part[i].isdigit():
+            i += 1
+        if part[i:]:  # a non-digit tail -> pre-release tag
+            is_prerelease = True
+        out.append(int(part[:i]) if part[:i] else 0)
+    out.append(0 if is_prerelease else 1)
     return tuple(out)
 
 
@@ -99,10 +117,29 @@ def ledger_index_disk_drift(records_dir: Path | str) -> list[DriftFinding]:
     return []
 
 
+# sweep roll-ups: their fingerprints differ by sweep SIZE, not config -> not drift.
+_AGGREGATE_RECORD_TYPES = frozenset({"sweep_aggregate", "sweep_failure"})
+
+
 def fingerprint_divergence(ledger_rows: Sequence) -> list[DriftFinding]:
+    """Flag a name whose COMPLETED, non-aggregate records carry > 1 distinct config
+    fingerprint (genuine config drift between re-runs) or > 1 provenance hash under
+    one fingerprint (data/feature/model drift under one config).
+
+    F5-BUG-2: only completed, non-aggregate records can constitute genuine drift.
+    Excluding non-completed runs (failed/partial debugging re-runs — e.g.
+    ``e5_60s_importance_audit``, 5/6 failed) and ``sweep_aggregate`` roll-ups
+    (different sweep sizes -> different fingerprints by construction — e.g. the bare
+    ``cycle5_multi_arm`` name) removes the two documented false-positive classes
+    without losing genuine completed-record drift (e.g. the ``cycle5_multi_arm``
+    per-arm ``temporal_ridge`` records, which still flag)."""
     findings: list[DriftFinding] = []
     by_name: dict[str, list] = defaultdict(list)
     for row in ledger_rows:
+        if row.status != "completed":
+            continue
+        if row.record_type in _AGGREGATE_RECORD_TYPES:
+            continue
         by_name[row.name].append(row)
     for name, group in by_name.items():
         fps = {r.fingerprint for r in group if r.fingerprint}

@@ -12,6 +12,7 @@ from discovery_verdict import Verdict, VerdictProvenance
 
 from hft_ops.monitor.drift import (
     DriftReport,
+    _ver_tuple,
     detect_drift,
     fingerprint_divergence,
     ledger_index_disk_drift,
@@ -88,6 +89,77 @@ def test_stale_verdict_version_is_info():
 def test_stale_verdict_none_when_current():
     v = _verdict(provenance=VerdictProvenance(hft_metrics_version="0.1.23"))
     assert stale_verdict_drift([v], installed_version="0.1.23") == []
+
+
+# --- F5-BUG-2: fingerprint_divergence must not over-flag benign re-runs ---------
+
+def test_fingerprint_divergence_ignores_failed_runs():
+    # the real e5_60s_importance_audit pattern: 1 completed + several FAILED debug
+    # re-runs with divergent fingerprints. The divergence is benign iteration, not
+    # config drift -> must NOT flag (only completed records are compared).
+    rows = [
+        _row(name="audit", status="completed", fingerprint="a" * 64),
+        _row(name="audit", status="failed", fingerprint="b" * 64),
+        _row(name="audit", status="failed", fingerprint="c" * 64),
+    ]
+    assert fingerprint_divergence(rows) == []
+
+
+def test_fingerprint_divergence_ignores_sweep_aggregate_rollups():
+    # the real bare cycle5_multi_arm pattern: sweep_aggregate roll-ups of different
+    # sweep sizes share the bare sweep name and differ in fingerprint by construction
+    # -> benign, must NOT flag (aggregate record_types are excluded).
+    rows = [
+        _row(name="sweep", record_type="sweep_aggregate", fingerprint="a" * 64),
+        _row(name="sweep", record_type="sweep_aggregate", fingerprint="b" * 64),
+    ]
+    assert fingerprint_divergence(rows) == []
+
+
+def test_fingerprint_divergence_flags_genuine_completed_drift():
+    # the real cycle5_multi_arm__temporal_ridge_* pattern: two COMPLETED training
+    # records under one arm name with genuinely different configs (gen1 mis-pointed
+    # horizon -> gen2 fix) -> this IS real drift and MUST still flag.
+    rows = [
+        _row(name="arm", status="completed", record_type="training", fingerprint="a" * 64),
+        _row(name="arm", status="completed", record_type="training", fingerprint="b" * 64),
+    ]
+    findings = fingerprint_divergence(rows)
+    assert any(f.kind == "fingerprint_divergence" for f in findings)
+
+
+def test_fingerprint_divergence_one_completed_plus_failed_diverging_is_benign():
+    # the real tlob_*_H10 pattern: 2 completed (same fp) + 1 failed (different fp).
+    # the only divergence is completed-vs-failed -> benign, must NOT flag.
+    rows = [
+        _row(name="tlob", status="completed", fingerprint="a" * 64),
+        _row(name="tlob", status="completed", fingerprint="a" * 64),
+        _row(name="tlob", status="failed", fingerprint="z" * 64),
+    ]
+    assert fingerprint_divergence(rows) == []
+
+
+# --- M2: _ver_tuple must order a pre-release BEFORE its final release ------------
+
+def test_ver_tuple_prerelease_sorts_before_release():
+    # the bug: '0.1.24-dev' stripped to (0,1,24) == (0,1,24) for '0.1.24', so a dev
+    # build compared EQUAL to the release and a stale dev verdict was never flagged.
+    assert _ver_tuple("0.1.24-dev") < _ver_tuple("0.1.24")
+    assert _ver_tuple("0.1.24.dev0") < _ver_tuple("0.1.24")
+    assert _ver_tuple("0.1.24rc1") < _ver_tuple("0.1.24")
+    # a real release equals itself, and a higher patch still dominates a pre-release.
+    assert _ver_tuple("0.1.24") == _ver_tuple("0.1.24")
+    assert _ver_tuple("0.1.25") > _ver_tuple("0.1.24-dev")
+    # a release is NOT older than a dev build of the same number (no false stale).
+    assert not (_ver_tuple("0.1.24") < _ver_tuple("0.1.24-dev"))
+
+
+def test_stale_verdict_dev_build_is_seen_as_older():
+    # M2 observable effect: a verdict produced under a dev snapshot is correctly
+    # older than the installed final release -> flagged (info) for re-validation.
+    v = _verdict(provenance=VerdictProvenance(hft_metrics_version="0.1.24-dev"))
+    findings = stale_verdict_drift([v], installed_version="0.1.24")
+    assert any(f.kind == "stale_verdict" for f in findings)
 
 
 def test_detect_drift_aggregates(tmp_path):
