@@ -9,6 +9,7 @@ verdict builders and don't import each other; the monitor is a pure reader/adapt
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from pathlib import Path
 
@@ -19,7 +20,9 @@ class DiscoveryVerdictReader:
     """Reads ``<repo_root>/<tree>/**/results/*.json`` -> ``list[Verdict]``.
 
     Skips internals (``_``-prefixed) + a filename denylist (feature dumps, re-run
-    snapshots). ``include_gate_outs=False`` drops ``GATED_OUT`` verdicts. A per-file
+    snapshots) + a glob denylist (sharded data caches like
+    ``nvda_atm_iv.shard0of4.json`` that share the ``results/`` dir but are NOT
+    verdicts). ``include_gate_outs=False`` drops ``GATED_OUT`` verdicts. A per-file
     parse/normalize failure is recorded into ``read_errors`` and skipped, never raised.
     """
 
@@ -32,6 +35,12 @@ class DiscoveryVerdictReader:
     )
     SKIP_PREFIXES = ("_",)
     DEFAULT_DENYLIST = frozenset({"gex_features.json", "gate_rerun_2026_06_19.json"})
+    # Glob denylist for sharded data caches co-located in a harness ``results/``
+    # dir but which are NOT verdicts (shape ``{"days": ...}``, not underscore-
+    # prefixed). e.g. iv_shadow's ``nvda_atm_iv.shard0of4.json`` cache — without
+    # this they fall through to the CommonCoreAdapter catch-all and inject phantom
+    # UNRESOLVED rows. The pattern is shard-count-agnostic (``*.shard*of*.json``).
+    SKIP_GLOBS = ("*.shard*of*.json",)
 
     def __init__(
         self,
@@ -59,6 +68,8 @@ class DiscoveryVerdictReader:
                 if any(name.startswith(p) for p in self.SKIP_PREFIXES):
                     continue
                 if name in self.denylist:
+                    continue
+                if any(fnmatch.fnmatch(name, g) for g in self.SKIP_GLOBS):
                     continue
                 try:
                     raw = json.loads(path.read_text())

@@ -236,6 +236,7 @@ class TestRecordType:
         assert RecordType.BACKTEST.value == "backtest"
         assert RecordType.EVALUATION.value == "evaluation"
         assert RecordType.SWEEP_AGGREGATE.value == "sweep_aggregate"
+        assert RecordType.DISCOVERY.value == "discovery"
 
     def test_analysis_record_roundtrip(self, tmp_path: Path):
         from hft_ops.ledger.experiment_record import RecordType

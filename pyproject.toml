@@ -20,7 +20,11 @@ dependencies = [
     # consumed by `hft_ops.ledger.statistical_compare.compare_sweep_statistical`
     # adapter for `hft-ops sweep compare` CLI). Strictly additive bump per
     # SemVer; no symbols removed.
-    "hft-contracts>=2.8.0",
+    # 2026-06-27: bumped >=2.8.0 → >=2.10.0 — `hft_ops.ledger.discovery_record`
+    # uses `RecordType.DISCOVERY` (the discovery-lane ledger value first shipped
+    # in hft-contracts 2.10.0). A pre-2.10.0 install would AttributeError at
+    # `RecordType.DISCOVERY`. Strictly additive (new enum VALUE); no symbols removed.
+    "hft-contracts>=2.10.0",
     "click>=8.0",
     "pyyaml>=6.0",
     "rich>=13.0",

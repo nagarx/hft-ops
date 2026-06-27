@@ -47,6 +47,22 @@ def test_include_gate_outs_false_drops_gated_out(tmp_path):
     assert {Path(v.source_path).name for v in without} == {"tradeflow_esnq_P_A7.json"}
 
 
+def test_skips_sharded_data_caches(tmp_path):
+    # The iv_shadow ATM-IV cache (``*.shard*of*.json``, shape ``{"days": ...}``)
+    # is co-located in a harness ``results/`` dir but is NOT a verdict. Without the
+    # SKIP_GLOBS guard it falls through to the CommonCoreAdapter catch-all and
+    # injects a phantom UNRESOLVED row into the monitor.
+    _put(tmp_path, "nvda_discovery/iv_shadow/results", "tradeflow_esnq_P_A7.json")  # real verdict
+    _put(tmp_path, "nvda_discovery/iv_shadow/results", "foo.shard0of4.json")        # data cache -> skip
+
+    verdicts = DiscoveryVerdictReader(tmp_path).read_all()
+    got = {Path(v.source_path).name for v in verdicts}
+    expected = {"tradeflow_esnq_P_A7.json"}
+    assert got == expected, (
+        f"shard cache must not become a verdict. expected {expected}, got {got}"
+    )
+
+
 def test_missing_trees_tolerated(tmp_path):
     reader = DiscoveryVerdictReader(tmp_path)   # no discovery trees present at all
     assert reader.read_all() == []

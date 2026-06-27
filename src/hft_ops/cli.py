@@ -1410,6 +1410,7 @@ def ledger_search(
     "--record-type",
     type=click.Choice([
         "training", "analysis", "calibration", "backtest", "evaluation", "sweep_aggregate",
+        "discovery",
     ]),
     default="training",
     help="Type of record. See RecordType enum docstring for definitions.",

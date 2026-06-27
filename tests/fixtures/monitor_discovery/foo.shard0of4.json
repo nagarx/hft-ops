@@ -1,0 +1,12 @@
+{
+  "days": [
+    {"date": "2025-10-29", "atm_iv": 0.412, "n_quotes": 1284},
+    {"date": "2025-10-30", "atm_iv": 0.398, "n_quotes": 1190}
+  ],
+  "config": {
+    "shard": "0of4",
+    "instrument": "NVDA",
+    "seed": 42
+  },
+  "n_days_ok": 2
+}
