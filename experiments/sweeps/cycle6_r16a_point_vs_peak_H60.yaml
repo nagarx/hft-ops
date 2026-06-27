@@ -197,8 +197,28 @@ experiment:
 pipeline_root: ".."
 
 stages:
+  # EXTRACTION DISABLED 2026-05-11: First launch hit #PY-84 (orchestrator
+  # extraction skip_if_exists not honored when cache validation fails). The
+  # extractor ran for ~10 min, produced PRE-Phase-O corpus at
+  # data/exports/e5_timebased_60s (no v3p0 suffix), then exit code 1 due to
+  # 3 expected partial failures (short half-session days 20250703 / 20251128 /
+  # 20251224 correctly fail-loud per Phase O Cycle 1 H300 needs 311 prices).
+  # Orchestrator treated exit code 1 as fatal + aborted sweep before any
+  # training. Sub-cycle insight: the EXTRACTOR's partial_failure mechanism
+  # writes a valid output WITH a partial_failure block, but ALSO returns
+  # exit code 1, which orchestrator treats as fatal stage failure. The v3p0
+  # corpus at /Volumes/WD_Black/HFT-data/exports/e5_timebased_60s_v3p0/
+  # (162 train + 35 val + 33 test days; schema 3.0; export ts 2026-05-03)
+  # is ALREADY READY. Disabling extraction stage entirely (training will
+  # read v3p0 directly via data.data_dir).
+  #
+  # NEW backlog candidate: #PY-126 — orchestrator should treat extractor
+  # exit-code-1-with-partial_failure-manifest as STAGE-OK with WARN, not
+  # fatal abort. Or: extractor should exit 0 when partial_failure block is
+  # validly emitted (current Bundle 4 always-write discipline + exit code
+  # are contradictory).
   extraction:
-    enabled: true
+    enabled: false
     skip_if_exists: true
     config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s.toml"
     output_dir: "data/exports/e5_timebased_60s_v3p0"
@@ -211,6 +231,17 @@ stages:
 
   training:
     enabled: true
+    # Phase R-16a fix 2026-05-11 night: validation.py:359 reads
+    # `manifest.stages.training.horizon_value` to resolve horizon_idx for the
+    # IC gate. Setting H60 (matches trainer_config.data.horizon_idx=1 +
+    # data.labels.primary_horizon_idx=1 + backtester extra_args --primary-
+    # horizon-idx=1; all four manifest-level fields now consistent at H60).
+    # NEW backlog #PY-127: architectural fix candidate — orchestrator should
+    # auto-derive horizon_value from trainer_config.data.horizon_idx +
+    # data.labels.horizons[horizon_idx] (same shadow-precedence class as
+    # #PY-87/#PY-88). FINGERPRINT will rotate from `60553fe5d80078bf...` due
+    # to dedup.py:806-807 injecting `_horizon_value=60` into training fp.
+    horizon_value: 60
     trainer_config:
       name: cycle6_r16a_base
       description: "R-16a base; axes override model_type and data.labels.return_type. H60 pinned in base."

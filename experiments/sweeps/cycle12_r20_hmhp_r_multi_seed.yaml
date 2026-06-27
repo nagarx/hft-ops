@@ -1,0 +1,414 @@
+# =============================================================================
+# R-20-HMHP-R MULTI-SEED VALIDATION — Cycle 12 (N=5, seeds 43-47)
+# =============================================================================
+#
+# PURPOSE: Validate HMHP-R cascading-decoder architecture-axis lift across
+#   N=5 seeds (43-47) per Lesson #12 mandatory multi-seed rigor floor +
+#   R-16e Lesson #93 precedent (R-16d single-seed Ratio=2.585 collapsed to
+#   mean=1.653 under N=10 multi-seed validation).
+#
+# RELATIONSHIP TO `cycle12_r20_hmhp_r.yaml`:
+#   The single-seed=42 cycle (`cycle12_r20_hmhp_r.yaml`) was Pre-Impl Agent X
+#   APPROVE-PROCEED 2026-05-19 NIGHT as an "R-17a/R-19/Stage 6 protocol parity"
+#   single-seed cycle with outcome-conditional multi-seed N=3 follow-up.
+#   This MULTI-SEED variant is the user-authorized 2026-05-19 EVENING upgrade
+#   to N=5 (5-Wave 1+2 adversarial validation; Wave 2X recommended Multi-Seed
+#   over single-seed per Lesson #12 mandate). BOTH manifests coexist; this
+#   multi-seed wrapper SUPERSEDES the single-seed for execution priority.
+#
+# AUTHORIZATION: User authorized 2026-05-19 EVENING via AskUserQuestion
+#   "R-20-HMHP-R Multi-Seed (Recommended)" after Wave 1+2 adversarial cycle
+#   (5 cumulative agents) REFUTED my earlier "R-20-TLOB on 128feat corpus"
+#   framing as triply-wrong (corpus train-only, HMHP N>=2, schema 2.2). The
+#   CORRECT R-20 = HMHP-R cascading on existing 98feat e5_timebased_60s_v3p0.
+#
+# PRE-IMPL 3-AGENT GATE (this cycle, 2026-05-19 NIGHT):
+#   - Agent A (sweep wrapper design): APPROVE-WITH-REFINEMENTS — provided
+#     concrete YAML draft + identified Phase Y composer seed-INVARIANCE
+#     ground-truth verified
+#   - Agent Y (strong REFUTE): STRONG REFUTE with 3 SHIP-BLOCKERS:
+#       SB-1 framing — single-seed vs multi-seed (RESOLVED: this file is the
+#         multi-seed variant)
+#       SB-2 H3.a anchor mismatch — Stage 6 ran without explicit FeatureSet
+#         wire-in; R-20 manifest sets `feature_set: nvda_short_term_98_src98_v1`
+#         which (per R-19 cycle10 BUG2-A 2026-05-18 empirical precedent) ROTATES
+#         compat_fp via `feature_layout` field flip (RESOLVED: H3 reframed
+#         empirically post-first-cell, NOT vs Stage 6 archeology)
+#       SB-3 δ confound — Stage 6 inherited base δ (10.0 per Agent Y); R-20
+#         leaf manifest sets explicit 12.6 (RESOLVED: δ=12.6 is THIS cycle's
+#         baseline; R-20 IC NOT directly comparable to Stage 6's 0.3561;
+#         absolute floors in H1 remain valid)
+#   - Agent Z (scope + integration check): GREEN for single-seed AMBER for
+#     multi-seed (this file applies the AMBER → GREEN refinements:
+#     per-seed signal_export dir via ${sweep.point_name}; output_dir
+#     collision workaround documented)
+#
+# CYCLE 12 CONTEXT (post Cycle 11 hygiene 2026-05-19 NIGHT + R-19 multi-seed
+# CLOSED + bimodality REFUTED ensemble-exploit):
+#   Cycle 11 (1427c9d + 8618340 + ccbb3a8) closed F-1/F-2/PY-312/r19 fixtures
+#   + bimodality dividend (Lesson #107 ENDORSED). Cycle 12 = first R-NN cycle
+#   post Cycle 11; user explicit pivot from cycle10/cycle11 architecture-axis
+#   to NEW HMHP-R cascading-decoder architecture-axis test.
+#
+# COMPUTE BUDGET (realistic):
+#   - Per-seed training: ~45-90 min × 5 seeds = ~4-8 hr
+#   - Per-seed signal export + backtest: ~25-30 min × 5 = ~2-2.5 hr
+#   - Analyzer + ledger entries + commit/push: ~1-2 hr
+#   - TOTAL: ~7-12 hr (long unattended cycle)
+#
+# **CRITICAL ANTI-DRIFT (preserve through compaction)**:
+#   1. **Phase Y composer is SEED-INVARIANT** (verified empirically at
+#      `hft-contracts/src/hft_contracts/experiment_record.py:770-782`
+#      `_extract_provenance_components`): epH composes ONLY 4 fingerprints —
+#      `data_export_fp` + `feature_set_content_hash` + `compatibility_fp` +
+#      `model_config_hash`. NONE depend on train.seed. Therefore 5 seeds
+#      produce 1 IDENTICAL epH (NOT 5 distinct as R-19 cycle10's H3.a
+#      incorrectly claimed; R-19 stored "12 distinct epH" outcome was from
+#      per-grid-point name/timestamp/output_dir rotation in record_from_artifacts,
+#      not from train.seed). H3.d encodes this.
+#   2. **predicted_returns.npy SHA-256 IS expected to vary per seed** (HMHP-R
+#      has trainable weights; RNG init perturbs trained model). H3.f sanity
+#      checks this.
+#   3. **HMHP-R cascade requirement satisfied**: e5_timebased_60s_v3p0 has
+#      multi-horizon regression_labels.npy [N, 3] for H=[10,60,300]; HMHPConfig
+#      `len(horizons) >= 2` validator (lob-models/.../config/base.py:2089)
+#      passes cleanly.
+#   4. **--bin-seconds=60 MANDATORY** per FIND-NEW-01 sister cycle (commit
+#      `b9a6d6b` lob-backtester 2026-05-16); ZeroDtePnLTransformer fail-fast
+#      without it.
+#   5. **--force flag REQUIRED at sweep launch** — defense-in-depth against
+#      Phase Y cross-cycle dedup. Note: per anti-drift #1, train.seed IS in
+#      dedup fingerprint exclude_keys per `dedup.py:648-697` — sweep cells
+#      DO produce distinct fingerprints because train.seed is NOT in
+#      exclude_keys. --force is belt-and-suspenders.
+#   6. **Output_dir bug systemic** (Cycle 11 anti-drift #10): sweep manifests
+#      overwrite `training/checkpoints/` between cells (architecturally
+#      deferred). Workaround: Phase V.1 L1.2 `signal_export_output_dir` per-
+#      seed preservation. Analyzer reads from ledger records + per-seed
+#      signal_metadata.json (preserved), NOT checkpoints (overwritten —
+#      only LAST seed's checkpoint remains on disk).
+#   7. **H3.a anchor reframed EMPIRICALLY** (Agent Y REFUTE): Stage 6 ran
+#      without explicit FeatureSet wire-in; R-20 sets `feature_set:
+#      nvda_short_term_98_src98_v1` which rotates `feature_layout` field
+#      → DIFFERENT compat_fp from Stage 6's `cdd723ae...`. R-19 cycle10
+#      BUG2-A 2026-05-18 saw identical rotation. H3.a is "all 5 seeds
+#      share IDENTICAL compat_fp; specific value LOCKED post-first-cell
+#      empirically".
+#   8. **δ=12.6 is THIS cycle's baseline** — NOT directly comparable to
+#      Stage 6's 0.3561 (Stage 6 may have used δ=10.0 inherited from base).
+#      H1 absolute floors remain valid; ratio comparison to Stage 6 anchor
+#      is NOT valid.
+#   9. **Stage 6 retro ledger record** (`nvda_hmhp_regression_h10_primary_*
+#      _retro.json`) has compat_fp=None per Agent Y empirical check; Stage 6
+#      signal_metadata.json file empty/missing at expected path. Stage 6
+#      anchor `cdd723ae...` cited in single-seed cycle12 manifest is
+#      UNVERIFIABLE from current filesystem state. Acknowledged + worked
+#      around via empirical H3 reframing.
+#
+# =============================================================================
+# PRE-REGISTERED HYPOTHESES (per hft-rules §13 — LOCKED PRE-RUN)
+# =============================================================================
+#
+#   H1 PRIMARY — Architectural lift floor + TLOB comparison (multi-seed):
+#     H1.a Architectural floor:
+#       mean(test_h10_ic_seeds_43_47) > 0.30
+#       (HMHP-R produces predictive signal at H10 across seed variance.
+#       Stage 6 anchor 0.3561 NOT directly comparable due to δ confound +
+#       feature_set wire-in differences; this is an ABSOLUTE floor, not a
+#       Stage 6-relative claim.)
+#     H1.b Paired-bootstrap CI lower bound (BINDING):
+#       hft_metrics.block_bootstrap_ci(
+#         data=test_h10_ic_seeds_43_47,
+#         statistic_fn=lambda x: np.mean(x),
+#         n_bootstraps=10000,
+#         block_length=1,  # seeds INDEPENDENT, no temporal correlation
+#         paired=False,    # single-array bootstrap mode (v0.1.11 SSoT)
+#         alpha=0.05
+#       ).ci_lower > 0.10
+#       (Generous CI floor; accommodates seed variance per Lesson #107
+#       bimodality precedent in TLOB+focal regime.)
+#     H1.c PARTIAL-LIFT vs TLOB Stage 2 (0.3747):
+#       mean(test_h10_ic_seeds_43_47) > 0.3247 (within 5pp of TLOB)
+#     H1.d CLEAR-LIFT:
+#       mean(test_h10_ic_seeds_43_47) > 0.3747 (above TLOB Stage 2)
+#
+#   H2 MULTI-HORIZON (HMHP-R cascading capability):
+#     H2.a mean(test_h60_ic_seeds_43_47) > 0.10
+#       (Stage 6 was 0.1408; HMHP-R intermediate horizon)
+#     H2.b mean(test_h300_ic_seeds_43_47) > 0.05
+#       (Stage 6 was 0.0820; HMHP-R longest horizon)
+#     H2.c Seed-variance stability:
+#       std(test_h10_ic_seeds_43_47) < 0.040
+#       (Loose 4pp σ floor; HMHP-R + cascading + cross-horizon
+#       consistency loss interaction expected variance ~2-3pp;
+#       INDETERMINATE-DOWNGRADED-NEED-N10 if σ > 0.040.)
+#
+#   H3 ARCHITECTURAL INVARIANT (Phase Y composer correctness):
+#     H3.a All 5 seeds populated compatibility_fingerprint (Phase II
+#       observation tier; not None across all 5)
+#     H3.b All 5 seeds share IDENTICAL compatibility_fingerprint
+#       (corpus + window + normalization + horizons invariant per
+#       CompatibilityContract 11-field SSoT). Specific value LOCKED
+#       post-first-cell completion (empirical anchor, NOT vs Stage 6).
+#     H3.c All 5 seeds populated experiment_provenance_hash (Phase Y
+#       end-to-end functional)
+#     H3.d All 5 seeds share IDENTICAL experiment_provenance_hash
+#       (epH composes 4 fingerprints; NONE depend on train.seed per
+#       composer ground-truth at experiment_record.py:770-782)
+#     H3.e All 5 seeds populated model_config_hash (composed from
+#       arch params filtered by _LOSS_TUNING_KEYS denylist; seed-invariant;
+#       expected ALL IDENTICAL across seeds)
+#     H3.f Predicted-array RNG sanity:
+#       At least 4-of-5 seeds produce DIFFERENT sha256(predicted_returns.npy)
+#       (HMHP-R has trainable weights; RNG actually perturbs the trained
+#       model even though composer fingerprints are seed-invariant)
+#
+#   H4 CONFIRMATION MODULE (HMHP-R unique architectural feature):
+#     H4.a agreement_ratio.npy emitted for all 5 seeds (file exists, shape (N,))
+#     H4.b mean(agreement_ratio) ∈ [0.4, 0.9] for ALL 5 seeds (non-degenerate)
+#     H4.c std(agreement_ratio) > 0.05 for ALL 5 seeds (non-constant)
+#
+#   H5 COST GATE — Backtest tradeability (INFORMATIONAL; NOT binding):
+#     POST-HF-1 cost model (IV=0.25 Deep ITM mode-aware via
+#     OpraCalibratedCosts.deep_itm()). Document mean(OptRet @ deep_itm_1.4bps)
+#     + per-seed WinRate. Per Lesson #106 (cost-floor + architecture-axis
+#     orthogonal): NOT a binding gate. Expected outcome per L106: most likely
+#     INDETERMINATE-COST-INSUFFICIENT (mean negative OR sub-cost-floor); this
+#     does NOT close architectural-line if H1 + H2 + H3 + H4 pass.
+#
+# =============================================================================
+# DECISION MATRIX (LOCKED PRE-RUN)
+# =============================================================================
+#
+#   GO-CLEAR-LIFT — HMHP-R ARCHITECTURALLY SUPERIOR (multi-seed validated):
+#     H1.a + H1.b + H1.d + H2.a/b/c + H3.a/b/c/d/e/f + H4.a/b/c PASS
+#     → HMHP-R cascade dominates TLOB Stage 2; close TLOB-direction
+#     → Next cycle: R-21 feature-axis OR R-22 cost-aware sweep
+#
+#   GO-COMPETITIVE — HMHP-R PARITY (within 5pp of TLOB; multi-seed validated):
+#     H1.a + H1.b + H1.c + H2.a/b/c + H3 + H4 PASS, BUT H1.d FAIL
+#     → HMHP-R competitive; multi-seed variance characterized
+#     → Pivot decision: bundle with R-21 feature-axis OR document architectural
+#       parity + close architecture-axis
+#
+#   PARTIAL-LIFT — HMHP-R signal real but below TLOB band (multi-seed):
+#     H1.a + H1.b + H2.a/b + H3 + H4 PASS, BUT H1.c FAIL
+#     → HMHP-R signal at H10 above floor; underperforms TLOB
+#     → Close TLOB direction; document HMHP-R as cleaner-but-weaker
+#
+#   REFUTE — ARCHITECTURE-AXIS CLOSED (multi-seed REFUTED):
+#     H1.a FAIL (mean(test_h10_ic) ≤ 0.30) OR H1.b FAIL (CI lower ≤ 0.10)
+#     → HMHP-R cannot establish predictive floor under seed perturbation
+#     → Close architecture-axis cleanly; pivot to R-21 reframed feature-axis
+#       OR TB-first-touch (NEW LabelFactory.triple_barrier_from_fp + R-NN)
+#       OR TIER 1 HIGH hygiene cluster
+#
+#   INDETERMINATE-DOWNGRADED-NEED-N10 — Variance assumption falsified:
+#     H2.c FAIL (σ > 0.040) AND H1.a PASS
+#     → N=5 power insufficient; manual follow-up cycle adds seeds 48-52
+#       (cycle12_r20_hmhp_r_multi_seed_n10_extension.yaml)
+#
+#   ABORT — INFRASTRUCTURE REGRESSION:
+#     H3.a OR H3.b OR H3.c FAIL → Phase Y composer regression
+#     H3.d FAIL → train.seed NOW in composer (architectural regression
+#       in hft-contracts since 2026-05-14 d773ac4 commit)
+#     H4.a FAIL → ConfirmationModule wire-up regression in HMHP-R
+#     → Investigate BEFORE issuing scientific verdict
+#
+# =============================================================================
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/cycle12_r20_hmhp_r_multi_seed.yaml
+#   hft-ops sweep run     experiments/sweeps/cycle12_r20_hmhp_r_multi_seed.yaml \
+#                         --gpus 1 --force --on-failure continue
+#   hft-ops sweep results experiments/sweeps/cycle12_r20_hmhp_r_multi_seed.yaml
+#   python hft-ops/scripts/analyze_r20_hmhp_r_multi_seed.py <sweep_id>
+# =============================================================================
+
+experiment:
+  name: "cycle12_r20_hmhp_r_multi_seed"
+  description: >
+    R-20-HMHP-R multi-seed validation cycle. N=5 seeds (43-47) on
+    e5_timebased_60s_v3p0 (98 feat, multi-horizon regression [10,60,300]).
+    Tests cascading-decoder architecture-axis lift per Lesson #12 multi-seed
+    rigor floor + R-16e Lesson #93 precedent. Pre-registered H1.a-d /
+    H2.a-c / H3.a-f / H4.a-c gates LOCKED PRE-RUN. H3 reframed empirically
+    post-first-cell (NOT vs Stage 6 archeology per Wave 2Y REFUTE). δ=12.6
+    THIS cycle's baseline (NOT Stage 6 comparable). H5 COST observational
+    per L106.
+  hypothesis: >
+    H1 PRIMARY: mean(test_h10_ic_seeds_43_47) > 0.30 floor + paired bootstrap
+    CI lower > 0.10. H2: mean(h60) > 0.10 AND mean(h300) > 0.05 AND std(h10)
+    < 0.040. H3: 5 seeds → all populated + 1 IDENTICAL compat_fp/epH/mch +
+    5 distinct pred SHA-256. H4: agreement_ratio.npy emitted + non-degenerate
+    (mean ∈ [0.4, 0.9], std > 0.05). H5: COST observational.
+  contract_version: "3.0"
+  tags:
+    - nvda
+    - cycle12
+    - r20
+    - r20_multi_seed
+    - hmhp_r
+    - cascading-decoder
+    - confirmation-module
+    - multi_seed
+    - architecture-axis
+    - regression
+    - h10
+    - 60s
+    - huber
+    - v3p0
+    - phase_y_composability
+    - tlob-stage-2-comparison
+    - rigor_floor
+
+pipeline_root: ".."
+
+stages:
+  # EXTRACTION DISABLED: e5_timebased_60s_v3p0 already on disk
+  extraction:
+    enabled: false
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s_v3p0.toml"
+    output_dir: "data/exports/e5_timebased_60s_v3p0"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  # VALIDATION DISABLED: IC gate is point-return-oriented; v3p0 smoothed-return
+  # labels via LabelFactory at trainer load-time don't satisfy fast_gate
+  # regression-oriented thresholds. R-19/Stage 6/R-17a precedent.
+  validation:
+    enabled: false
+
+  training:
+    enabled: true
+    horizon_value: 10
+    trainer_config:
+      name: cycle12_r20_hmhp_r_multi_seed_base
+      description: >
+        R-20-HMHP-R multi-seed base trainer config. Inline-merged from
+        r20_hmhp_r_v3p0_h10_primary.yaml _base composition:
+        hmhp_cascade_regression.yaml + nvda_e5_60s.yaml +
+        regression_huber.yaml + regression_default.yaml. Production-scale
+        overrides (epochs=100, patience=15, hmhp_horizons=[10,60,300],
+        hmhp_loss_weights H10-primary, hmhp_primary_horizon_idx=0 EXPLICIT
+        per #PY-43/#PY-57/N4 dormant-bug displacement). δ=12.6 THIS cycle's
+        baseline. Single sweep axis: train.seed.
+
+      data:
+        data_dir: "../data/exports/e5_timebased_60s_v3p0"
+        feature_count: 98
+        feature_set: "nvda_short_term_98_src98_v1"
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+        labels:
+          source: "forward_prices"
+          task: "regression"
+          return_type: "smoothed_return"
+          horizons: [10, 60, 300]
+          primary_horizon_idx: 0
+        cache_in_memory: true
+
+      model:
+        model_type: "hmhp_regression"
+        input_size: 98
+        hmhp_horizons: [10, 60, 300]
+        hmhp_primary_horizon_idx: 0
+        hmhp_loss_weights:
+          H10: 0.50
+          H60: 0.25
+          H300: 0.15
+          consistency: 0.10
+        hmhp_pool_mode: "mean"
+        hmhp_use_confirmation: true
+        hmhp_encoder_hidden_dim: 64
+        hmhp_num_encoder_layers: 2
+        regression_loss_delta: 12.6
+        dropout: 0.1
+
+      train:
+        task_type: "regression"
+        loss_type: "huber"
+        batch_size: 64
+        learning_rate: 1.0e-4
+        weight_decay: 1.0e-5
+        epochs: 100
+        early_stopping_patience: 15
+        gradient_clip_norm: 1.0
+        scheduler: "cosine"
+        num_workers: 0
+        pin_memory: true
+        mixed_precision: false
+        seed: 42
+
+      output_dir: "outputs/experiments/cycle12_r20_hmhp_r_multi_seed_base"
+      log_level: INFO
+      tags:
+        - cycle12
+        - r20_multi_seed
+        - hmhp_r
+        - cascading-decoder
+        - regression
+        - h10
+        - v3p0
+        - tlob-comparison
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_signals.py"
+    checkpoint: "${stages.training.output_dir}/checkpoints/final.pt"
+    split: test
+    output_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_regression_backtest.py"
+    signals_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+    extra_args:
+      - "--exchange"
+      - "XNAS"
+      - "--primary-horizon-idx"
+      - "0"
+      - "--deep-itm"
+      - "--bin-seconds"
+      - "60"
+
+# =============================================================================
+# Sweep definition — 1 axis × 5 seeds = 5 grid points
+# =============================================================================
+
+sweep:
+  name: "cycle12_r20_hmhp_r_multi_seed"
+  strategy: "grid"
+  axes:
+    - name: "train_seed"
+      values:
+        - label: "seed_43"
+          overrides:
+            train.seed: 43
+        - label: "seed_44"
+          overrides:
+            train.seed: 44
+        - label: "seed_45"
+          overrides:
+            train.seed: 45
+        - label: "seed_46"
+          overrides:
+            train.seed: 46
+        - label: "seed_47"
+          overrides:
+            train.seed: 47

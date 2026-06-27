@@ -1,5 +1,7 @@
 # hft-ops — Codebase Reference
 
+> **Pipeline scope (2026-06-02).** This module is part of an **intraday trading research pipeline** — an experiment-first platform for discovering and validating *any* profitable **intraday** trading edge (no overnight positions), across approach classes (microstructure/HFT, scalping, intraday momentum, intraday statistical arbitrage, …) and instruments (equities, futures, same-day options). The pipeline *originated* as a high-frequency NVDA MBO/LOB microstructure system — that origin explains the "HFT" / "LOB" / "MBO" naming here — and that microstructure-direction program is now one (largely-closed) track among many. **Names are historical; the mission is general.** This module's role: the experiment orchestrator — a manifest-driven, subprocess-based multi-stage runner (extraction → analysis → IC-gate → training → signal-export → backtesting) with a JSON ledger, fingerprint dedup, the FeatureSet registry, sweep manifests, and content-addressed caching; the "control panel" for reproducible experiments (extending it to new approach classes is additive — register §9). For the full mission + approach taxonomy + capability-readiness boundary, see root `CLAUDE.md` §Research Scope & Charter (+ `CROSS_ASSET_OFI_FINDINGS_AND_ISSUES_2026_06_01.md` §9).
+
 > **Version**: 0.3.0-dev | **Schema**: 3.0 (Phase G G.6.A bump 2.2 → 3.0 MAJOR per CLAUDE.md root rule: any modification to stable features 0-97 = BREAKING) | **Tests**: 1054 pass (Phase 8B envelope auto-rebuild + Phase 8A scheduler + Phase 8C-α post-stage artifact routing + Phase V.A.4 trust-column harvest + R-NN cycle hygiene cumulative; +421 since 633 banner). | **Last Updated**: 2026-05-21 (Cycle A-rev #PY-341 doc-hygiene bundle — banner refresh per validation cycle Wave 2K finding)
 >
 > **Phase 7.5 SHIPPED (2026-04-23)** — orchestrator integration gaps closed; first `hft-ops validate` + `hft-ops run --dry-run` successful in pipeline history:
@@ -47,7 +49,7 @@
 >
 > **New in 0.2.0**: Sweep/grid expansion (`SweepConfig`, `expand_sweep()`), sweep CLI commands (`hft-ops sweep expand/run/results`), `sweep_id`+`axis_values` on `ExperimentRecord`, shared `utils.py`, `training_config` population in `_record_experiment`.
 
-Central experiment orchestrator for the HFT pipeline. Defines, validates, runs, tracks, and compares experiments across all 7 pipeline modules. Supports parameter sweeps (grid search) from a single YAML manifest.
+Central experiment orchestrator for the intraday trading research pipeline (origin: HFT microstructure). Defines, validates, runs, tracks, and compares experiments across all 7 pipeline modules. Supports parameter sweeps (grid search) from a single YAML manifest.
 
 ---
 

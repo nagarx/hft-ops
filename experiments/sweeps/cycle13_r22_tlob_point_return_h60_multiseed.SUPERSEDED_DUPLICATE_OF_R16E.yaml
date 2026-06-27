@@ -1,0 +1,383 @@
+# =============================================================================
+# R-22 TLOB POINT-RETURN @ H60 — Cycle 13 (multi-seed N=3 power analysis)
+# =============================================================================
+#
+# PURPOSE: Test whether TLOB compact (Stage 2 architecture parity) can capture
+#   point-return signal at H60 on e5_timebased_60s_v3p0. R-22 is the FIRST
+#   label-redesign experiment in pipeline history; directly tests E8
+#   contamination hypothesis ("model captures smoothing residual not point
+#   direction; DA=48.3% on point returns").
+#
+# AUTHORIZATION: User authorized 2026-05-21 LATE NIGHT POST-COMPACT (Option B
+#   from 4-option decision matrix). Selected after 8-agent Wave 1+2 validation:
+#   - Wave 2-A VERIFIED-EXACT R-16d's TLOB×Point×H60 = +0.0570 baseline
+#     (EXPERIMENT_INDEX.md L2295; same corpus + feature_set + Phase Y composer)
+#   - Wave 2-B VERIFIED 5 design drifts D1-D5 in original locked single-seed
+#     design (cycle12_r20 hyperparams ≠ Stage 2 parity)
+#   - Refined to multi-seed N=3 with Stage 2 hyperparameter parity for clean
+#     single-variable A/B test (return_type is the ONLY change vs Stage 2)
+#
+# CYCLE 13 CONTEXT:
+#   - Cycle 12 R-20 (HMHP-R, 2026-05-19): PARTIAL-COMPETITIVE-NOT-TRADEABLE
+#     verdict — confirmed L50 architecture-axis SATURATED on smoothed regression
+#     (TLOB Stage 2 0.3747 ≈ HMHP-R 0.3670 ≈ TemporalRidge 0.328)
+#   - Saturation finding → LABEL REDESIGN is the next experimental direction
+#   - R-22 = first point-return experiment + first label-redesign cycle
+#
+# PRE-IMPL DESIGN REFINEMENTS (from Wave 1+2 Agents 1+5):
+#   D1 G1 anchor: reframed against R-16d's TLOB×Point×H60 = 0.0570 (NOT Stage 2's
+#      smoothed×H10 = 0.3747 — apples-to-oranges). G1 thresholds calibrated to
+#      R-16d baseline + multi-seed variance.
+#   D2 regression_loss_delta=12.6 carryover: PRE-IMPL Agent B MUST empirically
+#      kurtosis-check existing forward_prices.npy point_return @ H60. If
+#      kurtosis differs materially from smoothed×H10 (κ≈26.5), recalibrate δ
+#      OR switch to MSE before launch.
+#   D3 (handled by D1 reframe — G1 anchor against R-16d, not Stage 2)
+#   D4 Hyperparams: Stage 2 EXACT (128/5e-4/30/5/heads=2) — NOT cycle12_r20
+#      production-scale (64/1e-4/100/15). This preserves clean single-variable
+#      A/B test: return_type is the ONLY change vs Stage 2's e5_60s_huber_nocvml.
+#   D5 tlob_num_heads=2 (Stage 2 parity) — #PY-236 paper-canonical heads=1 was
+#      for R-19 Logistic, not applicable here.
+#
+# CRITICAL EMPIRICAL CONTEXT (Wave 2-A verified):
+#   - R-16d (cycle8_r16d_horizon_axis, 2026-05-13) ALREADY ran TLOB×Point×H60
+#     on this corpus with feature_set=nvda_short_term_98_src98_v1 and got
+#     test_h60_ic=+0.0570 (single-seed; ~4 min training in 50 min sweep)
+#   - R-22 differs from R-16d ONLY in: (a) N=3 multi-seed, (b) Stage 2 hyperparams
+#     (128/5e-4/30/5 vs unknown but likely shorter), (c) explicit feature_set
+#     pinning for Phase Y composer epH activation
+#   - Per hft-rules §13 "Never repeat a failed approach without new evidence":
+#     R-22's NEW EVIDENCE is (a) statistical-rigor multi-seed, (b) full
+#     Stage 2 training budget, (c) Phase Y composer end-to-end activation
+#
+# **ANTI-DRIFT (preserve through compaction)**:
+#   1. e5_60s_v3p0 corpus is read-only; do NOT re-extract
+#   2. point_return is RUNTIME-DISPATCHED via LabelFactory.multi_horizon from
+#      existing forward_prices.npy (verified L83 architectural lesson; saves
+#      2-3 hr vs re-extraction)
+#   3. CompatibilityContract for R-22 will DIFFER from Stage 2 (return_type
+#      mutates compat_fp via label_strategy_hash) — EXPECTED compat_fp =
+#      44d3a00a883ef869073b585164c8785e46070a3fea7bc58de54c5829b81fc177
+#      (cycle5 TLOB×point×H60 anchor; Agent 5 verified)
+#   4. model_config_hash for R-22 will DIFFER from Stage 2 (return_type +
+#      hyperparams participate) — NEW value, not Stage 2's de47c0ef...
+#   5. Per L52 13-cycle Wave 2 REFUTE pattern: pre-impl 3-agent gate is
+#      MANDATORY per saved feedback memory before sweep launch
+#   6. seeds [42, 43, 44]: seed=42 may share fingerprint shape with R-16d's
+#      seed=42 BUT hyperparams differ (epochs 30 vs ~4-min cell) → distinct
+#      fingerprint → no dedup collision (verified Agent 5 dedup blacklist)
+#
+# =============================================================================
+# PRE-REGISTERED GATES (LOCKED BEFORE RUN per hft-rules §13)
+# =============================================================================
+#
+#   G1 PRIMARY — Point-return predictive signal at H60 (multi-seed N=3):
+#     G1.a FLOOR: mean(test_h60_ic across N=3) > 0.04
+#                  (>1σ above R-16d single-seed 0.057 noise floor)
+#     G1.b PARTIAL-LIFT: mean > 0.07 AND std < 0.025
+#                  (consistent moderate signal; meaningful lift over
+#                   R-16d's 0.057 baseline; low cross-seed variance)
+#     G1.c CLEAR-LIFT: mean > 0.10 AND min > 0.07
+#                  (strong consistent signal across all 3 seeds; surprises
+#                   E8 hypothesis)
+#
+#   G2 COMMERCIAL — Tradeability at deep_itm_1.4bps cost-aware threshold:
+#     G2.a NON-NEGATIVE: best mean OptRet across 8 thresholds > 0.00%
+#                        (per-seed average; at least 1 threshold non-negative)
+#     G2.b PROFITABLE: G2.a PASS AND G1.b PASS (signal exists AND tradeable)
+#
+#   G3 IDENTITY — Phase Y composer end-to-end activation:
+#     G3.a compat_fp: populated 3/3 records, value = 44d3a00a883ef869...
+#                     (cycle5 TLOB×point×H60 anchor; corpus + label-axis identity)
+#     G3.b model_config_hash: populated 3/3 records, single value (Stage 2 hyperparams
+#                              + point_return → distinguishable from Stage 2's smoothed)
+#     G3.c experiment_provenance_hash: populated 3/3 records (NON-NULL, 64-hex)
+#                                       — Phase Y composer 4-component chain works
+#
+#   G4 E8 ESCAPE HATCH (NEW interpretation gate — interprets E8 hypothesis):
+#     G4.a SUCCESS: G1.b PASS AND G2.a PASS → E8 escape achieved
+#         (point-return IS tradeable at H60 with proper training; CLAUDE.md
+#          E8 finding's DA=48.3% disproven by R-22 evidence)
+#     G4.b CONFIRMED: G1.a FAIL → E8 root cause confirmed
+#         (label-execution mismatch is THE bottleneck; close point-return
+#          direction; pivot to triple-barrier WIDER (10/5 or 20/10 bps —
+#          untested per #PY-217) or feature-set work)
+#     G4.c INDETERMINATE: G1.a PASS BUT G1.b FAIL → signal exists but not robust
+#         (high variance across seeds; need N=5+ follow-up OR pivot)
+#
+# =============================================================================
+# DECISION MATRIX (LOCKED PRE-RUN)
+# =============================================================================
+#
+#   GO-CLEAR-LIFT — Point-return @ H60 IS tradeable; pivot paradigm:
+#     G1.c PASS AND G2.b PASS AND G3.a/b/c PASS
+#     → NEW SCIENCE; subsequent cycles pivot to point-return paradigm
+#     → Next cycle: HMHP-R × point_return + multi-seed N=5 confirmation
+#
+#   GO-PARTIAL-LIFT — Moderate evidence; needs replication:
+#     G1.b PASS AND G2.a PASS AND G3.a/b/c PASS
+#     → N=5 multi-seed follow-up to tighten variance estimate
+#
+#   INDETERMINATE-FLOOR — Signal exists but weak/unreliable:
+#     G1.a PASS BUT G1.b FAIL + G3.a/b/c PASS
+#     → Pivot to wider TB barriers (10/5 or 20/10 bps, untested per #PY-217)
+#       OR pivot to different feature set (148-feat post BG-scan completion)
+#
+#   REFUTE — E8 root cause confirmed; close direction:
+#     G1.a FAIL (mean test_h60_ic < 0.04)
+#     → E8 label-execution mismatch is THE bottleneck
+#     → Close point-return direction
+#     → Pivot to: (a) triple-barrier WIDER untested per #PY-217, (b) 148-feat
+#       experimental features (BG scan completion), (c) within-day adaptive
+#       model (E13 Lesson 18 hint)
+#
+#   ABORT — INFRASTRUCTURE REGRESSION:
+#     G3.a FAIL (compat_fp drift) OR G3.c FAIL (epH NULL)
+#     → Phase Y composer regression between R-16d (2026-05-13) and now
+#     → Investigate BEFORE issuing scientific verdict
+#
+# =============================================================================
+# COMPUTE BUDGET
+# =============================================================================
+#
+#   Training (TLOB compact 92K params, MPS, e5_60s_v3p0, 30 epochs × 3 seeds):
+#     ~25-35 min per seed × 3 = ~75-105 min total
+#   Signal export + backtest (3 seeds): ~30-45 min
+#   Analyzer + ledger + commits + push: ~2 hr
+#   TOTAL: ~3.5-5 hr (within typical 5-7 hr budget)
+#
+# =============================================================================
+# OPERATIONAL REQUIREMENTS
+# =============================================================================
+#
+#   **--force flag**: NOT required. seeds [42, 43, 44] have DISTINCT fingerprints
+#     from R-16d (epochs/batch/lr differ) → no dedup collision.
+#
+#   **Cost-model anchor**: POST-HF-1 (IV=0.25 mode-aware Deep ITM via
+#     OpraCalibratedCosts.deep_itm() factory; HF-1 commit 175307c shipped
+#     2026-05-16 LATE NIGHT). --bin-seconds=60 MANDATORY per FIND-NEW-01
+#     closure commit b9a6d6b.
+#
+#   **Analyzer**: NEW analyze_r22_multi_seed.py (pre-impl Agent C will design;
+#     ~300-500 LOC; reuses r16d_analysis.py + r16e_analysis.py patterns).
+#
+# =============================================================================
+# Usage:
+#   hft-ops sweep expand  experiments/sweeps/cycle13_r22_tlob_point_return_h60_multiseed.yaml
+#   hft-ops sweep run     experiments/sweeps/cycle13_r22_tlob_point_return_h60_multiseed.yaml --gpus 1
+#   hft-ops sweep results experiments/sweeps/cycle13_r22_tlob_point_return_h60_multiseed.yaml
+#   python hft-ops/scripts/analyze_r22_multi_seed.py <sweep_id>
+# =============================================================================
+
+experiment:
+  name: "cycle13_r22_tlob_point_return_h60_multiseed"
+  description: >
+    R-22 TLOB point-return @ H60 multi-seed N=3 power analysis on
+    e5_timebased_60s_v3p0. FIRST label-redesign experiment in pipeline history.
+    Stage 2 hyperparameter parity (128/5e-4/30/5/heads=2/~92K params) preserves
+    clean single-variable A/B test: return_type is the ONLY change vs Stage 2.
+    Directly tests E8 contamination hypothesis (CLAUDE.md "model captures
+    smoothing residual not point direction; DA=48.3%"). Multi-seed N=3
+    produces variance-stabilized verdict; sole prior R-16d single-seed result
+    was test_h60_ic=0.057 (sits in INDETERMINATE band).
+  hypothesis: >
+    G1 PRIMARY (3-band): mean(test_h60_ic across N=3) > 0.04 FLOOR / 0.07
+    PARTIAL-LIFT (std<0.025) / 0.10 CLEAR-LIFT (min>0.07). G2 COMMERCIAL: best
+    mean OptRet > 0% at any of 8 thresholds. G3 IDENTITY: 3/3 records populate
+    compat_fp=44d3a00a883ef869... + model_config_hash + experiment_provenance_hash.
+    G4 E8 ESCAPE HATCH: G1.b+G2.a PASS → E8 escape; G1.a FAIL → E8 root cause
+    confirmed; G1.a PASS but G1.b FAIL → INDETERMINATE.
+  contract_version: "3.0"
+  tags:
+    - nvda
+    - cycle13
+    - r22
+    - tlob
+    - point_return
+    - h60
+    - multi_seed
+    - 60s
+    - huber
+    - v3p0
+    - phase_y_composability
+    - label_redesign
+    - e8_hypothesis_test
+    - stage_2_hyperparameter_parity
+
+pipeline_root: ".."
+
+stages:
+  # EXTRACTION DISABLED: e5_timebased_60s_v3p0 already on disk (Stage 2 corpus).
+  # Per L83: point_return is RUNTIME-DISPATCHED via LabelFactory.multi_horizon
+  # from existing forward_prices.npy — NO re-extraction needed.
+  extraction:
+    enabled: false
+    skip_if_exists: true
+    config: "feature-extractor-MBO-LOB/configs/e5_timebased_60s_v3p0.toml"
+    output_dir: "data/exports/e5_timebased_60s_v3p0"
+
+  raw_analysis:
+    enabled: false
+
+  dataset_analysis:
+    enabled: false
+
+  # VALIDATION DISABLED: IC gate (fast_gate) is regression-oriented for
+  # point-return labels at LOAD time, but v3p0 corpus exports
+  # regression_labels.npy via LabelFactory.multi_horizon RUNTIME dispatch
+  # — IC gate cannot meaningfully validate without re-computing labels which
+  # IS what training does. Per cycle12_r20 + R-17a/R-19 precedent.
+  validation:
+    enabled: false
+
+  training:
+    enabled: true
+    horizon_value: 60   # H60 primary (idx=1 in [10,60,300])
+    trainer_config:
+      name: cycle13_r22_tlob_point_return_h60_base
+      description: >
+        R-22 TLOB point-return base. Inline-merged from Stage 2 base composition
+        (tlob_compact_regression + nvda_e5_60s + regression_huber +
+        regression_default) with R-22-specific overrides: return_type=point_return,
+        primary_horizon_idx=1 (H60), labels.source=forward_prices.
+        Stage 2 hyperparam parity: batch=128/lr=5e-4/epochs=30/patience=5/heads=2.
+
+      data:
+        # From nvda_e5_60s.yaml base:
+        data_dir: "../data/exports/e5_timebased_60s_v3p0"
+        feature_count: 98
+        # Phase Y composer requirement (G3 IDENTITY gate). Content_hash:
+        # 122fe5cbfb657bf91dddeef4e687f7d8d6f120ccd67b7ce57528063bf62e43d2
+        # (Agent 5 verified). Matches indices 0-97 / SFC=98 / cv=3.0.
+        feature_set: "nvda_short_term_98_src98_v1"
+        sequence:
+          window_size: 20
+          stride: 1
+        normalization:
+          strategy: hybrid
+          eps: 1.0e-8
+          clip_value: 10.0
+          exclude_features: [93]
+        labels:
+          # LabelFactory.multi_horizon runtime dispatch (L83 architectural
+          # lesson — NO re-extraction needed; reads forward_prices.npy
+          # at trainer load-time):
+          source: "forward_prices"
+          task: "regression"
+          return_type: "point_return"   # THE one-variable change vs Stage 2
+          horizons: [10, 60, 300]
+          primary_horizon_idx: 1        # H60 (idx=1) per user authorization
+        cache_in_memory: true
+
+      model:
+        model_type: "tlob"
+        input_size: 98
+        # Stage 2 architecture parity (~92K params; CONFIRMED via
+        # tlob_compact_bare.yaml + tlob_compact_regression.yaml):
+        tlob_hidden_dim: 32
+        tlob_num_layers: 2
+        tlob_num_heads: 2              # Stage 2 parity (NOT #PY-236's 1)
+        tlob_mlp_expansion: 4.0
+        tlob_use_sinusoidal_pe: true
+        tlob_use_bin: true
+        tlob_dataset_type: "nvda"
+        tlob_use_cvml: false
+        tlob_cvml_out_channels: 0
+        # Regression loss settings (Stage 2 carryover; PRE-IMPL Agent B MUST
+        # kurtosis-verify on existing forward_prices.npy point_return @ H60.
+        # If κ differs from smoothed×H10 (26.5), recalibrate δ OR MSE):
+        regression_loss_type: "huber"
+        regression_loss_delta: 12.6
+        dropout: 0.1
+        task_type: "regression"
+        num_classes: 3
+
+      train:
+        # Stage 2 PARITY (NOT cycle12_r20 production-scale):
+        task_type: "regression"
+        loss_type: "huber"
+        batch_size: 128
+        learning_rate: 5.0e-4
+        weight_decay: 0.01
+        epochs: 30
+        early_stopping_patience: 5
+        gradient_clip_norm: 1.0
+        scheduler: "cosine"
+        num_workers: 0
+        pin_memory: false
+        mixed_precision: false
+        seed: 42   # Overridden per-seed by sweep axis below
+
+      output_dir: "outputs/experiments/cycle13_r22_tlob_point_return_h60_base"
+      log_level: INFO
+      tags:
+        - cycle13
+        - r22
+        - tlob
+        - point_return
+        - h60
+        - multi_seed
+        - v3p0
+        - stage_2_parity
+        - e8_hypothesis_test
+
+    overrides:
+      data.data_dir: "${stages.extraction.output_dir}"
+
+    output_dir: "hft-ops/ledger/runs/${experiment.name}_${timestamp}"
+
+  signal_export:
+    enabled: true
+    script: "lob-model-trainer/scripts/export_signals.py"
+    checkpoint: "${stages.training.output_dir}/checkpoints/best.pt"
+    split: test
+    output_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+
+  backtesting:
+    enabled: true
+    script: "lob-backtester/scripts/run_regression_backtest.py"
+    signals_dir: "outputs/experiments/${sweep.point_name}/signals/test"
+    # POST-HF-1 cost-model anchor (IV=0.25 Deep ITM mode-aware via
+    # OpraCalibratedCosts.deep_itm() factory; HF-1 commit 175307c shipped
+    # 2026-05-16 LATE NIGHT). --bin-seconds=60 MANDATORY per FIND-NEW-01
+    # closure commit b9a6d6b (sister-cycle).
+    extra_args:
+      - "--exchange"
+      - "XNAS"
+      - "--primary-horizon-idx"
+      - "1"             # H60 (idx=1 in regression_labels.npy [N, 3])
+      - "--deep-itm"    # POST-HF-1 IV=0.25 mode-aware Deep ITM cost
+      - "--bin-seconds"
+      - "60"            # MANDATORY post FIND-NEW-01 (b9a6d6b)
+
+# =============================================================================
+# Sweep definition — single-axis multi-seed (N=3 power analysis)
+# =============================================================================
+#
+# Seed choice rationale:
+#   - seeds [42, 43, 44]: NEW evidence relative to R-16d (different hyperparams
+#     → distinct fingerprints → no dedup collision)
+#   - seed=42 in R-22 ≠ seed=42 in R-16d because epochs 30 vs ~4 min, batch 128
+#     vs unknown, lr 5e-4 vs unknown — DIFFERENT trainer_config dict
+#   - N=3 balances rigor (per L12 multi-seed mandate) vs compute budget
+#     (~3.5-5 hr total within typical session)
+#   - Per Agent 2 outcome probabilities: 80% REFUTE / 10% INDETERMINATE / 5% GO
+#     / 5% SURPRISE — multi-seed CI bound RESOLVES the borderline-INDETERMINATE
+#     case definitively in single cycle
+# =============================================================================
+
+sweep:
+  name: "cycle13_r22_tlob_point_return_h60_multiseed"
+  strategy: "grid"
+  axes:
+    - name: "train_seed"
+      values:
+        - label: "seed_42"
+          overrides:
+            train.seed: 42
+        - label: "seed_43"
+          overrides:
+            train.seed: 43
+        - label: "seed_44"
+          overrides:
+            train.seed: 44

@@ -1,6 +1,6 @@
 # Experiment Guide
 
-How to create, run, track, and compare experiments across the full HFT pipeline.
+How to create, run, track, and compare experiments across the full intraday trading research pipeline (origin: HFT microstructure).
 
 ---
 

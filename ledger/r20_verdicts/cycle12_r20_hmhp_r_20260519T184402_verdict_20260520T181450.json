@@ -1,0 +1,97 @@
+{
+  "agreement_mean": 0.9973613689472149,
+  "agreement_std": 0.029539486420790923,
+  "backtest_opt_ret": null,
+  "backtest_win_rate": null,
+  "compat_fp": "0ccd9f90bca06c868607b6520653e195d909a7fe6083a7aa29e7b8e02c2be160",
+  "experiment_provenance_hash": "9c28e966ba45df4214c24e6bbee0ada2c54b87cdbd6357a10ef910ba045d08a1",
+  "gates": {
+    "H1.a_floor": {
+      "actual": 0.3669683827938681,
+      "name": "H1.a_floor",
+      "notes": "test_h10_ic=0.3670 > 0.3 (Stage 6 floor)",
+      "passed": true,
+      "threshold": 0.3
+    },
+    "H1.b_partial_lift": {
+      "actual": 0.3669683827938681,
+      "name": "H1.b_partial_lift",
+      "notes": "test_h10_ic=0.3670 > 0.3247 (TLOB - 5pp)",
+      "passed": true,
+      "threshold": 0.3247
+    },
+    "H1.c_clear_lift": {
+      "actual": 0.3669683827938681,
+      "name": "H1.c_clear_lift",
+      "notes": "test_h10_ic=0.3670 > 0.3747 (clear lift)",
+      "passed": false,
+      "threshold": 0.3747
+    },
+    "H2.a_h60": {
+      "actual": 0.13034206578007504,
+      "name": "H2.a_h60",
+      "notes": "test_h60_ic=0.1303 > 0.1",
+      "passed": true,
+      "threshold": 0.1
+    },
+    "H2.b_h300": {
+      "actual": 0.08179651261685209,
+      "name": "H2.b_h300",
+      "notes": "test_h300_ic=0.0818 > 0.05",
+      "passed": true,
+      "threshold": 0.05
+    },
+    "H3.a_compat_fp": {
+      "actual": "0ccd9f90bca06c868607b6520653e195d909a7fe6083a7aa29e7b8e02c2be160",
+      "name": "H3.a_compat_fp",
+      "notes": "compat_fp=0ccd9f90bca06c86... matches \u03b3-1 LITE anchor (2026-05-10+ era; corpus IDENTITY preserved)",
+      "passed": true,
+      "threshold": null
+    },
+    "H3.b_mch_observational": {
+      "actual": "be5ab20ae5d2b3675d0c1d35762a0102192fcc6e892e60cbd06c143bee1f6154",
+      "name": "H3.b_mch_observational",
+      "notes": "mch=be5ab20ae5d2b3675d0c1d35762a0102192fcc6e892e60cbd06c143bee1f6154; OBSERVATIONAL not gate per design",
+      "passed": true,
+      "threshold": null
+    },
+    "H3.c_eph_populated": {
+      "actual": "9c28e966ba45df4214c24e6bbee0ada2c54b87cdbd6357a10ef910ba045d08a1",
+      "name": "H3.c_eph_populated",
+      "notes": "epH=9c28e966ba45df4214c24e6bbee0ada2c54b87cdbd6357a10ef910ba045d08a1",
+      "passed": true,
+      "threshold": null
+    },
+    "H4.a_emitted": {
+      "actual": true,
+      "name": "H4.a_emitted",
+      "notes": "agreement_ratio.npy file exists",
+      "passed": true,
+      "threshold": null
+    },
+    "H4.b_mean_band": {
+      "actual": 0.9973613689472149,
+      "name": "H4.b_mean_band",
+      "notes": "mean(agreement)=0.9974 \u2208 [0.4, 0.9]",
+      "passed": false,
+      "threshold": null
+    },
+    "H4.c_std_min": {
+      "actual": 0.029539486420790923,
+      "name": "H4.c_std_min",
+      "notes": "std(agreement)=0.0295 > 0.05",
+      "passed": false,
+      "threshold": 0.05
+    }
+  },
+  "model_config_hash": "be5ab20ae5d2b3675d0c1d35762a0102192fcc6e892e60cbd06c143bee1f6154",
+  "signal_metadata_path": "/Users/knight/code_local/HFT-pipeline-v2/outputs/experiments/seed_42/signals/test/signal_metadata.json",
+  "sweep_id": "cycle12_r20_hmhp_r_20260519T184402",
+  "test_h10_ic": 0.3669683827938681,
+  "test_h300_ic": 0.08179651261685209,
+  "test_h60_ic": 0.13034206578007504,
+  "timestamp_utc": "2026-05-20T18:14:50.570532+00:00",
+  "training_record_path": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/records/cycle12_r20_hmhp_r__seed_42_20260519T190728_5d186966.json",
+  "verdict": "INDETERMINATE",
+  "verdict_summary": "Mixed gate outcomes \u2014 review per-gate detail and decide next direction manually."
+}
