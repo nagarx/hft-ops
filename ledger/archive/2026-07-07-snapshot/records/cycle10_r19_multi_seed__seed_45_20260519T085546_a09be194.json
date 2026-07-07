@@ -1,0 +1,169 @@
+{
+  "artifacts": [],
+  "axis_values": {
+    "train_seed": "seed_45"
+  },
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": "8f1148de02ad446efdcd613a3c05b00b55439740d48c03101978eaf2a5c2c353",
+  "contract_version": "3.0",
+  "created_at": "2026-05-19T08:55:46.092725+00:00",
+  "dataset_health": {},
+  "description": "#PY-243 R-19 multi-seed validation cycle. N=5 seeds (43-47) on R-19's TLOB + TB v3p0 architecture. Tests whether R-19's single-seed +4.9pp PT precision lift over R-17a survives perturbation. Per Lesson #12 mandatory + R-16e #93 precedent. Pre-registered H1.a/b/c + H2 + H3 + decision matrix locked PRE-RUN per saved feedback memory pre-impl adversarial gate (3 parallel agents 2026-05-16 LATE NIGHT). GO \u2192 Phase 2 TB unblocked with informed prior; REFUTE \u2192 pivot to R-20 HMHP OR R-18 cost-aware sweep; INDETERMINATE \u2192 manual N=10 extension.\n",
+  "duration_seconds": 4202.14841262484,
+  "experiment_id": "cycle10_r19_multi_seed__seed_45_20260519T085546_a09be194",
+  "experiment_provenance_hash": "27244be31b8af3744dcd1c10c2004fd1bf6609417ddac7ae7d388f4b02aeda5d",
+  "extraction_config": {},
+  "feature_set_ref": {
+    "content_hash": "122fe5cbfb657bf91dddeef4e687f7d8d6f120ccd67b7ce57528063bf62e43d2",
+    "name": "nvda_r19_tb_v3p0_98feat_v1"
+  },
+  "fingerprint": "a09be19403561dcec31db1cb4d55b05c96a70df94a1d7d39ab94a61fbf4cd9b1",
+  "gate_reports": {},
+  "hypothesis": "H1 PRIMARY: mean(PT_precision_seeds_43_47) within \u00b12.0pp of R-19's 0.269 AND bootstrap CI lower > 0.220 R-17a baseline AND CI lower > 0.2681 cost-floor (informational). H2 BASELINE: mean > 0.220 AND std < 0.020. H3 INVARIANT: 5 distinct epH, 1 compat_fp = R-19's, 1 mch = R-19's. M5 interim-analysis: if \u03c3 > 4% post-run, downgrade verdict to INDETERMINATE-NEED-N10.\n",
+  "manifest_path": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/experiments/sweeps/cycle10_r19_multi_seed.yaml",
+  "name": "cycle10_r19_multi_seed__seed_45",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {
+      "extractor": "6f13a0798d0299600e08c49db86bfa0969aec1a4bd113d265ba8d8c6709fa451",
+      "manifest": "9e340bf535edbe2e233fa54103e2e8b687a7f8079ec318a0e77428093241e3c2",
+      "trainer": "69d6075d8c0b5ea94481bcf81f7527f341a03686c840b41cc1a7f82ecb314a6d"
+    },
+    "contract_version": "3.0",
+    "data_dir_hash": "31edb15462fc183cf9d505809fc3713cd92c9a86c1f59ad469fad36a101d1108",
+    "git": {
+      "branch": "",
+      "commit_hash": "not_git_tracked",
+      "dirty": false,
+      "short_hash": "not_git_"
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": "2026-05-19T08:55:46.108409+00:00"
+  },
+  "record_type": "training",
+  "signal_export_output_dir": "/Users/knight/code_local/HFT-pipeline-v2/outputs/experiments/seed_45/signals/test",
+  "stages_completed": [
+    "training",
+    "signal_export",
+    "backtesting"
+  ],
+  "status": "completed",
+  "sub_records": [],
+  "sweep_failure_info": {},
+  "sweep_id": "cycle10_r19_multi_seed_20260518T222513",
+  "tags": [
+    "nvda",
+    "cycle10",
+    "r19",
+    "py243",
+    "multi_seed",
+    "tlob",
+    "triple_barrier",
+    "tb_v3p0",
+    "validation",
+    "phase_y_composability",
+    "rigor_floor",
+    "architectural_lift"
+  ],
+  "training_config": {
+    "data": {
+      "cache_in_memory": true,
+      "data_dir": "../data/exports/nvda_v3p0_tb_pt40_sl20_h30",
+      "feature_count": 98,
+      "feature_set": "nvda_r19_tb_v3p0_98feat_v1",
+      "labeling_strategy": "triple_barrier",
+      "labels": {
+        "source": "precomputed",
+        "task": "classification"
+      },
+      "normalization": {
+        "clip_value": 10.0,
+        "eps": 1e-08,
+        "exclude_features": [
+          93
+        ],
+        "strategy": "hybrid"
+      },
+      "num_classes": 3,
+      "sequence": {
+        "stride": 1,
+        "window_size": 20
+      }
+    },
+    "description": "R-19 multi-seed base. Inline-merged from r19_tlob_tb_v3p0_h30.yaml _base composition: nvda_98feat_triple_barrier.yaml + triple_barrier_volscaled.yaml + classification_triple_barrier.yaml + r19 overrides. Single axis: train.seed.\n",
+    "log_level": "INFO",
+    "model": {
+      "dropout": 0.1,
+      "input_size": 98,
+      "model_type": "tlob",
+      "num_classes": 3,
+      "tlob_dataset_type": "nvda",
+      "tlob_hidden_dim": 40,
+      "tlob_mlp_expansion": 4.0,
+      "tlob_num_heads": 1,
+      "tlob_num_layers": 4,
+      "tlob_use_bin": true,
+      "tlob_use_sinusoidal_pe": true
+    },
+    "model_config_hash": "2dc7eeef5192db921ed348364fb4c76fbc5e3e917a69929791e016a99ee16a0e",
+    "name": "cycle10_r19_multi_seed_base",
+    "output_dir": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513",
+    "tags": [
+      "cycle10",
+      "r19",
+      "py243",
+      "multi_seed",
+      "tlob",
+      "tb_v3p0",
+      "classification"
+    ],
+    "train": {
+      "batch_size": 64,
+      "early_stopping_patience": 15,
+      "epochs": 100,
+      "focal_gamma": 2.0,
+      "gradient_clip_norm": 1.0,
+      "learning_rate": 0.0001,
+      "loss_type": "focal",
+      "mixed_precision": false,
+      "num_workers": 0,
+      "pin_memory": true,
+      "scheduler": "cosine",
+      "seed": 45,
+      "task_type": "multiclass",
+      "use_class_weights": true,
+      "weight_decay": 1e-05
+    }
+  },
+  "training_metrics": {
+    "_trainer_config_source": "inline",
+    "best_val_accuracy": 0.5903638848119844,
+    "best_val_loss": 0.3672090613550609,
+    "best_val_macro_f1": 0.5161777157121851,
+    "best_val_signal_rate": 0.6580798623412116,
+    "test_accuracy": 0.5367848970251716,
+    "test_decisive_prediction_rate": 0.5449656750572083,
+    "test_loss": 0.0,
+    "test_macro_f1": 0.49215977778743647,
+    "test_macro_precision": 0.49467215578794455,
+    "test_macro_recall": 0.5218180980541182,
+    "test_predicted_trade_win_rate": 0.23493596472811254,
+    "test_profittarget_f1": 0.3604372167422021,
+    "test_profittarget_precision": 0.2792234613795952,
+    "test_profittarget_recall": 0.5082706766917293,
+    "test_signal_rate": 0.5449656750572083,
+    "test_stoploss_f1": 0.38261617900172123,
+    "test_stoploss_precision": 0.47459436379163106,
+    "test_stoploss_recall": 0.3205017301038062,
+    "test_timeout_f1": 0.733425937618386,
+    "test_timeout_precision": 0.7301986421926074,
+    "test_timeout_recall": 0.7366818873668188,
+    "test_true_decisive_rate": 0.5489702517162471,
+    "test_true_signal_rate": 0.5489702517162471,
+    "test_true_win_rate": 0.27719883284701957
+  }
+}

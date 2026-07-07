@@ -2,13 +2,15 @@
 (``<tree>/**/results/*.json``) and normalizes each via the shared
 ``discovery_verdict`` adapters into ``Verdict``s.
 
-Scope: the reader scans EXACTLY the trees in ``DISCOVERY_TREES`` (the 5
-root-allowlisted harnesses) — it does NOT "fuse every harness on disk".
-``crypto_discovery/`` and ``multiday_discovery/`` are deliberately NOT
-scanned: adding them is a Phase-3 change that MUST ship together with a
-``.venv``/``site-packages`` path guard, because their embedded virtualenvs
-contain third-party test fixtures matching ``**/results/*.json`` (e.g.
-statsmodels) that would inject phantom UNRESOLVED rows.
+Scope: the reader scans EXACTLY the trees in ``DISCOVERY_TREES`` (the 7
+root-allowlisted harnesses; ``crypto_discovery``/``multiday_discovery`` added
+in curation Phase 3, 2026-07-07) — it does NOT "fuse every harness on disk".
+A ``SKIP_PATH_PARTS`` guard drops any results-glob hit under a ``.venv``/
+``site-packages`` path component BEFORE parsing: ``crypto_discovery/.venv``
+embeds third-party test fixtures matching ``**/results/*.json`` (statsmodels)
+that would otherwise inject phantom UNRESOLVED rows. ``pead_discovery`` is
+design-only today (has never emitted a ``results/`` dir) and is kept in scope
+as a zero-cost no-op so a future run is picked up without a code change.
 
 Torch-free: imports ONLY ``discovery_verdict`` (stdlib-only) + stdlib. Read-only:
 it touches no harness code or output (the harnesses don't expose importable
@@ -27,25 +29,41 @@ from discovery_verdict import KNOWN_ADAPTERS, Verdict, normalize_verdict
 class DiscoveryVerdictReader:
     """Reads ``<repo_root>/<tree>/**/results/*.json`` -> ``list[Verdict]``.
 
-    Skips internals (``_``-prefixed) + a filename denylist (feature dumps, re-run
-    snapshots, SUPERSEDED/VOID verdicts, non-verdict result artifacts) + a glob
-    denylist (sharded data caches like ``nvda_atm_iv.shard0of4.json`` that share
-    the ``results/`` dir but are NOT verdicts). ``include_gate_outs=False`` drops
+    Skips any hit under a ``.venv``/``site-packages`` path component
+    (``SKIP_PATH_PARTS`` — embedded-virtualenv third-party fixtures, dropped
+    BEFORE parsing) + internals (``_``-prefixed) + a filename denylist (feature
+    dumps, re-run snapshots, SUPERSEDED/VOID verdicts, non-verdict result
+    artifacts) + a glob denylist (sharded data caches like
+    ``nvda_atm_iv.shard0of4.json`` that share the ``results/`` dir but are NOT
+    verdicts). ``include_gate_outs=False`` drops
     ``GATED_OUT`` verdicts. A per-file parse/normalize failure is recorded into
     ``read_errors`` and skipped, never raised.
     """
 
-    # The FULL scan scope — the 5 root-allowlisted harnesses only. crypto_discovery/
-    # and multiday_discovery/ are NOT scanned (see module docstring: Phase-3 addition
-    # requires a .venv/site-packages guard first).
+    # The FULL scan scope — the 7 root-allowlisted harnesses. crypto_discovery/
+    # + multiday_discovery/ added in curation Phase 3 (2026-07-07) together with
+    # the SKIP_PATH_PARTS guard (crypto's embedded .venv would otherwise leak
+    # statsmodels test fixtures into the scan). pead_discovery is design-only
+    # (no results/ ever emitted) — scanned as a zero-cost no-op, not a blindspot.
     DISCOVERY_TREES = (
         "glbx_discovery",
         "xsec_equity_discovery",
         "nvda_discovery",
         "opra_discovery",
         "pead_discovery",
+        "crypto_discovery",
+        "multiday_discovery",
     )
     SKIP_PREFIXES = ("_",)
+    # Path-component guard (checked FIRST, before any basename rule and before
+    # parsing): a **/results/*.json hit whose path contains a `.venv` or
+    # `site-packages` component is an embedded-virtualenv third-party file,
+    # never a harness verdict. crypto_discovery/.venv ships statsmodels test
+    # fixtures (influence_lsdiag_R.json, fit_ets_results*.json) matching the
+    # scan glob; without this guard they render as phantom UNRESOLVED rows via
+    # the CommonCoreAdapter catch-all. Component matching (exact dir-name
+    # equality via Path.parts, not substring) — `my.venv-notes/` never false-hits.
+    SKIP_PATH_PARTS = (".venv", "site-packages")
     # Filename denylist (basename match, checked before parsing). Three classes:
     #   1. Feature dumps / re-run snapshots — not verdicts.
     #   2. SUPERSEDED / VOID verdicts — ``variance_dl_verdict.json``
@@ -71,6 +89,7 @@ class DiscoveryVerdictReader:
             "frozen_scale_model.json",  # nvda conditional_scale_variance model freeze
             "strike_grids.json",  # nvda expiry_friday_memo strike-grid data
             "nvda_0dte_iv.json",  # nvda iv_noninertness IV panel cache
+            "nvda_0dte_atm_iv.json",  # multiday vrp_0dte ATM-IV panel cache (shape {"days": ...})
             "execution_timing_curve.json",  # xsec hks_periodicity descriptive curve
         }
     )
@@ -103,6 +122,8 @@ class DiscoveryVerdictReader:
             if not base.is_dir():
                 continue
             for path in sorted(base.glob("**/results/*.json")):
+                if any(part in self.SKIP_PATH_PARTS for part in path.parts):
+                    continue
                 name = path.name
                 if any(name.startswith(p) for p in self.SKIP_PREFIXES):
                     continue

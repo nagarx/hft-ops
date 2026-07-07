@@ -1,0 +1,143 @@
+{
+  "artifacts": [],
+  "axis_values": {},
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": null,
+  "contract_version": "3.0",
+  "created_at": "2026-05-08T02:42:56.756240+00:00",
+  "dataset_health": {},
+  "description": "Feature-importance audit of the E5 60s TLOB H10 regression model. Identical training hyperparameters to the E5 baseline; adds post- training permutation importance to quantify per-feature contribution on the held-out test split.\n",
+  "duration_seconds": 6.317451166920364,
+  "experiment_id": "e5_60s_importance_audit_20260508T024256_963fdad4",
+  "experiment_provenance_hash": null,
+  "extraction_config": {},
+  "feature_set_ref": null,
+  "fingerprint": "963fdad4ac78d6ef0441596a579da4d1c9c48856dc37a3b7f2f0e902f5277002",
+  "gate_reports": {},
+  "hypothesis": "DEPTH_NORM_OFI (feature 85) is expected to dominate importance rankings with substantial positive importance_mean at high stability. Near-zero-predictive-IC features (those flagged DISCARD by the pre-training evaluator) should show importance_mean ~0 \u2014 if any shows stably-positive importance_mean with stability > 0.6, that feature is a candidate for tier-flip at Stage C.5.\n",
+  "manifest_path": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/experiments/e5_60s_importance_audit.yaml",
+  "name": "e5_60s_importance_audit",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {
+      "extractor": "2720f09c7dc550c0f36952146b40597c33f276351e6b5a4d2ee638eab260e98c",
+      "manifest": "7e9c8410daefa622f8ad60bc6e3ba90105bede828d2d117d809c10897f5e0f31",
+      "trainer": "13ddaf418294cee1bf7b276a16ec74dbefcffebc14216bc4c5ad9288f2d1adf8"
+    },
+    "contract_version": "3.0",
+    "data_dir_hash": "6c2381c95ec63d7686720f35bc188f26a8fd447902a4ab8ffd0a4cfce60fb572",
+    "git": {
+      "branch": "",
+      "commit_hash": "not_git_tracked",
+      "dirty": false,
+      "short_hash": "not_git_"
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": "2026-05-08T02:42:56.768554+00:00"
+  },
+  "record_type": "training",
+  "signal_export_output_dir": null,
+  "stages_completed": [
+    "dataset_analysis"
+  ],
+  "status": "failed",
+  "sub_records": [],
+  "sweep_failure_info": {},
+  "sweep_id": "",
+  "tags": [
+    "nvda",
+    "e5",
+    "regression",
+    "h10",
+    "60s",
+    "importance",
+    "audit",
+    "phase-8c-alpha"
+  ],
+  "training_config": {
+    "data": {
+      "data_dir": "data/exports/e5_timebased_60s_v3p0",
+      "feature_count": 98,
+      "feature_set": "nvda_short_term_98_src98_v1",
+      "horizon_idx": 0,
+      "labeling_strategy": "regression",
+      "normalization": {
+        "clip_value": 10.0,
+        "eps": 1e-08,
+        "exclude_features": [
+          93
+        ],
+        "strategy": "hybrid"
+      },
+      "num_classes": 3,
+      "sequence": {
+        "stride": 1,
+        "window_size": 20
+      }
+    },
+    "description": "E5 Phase 8C-\u03b1 Stage C.1 importance audit: TLOB H10 regression + permutation importance.",
+    "importance": {
+      "baseline_metric": "auto",
+      "block_length_samples": 36,
+      "enabled": true,
+      "eval_split": "test",
+      "method": "permutation",
+      "n_permutations": 100,
+      "n_seeds": 5,
+      "seed": 42,
+      "subsample": 5000
+    },
+    "log_level": "INFO",
+    "model": {
+      "dropout": 0.1,
+      "input_size": 98,
+      "model_type": "tlob",
+      "num_classes": 3,
+      "regression_loss_delta": 12.6,
+      "regression_loss_type": "huber",
+      "task_type": "regression",
+      "tlob_dataset_type": "nvda",
+      "tlob_hidden_dim": 32,
+      "tlob_mlp_expansion": 4.0,
+      "tlob_num_heads": 2,
+      "tlob_num_layers": 2,
+      "tlob_use_bin": true,
+      "tlob_use_cvml": false,
+      "tlob_use_sinusoidal_pe": true
+    },
+    "name": "E5_60s_Importance_Audit",
+    "output_dir": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T024250",
+    "tags": [
+      "e5",
+      "nvda",
+      "regression",
+      "h10",
+      "60s",
+      "importance",
+      "audit"
+    ],
+    "train": {
+      "batch_size": 128,
+      "early_stopping_patience": 5,
+      "epochs": 30,
+      "gradient_clip_norm": 1.0,
+      "learning_rate": 0.0005,
+      "loss_type": "huber",
+      "mixed_precision": false,
+      "num_workers": 0,
+      "pin_memory": false,
+      "scheduler": "cosine",
+      "seed": 42,
+      "task_type": "regression",
+      "use_class_weights": false,
+      "weight_decay": 0.01
+    }
+  },
+  "training_metrics": {
+    "_trainer_config_source": "inline"
+  }
+}

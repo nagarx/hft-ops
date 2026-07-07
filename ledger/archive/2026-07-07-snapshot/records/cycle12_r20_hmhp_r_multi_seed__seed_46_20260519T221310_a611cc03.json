@@ -1,0 +1,199 @@
+{
+  "artifacts": [],
+  "axis_values": {
+    "train_seed": "seed_46"
+  },
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": "0ccd9f90bca06c868607b6520653e195d909a7fe6083a7aa29e7b8e02c2be160",
+  "contract_version": "3.0",
+  "created_at": "2026-05-19T22:13:10.899995+00:00",
+  "dataset_health": {},
+  "description": "R-20-HMHP-R multi-seed validation cycle. N=5 seeds (43-47) on e5_timebased_60s_v3p0 (98 feat, multi-horizon regression [10,60,300]). Tests cascading-decoder architecture-axis lift per Lesson #12 multi-seed rigor floor + R-16e Lesson #93 precedent. Pre-registered H1.a-d / H2.a-c / H3.a-f / H4.a-c gates LOCKED PRE-RUN. H3 reframed empirically post-first-cell (NOT vs Stage 6 archeology per Wave 2Y REFUTE). \u03b4=12.6 THIS cycle's baseline (NOT Stage 6 comparable). H5 COST observational per L106.\n",
+  "duration_seconds": 2473.8071075002663,
+  "experiment_id": "cycle12_r20_hmhp_r_multi_seed__seed_46_20260519T221310_a611cc03",
+  "experiment_provenance_hash": "9c28e966ba45df4214c24e6bbee0ada2c54b87cdbd6357a10ef910ba045d08a1",
+  "extraction_config": {},
+  "feature_set_ref": {
+    "content_hash": "122fe5cbfb657bf91dddeef4e687f7d8d6f120ccd67b7ce57528063bf62e43d2",
+    "name": "nvda_short_term_98_src98_v1"
+  },
+  "fingerprint": "a611cc03a44afed31e57690fc8e0746b06dbcdce37f74b00223e2d330e17a8e4",
+  "gate_reports": {},
+  "hypothesis": "H1 PRIMARY: mean(test_h10_ic_seeds_43_47) > 0.30 floor + paired bootstrap CI lower > 0.10. H2: mean(h60) > 0.10 AND mean(h300) > 0.05 AND std(h10) < 0.040. H3: 5 seeds \u2192 all populated + 1 IDENTICAL compat_fp/epH/mch + 5 distinct pred SHA-256. H4: agreement_ratio.npy emitted + non-degenerate (mean \u2208 [0.4, 0.9], std > 0.05). H5: COST observational.\n",
+  "manifest_path": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/experiments/sweeps/cycle12_r20_hmhp_r_multi_seed.yaml",
+  "name": "cycle12_r20_hmhp_r_multi_seed__seed_46",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {
+      "extractor": "",
+      "manifest": "ed01a28148ac5a7231bdb800a7e6d3e99bd105cc8fa4bb23f6210b276b9a4cff",
+      "trainer": "70b510b1c6778c910d44d7391fde2a341aaa9c2e08e5b3876e59d8dd1a0a129c"
+    },
+    "contract_version": "3.0",
+    "data_dir_hash": "6c2381c95ec63d7686720f35bc188f26a8fd447902a4ab8ffd0a4cfce60fb572",
+    "git": {
+      "branch": "",
+      "commit_hash": "not_git_tracked",
+      "dirty": false,
+      "short_hash": "not_git_"
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": "2026-05-19T22:13:10.933382+00:00"
+  },
+  "record_type": "training",
+  "signal_export_output_dir": "/Users/knight/code_local/HFT-pipeline-v2/outputs/experiments/seed_46/signals/test",
+  "stages_completed": [
+    "training",
+    "signal_export",
+    "backtesting"
+  ],
+  "status": "completed",
+  "sub_records": [],
+  "sweep_failure_info": {},
+  "sweep_id": "cycle12_r20_hmhp_r_multi_seed_20260519T194439",
+  "tags": [
+    "nvda",
+    "cycle12",
+    "r20",
+    "r20_multi_seed",
+    "hmhp_r",
+    "cascading-decoder",
+    "confirmation-module",
+    "multi_seed",
+    "architecture-axis",
+    "regression",
+    "h10",
+    "60s",
+    "huber",
+    "v3p0",
+    "phase_y_composability",
+    "tlob-stage-2-comparison",
+    "rigor_floor"
+  ],
+  "training_config": {
+    "data": {
+      "cache_in_memory": true,
+      "data_dir": "../data/exports/e5_timebased_60s_v3p0",
+      "feature_count": 98,
+      "feature_set": "nvda_short_term_98_src98_v1",
+      "labels": {
+        "horizons": [
+          10,
+          60,
+          300
+        ],
+        "primary_horizon_idx": 0,
+        "return_type": "smoothed_return",
+        "source": "forward_prices",
+        "task": "regression"
+      },
+      "normalization": {
+        "clip_value": 10.0,
+        "eps": 1e-08,
+        "exclude_features": [
+          93
+        ],
+        "strategy": "hybrid"
+      },
+      "sequence": {
+        "stride": 1,
+        "window_size": 20
+      }
+    },
+    "description": "R-20-HMHP-R multi-seed base trainer config. Inline-merged from r20_hmhp_r_v3p0_h10_primary.yaml _base composition: hmhp_cascade_regression.yaml + nvda_e5_60s.yaml + regression_huber.yaml + regression_default.yaml. Production-scale overrides (epochs=100, patience=15, hmhp_horizons=[10,60,300], hmhp_loss_weights H10-primary, hmhp_primary_horizon_idx=0 EXPLICIT per #PY-43/#PY-57/N4 dormant-bug displacement). \u03b4=12.6 THIS cycle's baseline. Single sweep axis: train.seed.\n",
+    "log_level": "INFO",
+    "model": {
+      "dropout": 0.1,
+      "hmhp_encoder_hidden_dim": 64,
+      "hmhp_horizons": [
+        10,
+        60,
+        300
+      ],
+      "hmhp_loss_weights": {
+        "H10": 0.5,
+        "H300": 0.15,
+        "H60": 0.25,
+        "consistency": 0.1
+      },
+      "hmhp_num_encoder_layers": 2,
+      "hmhp_pool_mode": "mean",
+      "hmhp_primary_horizon_idx": 0,
+      "hmhp_use_confirmation": true,
+      "input_size": 98,
+      "model_type": "hmhp_regression",
+      "regression_loss_delta": 12.6
+    },
+    "model_config_hash": "be5ab20ae5d2b3675d0c1d35762a0102192fcc6e892e60cbd06c143bee1f6154",
+    "name": "cycle12_r20_hmhp_r_multi_seed_base",
+    "output_dir": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle12_r20_hmhp_r_multi_seed_20260519T194439",
+    "tags": [
+      "cycle12",
+      "r20_multi_seed",
+      "hmhp_r",
+      "cascading-decoder",
+      "regression",
+      "h10",
+      "v3p0",
+      "tlob-comparison"
+    ],
+    "train": {
+      "batch_size": 64,
+      "early_stopping_patience": 15,
+      "epochs": 100,
+      "gradient_clip_norm": 1.0,
+      "learning_rate": 0.0001,
+      "loss_type": "huber",
+      "mixed_precision": false,
+      "num_workers": 0,
+      "pin_memory": true,
+      "scheduler": "cosine",
+      "seed": 46,
+      "task_type": "regression",
+      "weight_decay": 1e-05
+    }
+  },
+  "training_metrics": {
+    "_trainer_config_source": "inline",
+    "best_val_directional_accuracy": 0.6404938271604939,
+    "best_val_ic": 0.37365594903336197,
+    "best_val_loss": 32.07442417374395,
+    "best_val_mae": 16.400913911765375,
+    "best_val_pearson": 0.37125213481331976,
+    "best_val_profitable_accuracy": 0.6637423235994485,
+    "best_val_r2": 0.12720013149450848,
+    "best_val_rmse": 22.754517748258145,
+    "test_directional_accuracy": 0.6396385243872246,
+    "test_h10_directional_accuracy": 0.6396385243872246,
+    "test_h10_ic": 0.3661612109863117,
+    "test_h10_mae": 18.088853983205198,
+    "test_h10_pearson": 0.3541861776832797,
+    "test_h10_profitable_accuracy": 0.6615957777087861,
+    "test_h10_r2": 0.1125372190521714,
+    "test_h10_rmse": 26.077215339102708,
+    "test_h300_directional_accuracy": 0.533589013979958,
+    "test_h300_ic": 0.07910932621586808,
+    "test_h300_mae": 90.38760729620743,
+    "test_h300_pearson": 0.06351659911573027,
+    "test_h300_profitable_accuracy": 0.533874983619447,
+    "test_h300_r2": 0.0035735529518328146,
+    "test_h300_rmse": 146.13274690313824,
+    "test_h60_directional_accuracy": 0.5447456368362421,
+    "test_h60_ic": 0.13619218366023778,
+    "test_h60_mae": 49.35508269690249,
+    "test_h60_pearson": 0.13897848990222766,
+    "test_h60_profitable_accuracy": 0.5519659059664559,
+    "test_h60_r2": 0.01651099073533835,
+    "test_h60_rmse": 74.1247706128047,
+    "test_ic": 0.3661612109863117,
+    "test_mae": 18.088853983205198,
+    "test_pearson": 0.3541861776832797,
+    "test_profitable_accuracy": 0.6615957777087861,
+    "test_r2": 0.1125372190521714,
+    "test_rmse": 26.077215339102708
+  }
+}

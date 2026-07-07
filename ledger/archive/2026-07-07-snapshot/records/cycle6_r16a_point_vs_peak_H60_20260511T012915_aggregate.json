@@ -1,0 +1,165 @@
+{
+  "artifacts": [],
+  "axis_values": {},
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": null,
+  "contract_version": "",
+  "created_at": "2026-05-11T01:37:11.213733+00:00",
+  "dataset_health": {},
+  "description": "",
+  "duration_seconds": 475.85448645893484,
+  "experiment_id": "cycle6_r16a_point_vs_peak_H60_20260511T012915_aggregate",
+  "experiment_provenance_hash": null,
+  "extraction_config": {},
+  "feature_set_ref": null,
+  "fingerprint": "77009103104970503933ac5008d43877b67032a95b000c31961dc7df2ca7d2ab",
+  "gate_reports": {},
+  "hypothesis": "REFRAMED H1 (PRIMARY \u2014 Agent B pre-impl caveat 2026-05-11): peak_return captures DIFFERENT information than point_return at H60. Comparing test_ic against each arm's OWN labels is tautological. The PRIMARY gate is BACKTEST P&L (execution-aligned via OpraCalibratedCosts.deep_itm() point-to-point 0DTE Deep ITM). Sub-claims: H1a peak vs point arms produce DIFFERENT backtest P&L with BH FDR q < 0.10 over K=2 paired comparisons (peak-vs-point within each of {ridge, tlob}); H1b effect- size floor |\u0394P&L| > 0.5%; H1c at least 1 arm median |pred| > 1.4 bps. Refuting H1 = closes a research direction (peak_return not tradeable enhancement vs point_return at H60). LABEL-EXECUTION MISMATCH CAVEAT: peak_return is forward-leaking structurally similar to smoothed-vs-point pathology (E8 root cause). R-16a relies on backtest P&L (execution-aligned) NOT test_ic (label- aligned) as the tradability test. H2 (BASELINE GATE): temporal_ridge captures \u226580% of TLOB IC within return_type per CLAUDE.md \u00a7Validated Findings. Required by hft-rules \u00a713. H3 (COST GATE): backtest median |prediction| > 1.4 bps Deep ITM breakeven per OpraCalibratedCosts.deep_itm(). Backtesting stage auto-applies. POWER-LIMITED: 1 seed \u00d7 4 arms; if INDETERMINATE result, plan R-16a- extended (4 arms \u00d7 3 seeds per seed_stability.yaml template).\n",
+  "manifest_path": "",
+  "name": "cycle6_r16a_point_vs_peak_H60",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {},
+    "contract_version": "",
+    "data_dir_hash": "",
+    "git": {
+      "branch": "",
+      "commit_hash": "",
+      "dirty": false,
+      "short_hash": ""
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": ""
+  },
+  "record_type": "sweep_aggregate",
+  "signal_export_output_dir": null,
+  "stages_completed": [],
+  "status": "failed",
+  "sub_records": [
+    {
+      "axis_values": {
+        "model_type": "temporal_ridge",
+        "return_type": "point_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 10.309955541975796,
+      "experiment_id": "cycle6_r16a_point_vs_peak_H60__temporal_ridge_point_return_20260511T012925_3a832bb6",
+      "fingerprint": "3a832bb60f5f9f668b4ea9588449255cf9550425f77fe1d187114eec98491e38",
+      "name": "cycle6_r16a_point_vs_peak_H60__temporal_ridge_point_return",
+      "status": "failed",
+      "training_metrics": {
+        "_trainer_config_source": "inline",
+        "test_directional_accuracy": 0.5428677932405567,
+        "test_ic": 0.14728625718349653,
+        "test_mae": 50.25624236877819,
+        "test_pearson": 0.05435465033042154,
+        "test_profitable_accuracy": 0.5483294376460883,
+        "test_r2": -0.0014976675700912878,
+        "test_rmse": 75.8411929280055
+      }
+    },
+    {
+      "axis_values": {
+        "model_type": "temporal_ridge",
+        "return_type": "peak_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 6.486911166924983,
+      "experiment_id": "cycle6_r16a_point_vs_peak_H60__temporal_ridge_peak_return_20260511T012931_ca0ab969",
+      "fingerprint": "ca0ab969613f3462edbef3c9603d3067dc38965d4ca7eb19f8f13415858fe151",
+      "name": "cycle6_r16a_point_vs_peak_H60__temporal_ridge_peak_return",
+      "status": "failed",
+      "training_metrics": {
+        "_trainer_config_source": "inline",
+        "test_directional_accuracy": 0.5380333951762524,
+        "test_ic": 0.07752524514689549,
+        "test_mae": 75.27307184750013,
+        "test_pearson": 0.0201329325585448,
+        "test_profitable_accuracy": 0.5380333951762524,
+        "test_r2": -0.010307789898853281,
+        "test_rmse": 96.96732803020107
+      }
+    },
+    {
+      "axis_values": {
+        "model_type": "tlob",
+        "return_type": "point_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 229.9797937499825,
+      "experiment_id": "cycle6_r16a_point_vs_peak_H60__tlob_point_return_20260511T013322_a1055d93",
+      "fingerprint": "a1055d93d311ddce020db69753633d65b8d3a7f69c9fce6ec00b8c2fe9be9f0d",
+      "name": "cycle6_r16a_point_vs_peak_H60__tlob_point_return",
+      "status": "failed",
+      "training_metrics": {
+        "_trainer_config_source": "inline",
+        "best_val_directional_accuracy": 0.508484668055969,
+        "best_val_ic": 0.015149701221052745,
+        "best_val_loss": 493.8128161734323,
+        "best_val_mae": 44.98436624788517,
+        "best_val_pearson": 0.01949183981437619,
+        "best_val_profitable_accuracy": 0.506831347688272,
+        "best_val_r2": -0.007618508856588102,
+        "best_val_rmse": 63.10299162838932,
+        "test_directional_accuracy": 0.4975149105367793,
+        "test_ic": 0.05696707099256142,
+        "test_mae": 50.488922558301894,
+        "test_pearson": 0.018706801764249215,
+        "test_profitable_accuracy": 0.4982813144507081,
+        "test_r2": -0.0010257533583741818,
+        "test_rmse": 75.82332222740858
+      }
+    },
+    {
+      "axis_values": {
+        "model_type": "tlob",
+        "return_type": "peak_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 229.07782600005157,
+      "experiment_id": "cycle6_r16a_point_vs_peak_H60__tlob_peak_return_20260511T013711_a0041129",
+      "fingerprint": "a0041129220bb218be9e09f5c7293500b3862e18ba5a0d5e8211a40cfab56c3f",
+      "name": "cycle6_r16a_point_vs_peak_H60__tlob_peak_return",
+      "status": "failed",
+      "training_metrics": {
+        "_trainer_config_source": "inline",
+        "best_val_directional_accuracy": 0.48756660746003555,
+        "best_val_ic": -0.0030433986491316925,
+        "best_val_loss": 786.8582270283282,
+        "best_val_mae": 68.74757278068236,
+        "best_val_pearson": -2.060363553881906e-05,
+        "best_val_profitable_accuracy": 0.48756660746003555,
+        "best_val_r2": -0.012519440822266414,
+        "best_val_rmse": 83.53302552426176,
+        "test_directional_accuracy": 0.4897959183673469,
+        "test_ic": -0.01250675272024722,
+        "test_mae": 75.66482445048047,
+        "test_pearson": -0.010365158173304214,
+        "test_profitable_accuracy": 0.4897959183673469,
+        "test_r2": -0.001692339981651303,
+        "test_rmse": 96.55299602590956
+      }
+    }
+  ],
+  "sweep_failure_info": {},
+  "sweep_id": "cycle6_r16a_point_vs_peak_H60_20260511T012915",
+  "tags": [
+    "nvda",
+    "cycle6",
+    "r16a",
+    "regression",
+    "hedged",
+    "2-arm",
+    "v3p0",
+    "sweep",
+    "point_vs_peak",
+    "phase-y-composability",
+    "h60"
+  ],
+  "training_config": {},
+  "training_metrics": {}
+}

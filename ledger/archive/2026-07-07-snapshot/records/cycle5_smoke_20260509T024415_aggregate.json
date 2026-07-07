@@ -1,0 +1,72 @@
+{
+  "artifacts": [],
+  "axis_values": {},
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": null,
+  "contract_version": "",
+  "created_at": "2026-05-09T02:44:15.920275+00:00",
+  "dataset_health": {},
+  "description": "",
+  "duration_seconds": 0.0,
+  "experiment_id": "cycle5_smoke_20260509T024415_aggregate",
+  "experiment_provenance_hash": null,
+  "extraction_config": {},
+  "feature_set_ref": null,
+  "fingerprint": "7ab1e838b2256b1c515dcf41f42fdb625eebdefca3826e5d5d39008fab36d1ad",
+  "gate_reports": {},
+  "hypothesis": "H1 (label-execution alignment): point_return arms produce HIGHER test-set directional accuracy than smoothed_return arms at H10 60s, REVERSING the R9-R14 pattern (which trained on smoothed labels and showed DA=48.3% on point returns). If H1 holds with BH q < 0.10 across model_type axis, point-return labels are tradeable. H2 (architecture invariance): temporal_ridge captures \u226580% of TLOB IC at H10 (replicates CLAUDE.md \u00a7Validated Findings: \"TemporalRidge captures 91% of TLOB IC\"). Cycle 5 confirms or refutes on v3p0 corpus. H3 (horizon decay): IC decays monotonically H10 > H60 > H300 (replicates OFI ACF=0.266 at 5m persistence ceiling).\n",
+  "manifest_path": "",
+  "name": "cycle5_smoke",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {},
+    "contract_version": "",
+    "data_dir_hash": "",
+    "git": {
+      "branch": "",
+      "commit_hash": "",
+      "dirty": false,
+      "short_hash": ""
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": ""
+  },
+  "record_type": "sweep_aggregate",
+  "signal_export_output_dir": null,
+  "stages_completed": [],
+  "status": "unknown",
+  "sub_records": [
+    {
+      "axis_values": {
+        "horizon_value": "H10",
+        "model_type": "temporal_ridge",
+        "return_type": "smoothed_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 0.0,
+      "experiment_id": "cycle5_smoke__temporal_ridge_smoothed_return_H10_20260509T021001_96d28107",
+      "fingerprint": "96d28107ec2ffde89c569645fbae33de44958725d47451604bf02ea4670e881a",
+      "name": "cycle5_smoke__temporal_ridge_smoothed_return_H10",
+      "status": "skipped_duplicate",
+      "training_metrics": {}
+    }
+  ],
+  "sweep_failure_info": {},
+  "sweep_id": "cycle5_smoke_20260509T024415",
+  "tags": [
+    "nvda",
+    "cycle5",
+    "regression",
+    "multi-arm",
+    "v3p0",
+    "sweep",
+    "mvp-3",
+    "phase-y-composability"
+  ],
+  "training_config": {},
+  "training_metrics": {}
+}

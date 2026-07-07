@@ -94,6 +94,14 @@ python3 scripts/run_readability_backtest.py \
 
 ## Tracking Experiments
 
+> **⚠️ Ledger dormancy note (2026-07-07).** The `hft-ops/ledger/` store is
+> FROZEN IN PRACTICE (last record 2026-05-20). The 2026-06/07 discovery arc
+> registers experiments in `hft-wiki/FINDINGS_MASTER_REGISTER.md` + per-harness
+> `results/*.json` verdicts, NOT here. The dashboard/compare/list commands below
+> still work against the 186 archived records but are not fed by current work.
+> See `ledger/README.md` for the revival condition. A tracked snapshot of the
+> records lives at `ledger/archive/2026-07-07-snapshot/`.
+
 ### Dashboard
 See all experiments and their pipeline status:
 ```bash

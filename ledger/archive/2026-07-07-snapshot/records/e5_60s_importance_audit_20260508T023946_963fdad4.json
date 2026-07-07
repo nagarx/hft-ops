@@ -1,0 +1,61 @@
+{
+  "artifacts": [],
+  "axis_values": {},
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": null,
+  "contract_version": "3.0",
+  "created_at": "2026-05-08T02:39:46.646840+00:00",
+  "dataset_health": {},
+  "description": "Feature-importance audit of the E5 60s TLOB H10 regression model. Identical training hyperparameters to the E5 baseline; adds post- training permutation importance to quantify per-feature contribution on the held-out test split.\n",
+  "duration_seconds": 475.7981265829876,
+  "experiment_id": "e5_60s_importance_audit_20260508T023946_963fdad4",
+  "experiment_provenance_hash": null,
+  "extraction_config": {},
+  "feature_set_ref": null,
+  "fingerprint": "963fdad4ac78d6ef0441596a579da4d1c9c48856dc37a3b7f2f0e902f5277002",
+  "gate_reports": {},
+  "hypothesis": "DEPTH_NORM_OFI (feature 85) is expected to dominate importance rankings with substantial positive importance_mean at high stability. Near-zero-predictive-IC features (those flagged DISCARD by the pre-training evaluator) should show importance_mean ~0 \u2014 if any shows stably-positive importance_mean with stability > 0.6, that feature is a candidate for tier-flip at Stage C.5.\n",
+  "manifest_path": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/experiments/e5_60s_importance_audit.yaml",
+  "name": "e5_60s_importance_audit",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {
+      "extractor": "2720f09c7dc550c0f36952146b40597c33f276351e6b5a4d2ee638eab260e98c",
+      "manifest": "7e9c8410daefa622f8ad60bc6e3ba90105bede828d2d117d809c10897f5e0f31",
+      "trainer": "13ddaf418294cee1bf7b276a16ec74dbefcffebc14216bc4c5ad9288f2d1adf8"
+    },
+    "contract_version": "3.0",
+    "data_dir_hash": "6c2381c95ec63d7686720f35bc188f26a8fd447902a4ab8ffd0a4cfce60fb572",
+    "git": {
+      "branch": "",
+      "commit_hash": "not_git_tracked",
+      "dirty": false,
+      "short_hash": "not_git_"
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": "2026-05-08T02:39:46.663327+00:00"
+  },
+  "record_type": "training",
+  "signal_export_output_dir": null,
+  "stages_completed": [],
+  "status": "failed",
+  "sub_records": [],
+  "sweep_failure_info": {},
+  "sweep_id": "",
+  "tags": [
+    "nvda",
+    "e5",
+    "regression",
+    "h10",
+    "60s",
+    "importance",
+    "audit",
+    "phase-8c-alpha"
+  ],
+  "training_config": {},
+  "training_metrics": {}
+}

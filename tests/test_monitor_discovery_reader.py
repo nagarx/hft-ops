@@ -104,15 +104,81 @@ def test_void_and_non_verdict_artifacts_denylisted(tmp_path):
 
 def test_default_denylist_covers_known_hazards():
     # Regression lock on the DEFAULT_DENYLIST contents: the VOID variance-DL STOP
-    # verdict + the 5 non-verdict JSONs that live in scanned results/ dirs today.
+    # verdict + the non-verdict JSONs that live in scanned results/ dirs today.
     must_deny = {
         "variance_dl_verdict.json",
         "composite_vrp_confront_env_gates.json",
         "frozen_scale_model.json",
         "strike_grids.json",
         "nvda_0dte_iv.json",
+        "nvda_0dte_atm_iv.json",
         "execution_timing_curve.json",
     }
     assert must_deny <= set(DiscoveryVerdictReader.DEFAULT_DENYLIST)
     # The corrected verdict must never be denylisted.
     assert "variance_dl_v2_verdict.json" not in DiscoveryVerdictReader.DEFAULT_DENYLIST
+
+
+def test_path_guard_skips_venv_and_site_packages(tmp_path):
+    # crypto_discovery/.venv ships statsmodels test fixtures matching
+    # **/results/*.json (verified on disk 2026-07-07). The SKIP_PATH_PARTS
+    # guard must drop any hit under a .venv/ or site-packages/ path component
+    # BEFORE parsing — even INVALID JSON there must neither become a row nor
+    # a read_error.
+    _put(tmp_path, "crypto_discovery/variance_probe/results", "tradeflow_esnq_P_A7.json")
+    venv = tmp_path / "crypto_discovery/.venv/lib/python3.14/site-packages/statsmodels/tsa/tests/results"
+    venv.mkdir(parents=True)
+    (venv / "fit_ets_results.json").write_text('{"TRUE": 1, "FALSE": 2}')  # parseable non-verdict
+    (venv / "broken_fixture.json").write_text("{not json")                  # must not even error
+    sp = tmp_path / "multiday_discovery/env/lib/site-packages/pkg/tests/results"
+    sp.mkdir(parents=True)  # site-packages WITHOUT .venv — proves the 2nd component independently
+    (sp / "some_fixture.json").write_text('{"days": []}')
+
+    reader = DiscoveryVerdictReader(tmp_path)
+    verdicts = reader.read_all()
+    got = {Path(v.source_path).name for v in verdicts}
+    assert got == {"tradeflow_esnq_P_A7.json"}, (
+        f"venv/site-packages hits must never become rows. got {got}"
+    )
+    assert reader.read_errors == [], (
+        "guard must skip BEFORE parsing — a broken venv fixture must not "
+        f"surface in read_errors. got {reader.read_errors}"
+    )
+
+
+def test_crypto_and_multiday_trees_scanned(tmp_path):
+    # Phase-3 (2026-07-07): crypto_discovery + multiday_discovery are IN scope.
+    _put(tmp_path, "crypto_discovery/reversion_probe/results", "tradeflow_esnq_P_A7.json")
+    _put(tmp_path, "multiday_discovery/vrp_0dte/results", "gex_variance_verdict.json")
+    verdicts = DiscoveryVerdictReader(tmp_path).read_all()
+    assert {v.source_tree for v in verdicts} == {"crypto_discovery", "multiday_discovery"}
+
+
+def test_discovery_trees_membership_lock():
+    # Regression lock on the scan scope (count + membership + order stability).
+    # Adding/removing a tree is a deliberate scope decision — update this lock
+    # in the same commit as the docstring + CODEBASE §2.10 + README statements.
+    assert DiscoveryVerdictReader.DISCOVERY_TREES == (
+        "glbx_discovery",
+        "xsec_equity_discovery",
+        "nvda_discovery",
+        "opra_discovery",
+        "pead_discovery",
+        "crypto_discovery",
+        "multiday_discovery",
+    )
+    assert len(DiscoveryVerdictReader.DISCOVERY_TREES) == 7
+    assert DiscoveryVerdictReader.SKIP_PATH_PARTS == (".venv", "site-packages")
+
+
+def test_multiday_iv_panel_cache_denylisted(tmp_path):
+    # multiday_discovery/vrp_0dte/results/nvda_0dte_atm_iv.json is an IV data
+    # panel (shape {"days": ...}), NOT a verdict — the class-3 sibling of the
+    # already-denylisted nvda_0dte_iv.json. Without its DEFAULT_DENYLIST entry
+    # it falls through to the CommonCoreAdapter catch-all as a phantom
+    # UNRESOLVED row (verified against the live file 2026-07-07).
+    _put(tmp_path, "multiday_discovery/vrp_0dte/results", "gex_variance_verdict.json")
+    d = tmp_path / "multiday_discovery/vrp_0dte/results"
+    (d / "nvda_0dte_atm_iv.json").write_text('{"days": {}, "config": {}, "n_days_ok": 0}')
+    verdicts = DiscoveryVerdictReader(tmp_path).read_all()
+    assert {Path(v.source_path).name for v in verdicts} == {"gex_variance_verdict.json"}

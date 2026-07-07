@@ -12,6 +12,40 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ## [0.3.0-dev] — in progress
 
+### Curation Phase-3 ORGANIZE (2026-07-07) — monitor scans crypto_discovery + multiday_discovery
+
+**Added — `monitor/discovery_reader.py` scope extension (operator-approved)**
+
+- `DISCOVERY_TREES` extended 5 → 7: `crypto_discovery/` + `multiday_discovery/` are now
+  scanned. All 9 crypto/multiday verdict JSONs normalize via `CommonCoreAdapter` with zero
+  parse warnings (verified against the live trees).
+- NEW `SKIP_PATH_PARTS = (".venv", "site-packages")` path-component guard, checked first in
+  the scan loop and BEFORE parsing. `crypto_discovery/.venv` embeds statsmodels test fixtures
+  (`influence_lsdiag_R.json`, `fit_ets_results*.json`) matching `**/results/*.json`; without
+  the guard they render as phantom UNRESOLVED rows (empirically verified both ways). The
+  guard is structural — it survives third-party fixture-name churn, unlike a basename denylist.
+- `DEFAULT_DENYLIST` += `nvda_0dte_atm_iv.json` (multiday vrp_0dte ATM-IV panel cache, shape
+  `{"days", ...}` — class-3 non-verdict artifact; basename-sibling of `nvda_0dte_iv.json`).
+- `pead_discovery/` kept in scope: design-only tree (no `results/` ever emitted); scanning it
+  is a zero-cost no-op and dropping it would create a silent blindspot if the harness ever runs.
+- NEW tests: `.venv`/`site-packages` guard (incl. skip-before-parse: invalid JSON under a venv
+  path must not even appear in `read_errors`), 7-tree membership lock, new-tree source tagging,
+  multiday IV-panel denylist; `DEFAULT_DENYLIST` regression lock extended.
+
+**Ledger dormancy snapshot (curation Phase-3, same date)**
+
+- NEW tracked archive `ledger/archive/2026-07-07-snapshot/` — one-time copy of the
+  frozen-in-practice live ledger (`records/*.json` + `index.json`; last record 2026-05-20)
+  so the orchestrator-era experiment provenance survives a fresh clone while the LIVE
+  `ledger/{index.json,records/*.json,runs/}` stay gitignored (auto-rebuilt runtime data).
+  Defensive `!ledger/archive/` negations appended to `.gitignore` (the live-store patterns
+  are path-anchored and never matched the archive subtree; the negations lock intent).
+- NEW `ledger/README.md` — dormancy banner: frozen-in-practice status, where experiments
+  are registered now (wiki register + per-harness verdict JSONs + the monitor), the
+  snapshot pointer, and the revival condition (promotion back onto the orchestrator lane).
+- `EXPERIMENT_GUIDE.md` §Tracking Experiments — dormancy note: dashboard/compare/list
+  still work against the archived records but are not fed by current work.
+
 ### Curation Phase-2 TRUTH (2026-07-07) — monitor denylist hardening + doc drift fixes
 
 **Changed — `monitor/discovery_reader.py` `DEFAULT_DENYLIST` extended (corrupt-result hazard)**

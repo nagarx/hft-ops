@@ -1,0 +1,352 @@
+{
+  "artifacts": [],
+  "axis_values": {
+    "model_type": "tlob",
+    "return_type": "smoothed_return",
+    "train_seed": "seed_51"
+  },
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": "5dc8a67daa99096ef91b1a0ce2ae898d84eef16bce44c8d9e4fc9ed10a917d12",
+  "contract_version": "3.0",
+  "created_at": "2026-05-14T03:46:59.369156+00:00",
+  "dataset_health": {},
+  "description": "R-16e EXTENDED: multi-seed IC variance + H60-hold tradeability validation on R-16d's Ridge \u00d7 Point \u00d7 H60 finding (IC=0.147, Ratio=2.585 vs TLOB). NEW vs R-16d: backtest uses --hold-events 60 (matched to prediction horizon), closing the H10-hold-only gap in R-16d backtest infrastructure. Authorized 2026-05-13 late night by user (Hybrid lean \u2192 Option A EXTENDED) after Wave 4 Phase 2.a 3-agent pre-impl gate surfaced critical hold-time mismatch. 3-axis Cartesian: 2 model \u00d7 2 return \u00d7 10 seed = 40 records. Tests H1 conjunctive (H60-hold pooled CI > 0 AND mean across thresholds > 0 AND per-seed IC CI > 0.05) + H2 ratio bootstrap + H4 Ridge bit-exact lock + H6 E8 label-execution diagnostic at H60-hold.\n",
+  "duration_seconds": 334.5187337079551,
+  "experiment_id": "cycle9_r16e_multi_seed_h60_point__tlob_smoothed_return_seed_51_20260514T034659_2e74f637",
+  "experiment_provenance_hash": "3629e964a7e6c72872271719c638c0697ff060f51da961e5dd7a628db3518fc1",
+  "extraction_config": {},
+  "feature_set_ref": {
+    "content_hash": "122fe5cbfb657bf91dddeef4e687f7d8d6f120ccd67b7ce57528063bf62e43d2",
+    "name": "nvda_short_term_98_src98_v1"
+  },
+  "fingerprint": "2e74f63731799e45222609b8f3d771f67a930fbb89624cd18413de43cf2ad6df",
+  "gate_reports": {
+    "validation": {
+      "allow_zero_ic_names": [],
+      "best_feature_ic": 0.08815161800263363,
+      "best_feature_idx": 84,
+      "best_feature_name": "true_ofi",
+      "contract_version": "3.0",
+      "data_dir": "/Users/knight/code_local/HFT-pipeline-v2/data/exports/e5_timebased_60s_v3p0",
+      "duration_seconds": 0.8400375000201166,
+      "gate_g_ic_count_passed": true,
+      "gate_g_ic_passed": true,
+      "gate_g_return_std_passed": true,
+      "gate_g_stability_passed": true,
+      "horizon_idx": 1,
+      "horizon_value": 60,
+      "ic_count": 5,
+      "n_days_used": 162,
+      "n_folds_used": 20,
+      "n_sequences_sampled": 47963,
+      "per_feature_ic": [
+        {
+          "bypassed": false,
+          "feature_idx": 84,
+          "feature_name": "true_ofi",
+          "ic": 0.08815161800263363,
+          "p_value": 2.3454998847888537e-83
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 85,
+          "feature_name": "depth_norm_ofi",
+          "ic": 0.08701039356732694,
+          "p_value": 2.977328939635543e-81
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 45,
+          "feature_name": "volume_imbalance",
+          "ic": -0.05757603559662236,
+          "p_value": 1.6475028007768715e-36
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 78,
+          "feature_name": "avg_order_age",
+          "ic": -0.05590406352033994,
+          "p_value": 1.6287976881745283e-34
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 43,
+          "feature_name": "total_bid_volume",
+          "ic": -0.05520379240855939,
+          "p_value": 1.0717488176026548e-33
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 22,
+          "feature_name": "bid_price_l2",
+          "ic": -0.049011979312804065,
+          "p_value": 6.602871714422115e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 23,
+          "feature_name": "bid_price_l3",
+          "ic": -0.049011935532856175,
+          "p_value": 6.603558700152318e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 21,
+          "feature_name": "bid_price_l1",
+          "ic": -0.049011904606271355,
+          "p_value": 6.604044036327771e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 20,
+          "feature_name": "bid_price_l0",
+          "ic": -0.04901185969667972,
+          "p_value": 6.604748873186145e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 25,
+          "feature_name": "bid_price_l5",
+          "ic": -0.04901184877026444,
+          "p_value": 6.6049203698877e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 24,
+          "feature_name": "bid_price_l4",
+          "ic": -0.04901183559345096,
+          "p_value": 6.605127193824098e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 26,
+          "feature_name": "bid_price_l6",
+          "ic": -0.04901164360741324,
+          "p_value": 6.608141344933765e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 27,
+          "feature_name": "bid_price_l7",
+          "ic": -0.0490115719393221,
+          "p_value": 6.609266872424231e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 29,
+          "feature_name": "bid_price_l9",
+          "ic": -0.04901153509593166,
+          "p_value": 6.609845561623819e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 28,
+          "feature_name": "bid_price_l8",
+          "ic": -0.04901144422018478,
+          "p_value": 6.611273137265167e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 46,
+          "feature_name": "weighted_mid_price",
+          "ic": -0.049011162936959465,
+          "p_value": 6.615693779698983e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 40,
+          "feature_name": "mid_price",
+          "ic": -0.04901107850537716,
+          "p_value": 6.61702127682761e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 9,
+          "feature_name": "ask_price_l9",
+          "ic": -0.049010285071796625,
+          "p_value": 6.629509149131037e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 8,
+          "feature_name": "ask_price_l8",
+          "ic": -0.04901021053001753,
+          "p_value": 6.63068356428823e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 7,
+          "feature_name": "ask_price_l7",
+          "ic": -0.049010051572622344,
+          "p_value": 6.633188647163464e-27
+        }
+      ],
+      "profile_ref_hash": "",
+      "reason": "all gates passed",
+      "return_std_bps": 79.2909122873651,
+      "schema_version": "3.0",
+      "split": "train",
+      "stability": 4.4024457930455725,
+      "status": "pass",
+      "thresholds": {
+        "min_ic": 0.05,
+        "min_ic_count": 2.0,
+        "min_return_std_bps": 5.0,
+        "min_stability": 2.0
+      },
+      "verdict": "PASS"
+    }
+  },
+  "hypothesis": "H1 PRIMARY (tradeability at H60-hold \u2014 three-conjunctive): Ridge \u00d7 Point \u00d7 H60-hold backtest CI > 0 AND mean OptRet across 8 thresholds > 0 AND per-seed test_ic CI lower bound > 0.05. H2 BASELINE: Ridge vs TLOB IC ratio CI lower bound > 1.5 (R-16d showed 2.585 single-seed; multi-seed verification). H3 COST: median |pred| > 1.4 bps Deep ITM breakeven. H4 INVARIANT: Ridge \u00d7 N-seed produces bit-exact identical results (Phase A.3 REDESIGN lock). H6 LABEL-EXECUTION DIAGNOSTIC: smoothed \u00d7 H60-hold mean OptRet \u2264 0% confirms E8 is structural (label-side) NOT hold-mismatch artifact. GO if H1 + H4 satisfied. REFUTE if any H1 fails (closes Ridge\u00d7Point\u00d7H60 direction; unblocks Option C Triple-Barrier or Option E feature ablation). INDETERMINATE triggers R-16e-extended (N=20 + walk-forward). ABORT if H4 fails (architectural ship-blocker).\n",
+  "manifest_path": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/experiments/sweeps/cycle9_r16e_multi_seed_h60_point.yaml",
+  "name": "cycle9_r16e_multi_seed_h60_point__tlob_smoothed_return_seed_51",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {
+      "extractor": "2720f09c7dc550c0f36952146b40597c33f276351e6b5a4d2ee638eab260e98c",
+      "manifest": "39d255a55334dc069beaaefacbe64a60a75a80628b9f108686763a1280f88b41",
+      "trainer": "894fe01bc702769c7f414a98a02148719e7b757d4b84d4f78cd1bf28da2968ff"
+    },
+    "contract_version": "3.0",
+    "data_dir_hash": "6c2381c95ec63d7686720f35bc188f26a8fd447902a4ab8ffd0a4cfce60fb572",
+    "git": {
+      "branch": "",
+      "commit_hash": "not_git_tracked",
+      "dirty": false,
+      "short_hash": "not_git_"
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": "2026-05-14T03:46:59.385070+00:00"
+  },
+  "record_type": "training",
+  "signal_export_output_dir": "/Users/knight/code_local/HFT-pipeline-v2/outputs/experiments/tlob_smoothed_return_seed_51/signals/test",
+  "stages_completed": [
+    "validation",
+    "training",
+    "signal_export",
+    "backtesting"
+  ],
+  "status": "completed",
+  "sub_records": [],
+  "sweep_failure_info": {},
+  "sweep_id": "cycle9_r16e_multi_seed_h60_point_20260514T015452",
+  "tags": [
+    "nvda",
+    "cycle9",
+    "r16e",
+    "regression",
+    "multi_seed",
+    "r16d_extended",
+    "v3p0",
+    "sweep",
+    "phase_y_composability",
+    "h60",
+    "h60_hold",
+    "tradeability_validation",
+    "e8_diagnostic"
+  ],
+  "training_config": {
+    "data": {
+      "data_dir": "../data/exports/e5_timebased_60s_v3p0",
+      "feature_count": 98,
+      "feature_set": "nvda_short_term_98_src98_v1",
+      "horizon_idx": 1,
+      "labeling_strategy": "regression",
+      "labels": {
+        "horizons": [
+          10,
+          60,
+          300
+        ],
+        "primary_horizon_idx": 1,
+        "return_type": "smoothed_return",
+        "sample_weights": "none",
+        "source": "forward_prices",
+        "task": "regression"
+      },
+      "normalization": {
+        "clip_value": 10.0,
+        "eps": 1e-08,
+        "exclude_features": [
+          93
+        ],
+        "strategy": "hybrid"
+      },
+      "num_classes": 3,
+      "sequence": {
+        "stride": 1,
+        "window_size": 20
+      }
+    },
+    "description": "R-16e base; axes override model_type + return_type + train.seed. H60 pinned in base.",
+    "log_level": "INFO",
+    "model": {
+      "dropout": 0.1,
+      "input_size": 98,
+      "model_type": "tlob",
+      "num_classes": 3,
+      "regression_loss_delta": 12.6,
+      "regression_loss_type": "huber",
+      "task_type": "regression",
+      "tlob_dataset_type": "nvda",
+      "tlob_hidden_dim": 32,
+      "tlob_mlp_expansion": 4.0,
+      "tlob_num_heads": 2,
+      "tlob_num_layers": 2,
+      "tlob_use_bin": true,
+      "tlob_use_cvml": false,
+      "tlob_use_sinusoidal_pe": true
+    },
+    "model_config_hash": "de47c0ef49abc0ef5d9d69efe1d4003a8b9551f24d5e6574b77f52fc041ecbb4",
+    "name": "cycle9_r16e_base",
+    "output_dir": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452",
+    "tags": [
+      "cycle9",
+      "r16e",
+      "nvda",
+      "regression",
+      "multi_seed",
+      "h60_hold",
+      "v3p0",
+      "sweep"
+    ],
+    "train": {
+      "batch_size": 128,
+      "early_stopping_patience": 5,
+      "epochs": 30,
+      "gradient_clip_norm": 1.0,
+      "learning_rate": 0.0005,
+      "loss_type": "huber",
+      "mixed_precision": false,
+      "num_workers": 0,
+      "pin_memory": false,
+      "scheduler": "cosine",
+      "seed": 51,
+      "task_type": "regression",
+      "use_class_weights": false,
+      "weight_decay": 0.01
+    }
+  },
+  "training_metrics": {
+    "_trainer_config_source": "inline",
+    "best_val_directional_accuracy": 0.5581762557978881,
+    "best_val_ic": 0.13443663410672343,
+    "best_val_loss": 480.4958659914181,
+    "best_val_mae": 43.889327366124135,
+    "best_val_pearson": 0.11962240045738859,
+    "best_val_profitable_accuracy": 0.5612952968388589,
+    "best_val_r2": 0.006936660248925919,
+    "best_val_rmse": 61.87388287613441,
+    "test_directional_accuracy": 0.55415274167595,
+    "test_ic": 0.14226367142688365,
+    "test_mae": 49.417146701933376,
+    "test_pearson": 0.11763560656577096,
+    "test_profitable_accuracy": 0.5614517459444597,
+    "test_r2": 0.010781178156263671,
+    "test_rmse": 74.34038269781357
+  }
+}

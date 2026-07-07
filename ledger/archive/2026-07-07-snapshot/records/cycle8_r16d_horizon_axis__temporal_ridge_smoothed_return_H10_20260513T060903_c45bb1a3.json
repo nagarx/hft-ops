@@ -1,0 +1,361 @@
+{
+  "artifacts": [],
+  "axis_values": {
+    "horizon": "H10",
+    "model_type": "temporal_ridge",
+    "return_type": "smoothed_return"
+  },
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": "0ccd9f90bca06c868607b6520653e195d909a7fe6083a7aa29e7b8e02c2be160",
+  "contract_version": "3.0",
+  "created_at": "2026-05-13T06:09:03.972852+00:00",
+  "dataset_health": {},
+  "description": "R-16d: 3-axis horizon-decay sweep on v3p0 (model_type \u00d7 return_type \u00d7 horizon = 2 \u00d7 2 \u00d7 3 = 12 records). Authorized 2026-05-13 post Backlog Hygiene Bundle ship. Tests horizon-decay hypothesis (H1 strict monotonic test_ic(H10) > test_ic(H60) > test_ic(H300)) + baseline gate (H2) + cost gate (H3) + negative control (H4) + Ridge bit-exact invariant (H5) + label-execution alignment diagnostic (H6 E8 closure).\n",
+  "duration_seconds": 7.065997874829918,
+  "experiment_id": "cycle8_r16d_horizon_axis__temporal_ridge_smoothed_return_H10_20260513T060903_c45bb1a3",
+  "experiment_provenance_hash": "e37bf80b7f1b9453187f398e54992c85e18a141c6b25e0255f141dcf92dfe077",
+  "extraction_config": {},
+  "feature_set_ref": {
+    "content_hash": "122fe5cbfb657bf91dddeef4e687f7d8d6f120ccd67b7ce57528063bf62e43d2",
+    "name": "nvda_short_term_98_src98_v1"
+  },
+  "fingerprint": "c45bb1a3ad516c940b052e1e2eeb7ef5732f13ea7cc712595342612d90353662",
+  "gate_reports": {
+    "validation": {
+      "allow_zero_ic_names": [],
+      "best_feature_ic": 0.250874372220845,
+      "best_feature_idx": 84,
+      "best_feature_name": "true_ofi",
+      "contract_version": "3.0",
+      "data_dir": "/Users/knight/code_local/HFT-pipeline-v2/data/exports/e5_timebased_60s_v3p0",
+      "duration_seconds": 0.8975013750605285,
+      "gate_g_ic_count_passed": true,
+      "gate_g_ic_passed": true,
+      "gate_g_return_std_passed": true,
+      "gate_g_stability_passed": true,
+      "horizon_idx": 0,
+      "horizon_value": 10,
+      "ic_count": 12,
+      "n_days_used": 162,
+      "n_folds_used": 20,
+      "n_sequences_sampled": 47963,
+      "per_feature_ic": [
+        {
+          "bypassed": false,
+          "feature_idx": 84,
+          "feature_name": "true_ofi",
+          "ic": 0.250874372220845,
+          "p_value": 0.0
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 85,
+          "feature_name": "depth_norm_ofi",
+          "ic": 0.24202686879611945,
+          "p_value": 0.0
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 45,
+          "feature_name": "volume_imbalance",
+          "ic": -0.17940569046832713,
+          "p_value": 0.0
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 44,
+          "feature_name": "total_ask_volume",
+          "ic": 0.11788423727824293,
+          "p_value": 5.570223272074123e-148
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 43,
+          "feature_name": "total_bid_volume",
+          "ic": -0.07925656827578623,
+          "p_value": 1.0822286166923044e-67
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 15,
+          "feature_name": "ask_size_l5",
+          "ic": 0.06078019639055664,
+          "p_value": 1.6987698584250423e-40
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 17,
+          "feature_name": "ask_size_l7",
+          "ic": 0.057375850033726083,
+          "p_value": 2.875890233047457e-36
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 14,
+          "feature_name": "ask_size_l4",
+          "ic": 0.056454762853620895,
+          "p_value": 3.6409195395453795e-35
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 19,
+          "feature_name": "ask_size_l9",
+          "ic": 0.055885818528244834,
+          "p_value": 1.7112573171624882e-34
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 91,
+          "feature_name": "depth_asymmetry",
+          "ic": -0.052113888383019814,
+          "p_value": 3.2978703580544805e-30
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 18,
+          "feature_name": "ask_size_l8",
+          "ic": 0.0512342599519623,
+          "p_value": 2.984148566991734e-29
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 16,
+          "feature_name": "ask_size_l6",
+          "ic": 0.05116615445950684,
+          "p_value": 3.533555519561352e-29
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 13,
+          "feature_name": "ask_size_l3",
+          "ic": 0.049145591632787054,
+          "p_value": 4.80454510589989e-27
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 73,
+          "feature_name": "depth_ticks_ask",
+          "ic": 0.04037585696767858,
+          "p_value": 9.081511962040027e-19
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 72,
+          "feature_name": "depth_ticks_bid",
+          "ic": -0.039267173502386704,
+          "p_value": 7.780542233662237e-18
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 12,
+          "feature_name": "ask_size_l2",
+          "ic": 0.03743571972710171,
+          "p_value": 2.3789140926677676e-16
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 39,
+          "feature_name": "bid_size_l9",
+          "ic": -0.03626111374490485,
+          "p_value": 1.9615120291321526e-15
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 35,
+          "feature_name": "bid_size_l5",
+          "ic": -0.032687924925691544,
+          "p_value": 8.036480101964798e-13
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 54,
+          "feature_name": "net_order_flow",
+          "ic": 0.030021738578329234,
+          "p_value": 4.825951891410592e-11
+        },
+        {
+          "bypassed": false,
+          "feature_idx": 11,
+          "feature_name": "ask_size_l1",
+          "ic": 0.028926191076326598,
+          "p_value": 2.356102337555194e-10
+        }
+      ],
+      "profile_ref_hash": "",
+      "reason": "all gates passed",
+      "return_std_bps": 32.6841487062289,
+      "schema_version": "3.0",
+      "split": "train",
+      "stability": 10.877260816328963,
+      "status": "pass",
+      "thresholds": {
+        "min_ic": 0.05,
+        "min_ic_count": 2.0,
+        "min_return_std_bps": 5.0,
+        "min_stability": 2.0
+      },
+      "verdict": "PASS"
+    }
+  },
+  "hypothesis": "H1 PRIMARY (HORIZON DECAY): For each (model \u00d7 label) arm, test_ic monotonically decays H10 > H60 > H300. GO if \u22653/4 arms decay strictly. REFUTE closes horizon-decay-as-alpha for v3p0. H2 BASELINE: temporal_ridge captures \u226580% TLOB IC within (label, horizon). Pass \u22654/6 cells. H3 COST: backtest median |prediction| > 1.4 bps Deep ITM. Auto-applied. H4 NEGATIVE CONTROL: mean OptRet across 8 thresholds > -0.5% at \u22652/4 arms at H10. H5 ARCHITECTURAL INVARIANT: Ridge bit-exact across cells (Phase A.3 REDESIGN lock). H6 LABEL-EXECUTION DIAGNOSTIC: point/smoothed IC ratio per (model, horizon) cell tests CLAUDE.md E8 finding (informational). Single-seed (seed=42); R-16d-extended if INDETERMINATE.\n",
+  "manifest_path": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/experiments/sweeps/cycle8_r16d_horizon_axis.yaml",
+  "name": "cycle8_r16d_horizon_axis__temporal_ridge_smoothed_return_H10",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {
+      "extractor": "2720f09c7dc550c0f36952146b40597c33f276351e6b5a4d2ee638eab260e98c",
+      "manifest": "1d36deb843ee1e221a4ca19ad8ba728456f6ba894a5c5b7d5587541cdb3e5726",
+      "trainer": "96008c43d0f837d88a93329296a1bb26eb70c05ab03665d3a221fe4348cb4580"
+    },
+    "contract_version": "3.0",
+    "data_dir_hash": "6c2381c95ec63d7686720f35bc188f26a8fd447902a4ab8ffd0a4cfce60fb572",
+    "git": {
+      "branch": "",
+      "commit_hash": "not_git_tracked",
+      "dirty": false,
+      "short_hash": "not_git_"
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": "2026-05-13T06:09:03.989030+00:00"
+  },
+  "record_type": "training",
+  "signal_export_output_dir": "/Users/knight/code_local/HFT-pipeline-v2/outputs/experiments/temporal_ridge_smoothed_return_H10/signals/test",
+  "stages_completed": [
+    "validation",
+    "training",
+    "signal_export",
+    "backtesting"
+  ],
+  "status": "completed",
+  "sub_records": [],
+  "sweep_failure_info": {},
+  "sweep_id": "cycle8_r16d_horizon_axis_20260513T060832",
+  "tags": [
+    "nvda",
+    "cycle8",
+    "r16d",
+    "regression",
+    "horizon_axis",
+    "v3p0",
+    "sweep",
+    "phase_y_composability",
+    "horizon_decay",
+    "e8_closure",
+    "hardening_bundle_validation"
+  ],
+  "training_config": {
+    "data": {
+      "data_dir": "../data/exports/e5_timebased_60s_v3p0",
+      "feature_count": 98,
+      "feature_set": "nvda_short_term_98_src98_v1",
+      "horizon_idx": 0,
+      "labeling_strategy": "regression",
+      "labels": {
+        "horizons": [
+          10,
+          60,
+          300
+        ],
+        "primary_horizon_idx": 0,
+        "return_type": "smoothed_return",
+        "sample_weights": "none",
+        "source": "forward_prices",
+        "task": "regression"
+      },
+      "normalization": {
+        "clip_value": 10.0,
+        "eps": 1e-08,
+        "exclude_features": [
+          93
+        ],
+        "strategy": "hybrid"
+      },
+      "num_classes": 3,
+      "sequence": {
+        "stride": 1,
+        "window_size": 20
+      }
+    },
+    "description": "R-16d base; 3 axes override model_type + return_type + horizon (H10 default). Single seed=42.",
+    "log_level": "INFO",
+    "model": {
+      "dropout": 0.1,
+      "input_size": 98,
+      "model_type": "temporal_ridge",
+      "num_classes": 3,
+      "params": {
+        "alpha": 1.0,
+        "features": {
+          "include_momentum": true,
+          "include_volatility": true,
+          "rolling_windows": [
+            3,
+            5,
+            10
+          ],
+          "signal_indices": [
+            85,
+            84,
+            86,
+            56,
+            45
+          ],
+          "top_k_signals": 3
+        }
+      },
+      "regression_loss_delta": 12.6,
+      "regression_loss_type": "huber",
+      "task_type": "regression",
+      "tlob_dataset_type": "nvda",
+      "tlob_hidden_dim": 32,
+      "tlob_mlp_expansion": 4.0,
+      "tlob_num_heads": 2,
+      "tlob_num_layers": 2,
+      "tlob_use_bin": true,
+      "tlob_use_cvml": false,
+      "tlob_use_sinusoidal_pe": true
+    },
+    "model_config_hash": "be40f8f0c79bb207eddc766989c90b6cdf4ae31dde589e28d7ecea54e81022ff",
+    "name": "cycle8_r16d_base",
+    "output_dir": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle8_r16d_horizon_axis_20260513T060832",
+    "tags": [
+      "cycle8",
+      "r16d",
+      "nvda",
+      "regression",
+      "horizon_axis",
+      "v3p0",
+      "sweep"
+    ],
+    "train": {
+      "batch_size": 128,
+      "early_stopping_patience": 5,
+      "epochs": 30,
+      "gradient_clip_norm": 1.0,
+      "learning_rate": 0.0005,
+      "loss_type": "huber",
+      "mixed_precision": false,
+      "num_workers": 0,
+      "pin_memory": false,
+      "scheduler": "cosine",
+      "seed": 42,
+      "task_type": "regression",
+      "use_class_weights": false,
+      "weight_decay": 0.01
+    }
+  },
+  "training_metrics": {
+    "_trainer_config_source": "inline",
+    "test_directional_accuracy": 0.6205743996038623,
+    "test_ic": 0.32886537901639196,
+    "test_mae": 18.224533729097512,
+    "test_pearson": 0.3362271230973073,
+    "test_profitable_accuracy": 0.6412604781123875,
+    "test_r2": 0.10370266318131849,
+    "test_rmse": 26.206691264574836
+  }
+}

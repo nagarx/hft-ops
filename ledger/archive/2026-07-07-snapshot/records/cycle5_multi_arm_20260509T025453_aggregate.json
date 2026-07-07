@@ -1,0 +1,203 @@
+{
+  "artifacts": [],
+  "axis_values": {},
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": null,
+  "contract_version": "",
+  "created_at": "2026-05-09T02:55:20.822268+00:00",
+  "dataset_health": {},
+  "description": "",
+  "duration_seconds": 26.65233179158531,
+  "experiment_id": "cycle5_multi_arm_20260509T025453_aggregate",
+  "experiment_provenance_hash": null,
+  "extraction_config": {},
+  "feature_set_ref": null,
+  "fingerprint": "13d7c8806ae974f90c1cc0e6cd5aee26e935fa99adf73130ee448f79eeb6934a",
+  "gate_reports": {},
+  "hypothesis": "H1 (label-execution alignment): point_return arms produce HIGHER test-set directional accuracy than smoothed_return arms at H10 60s, REVERSING the R9-R14 pattern (which trained on smoothed labels and showed DA=48.3% on point returns). If H1 holds with BH q < 0.10 across model_type axis, point-return labels are tradeable. H2 (architecture invariance): temporal_ridge captures \u226580% of TLOB IC at H10 (replicates CLAUDE.md \u00a7Validated Findings: \"TemporalRidge captures 91% of TLOB IC\"). Cycle 5 confirms or refutes on v3p0 corpus. H3 (horizon decay): IC decays monotonically H10 > H60 > H300 (replicates OFI ACF=0.266 at 5m persistence ceiling).\n",
+  "manifest_path": "",
+  "name": "cycle5_multi_arm",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {},
+    "contract_version": "",
+    "data_dir_hash": "",
+    "git": {
+      "branch": "",
+      "commit_hash": "",
+      "dirty": false,
+      "short_hash": ""
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": ""
+  },
+  "record_type": "sweep_aggregate",
+  "signal_export_output_dir": null,
+  "stages_completed": [],
+  "status": "partial",
+  "sub_records": [
+    {
+      "axis_values": {
+        "horizon_value": "H10",
+        "model_type": "temporal_ridge",
+        "return_type": "point_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 5.538721999851987,
+      "experiment_id": "cycle5_multi_arm__temporal_ridge_point_return_H10_20260509T025459_71587173",
+      "fingerprint": "71587173fbf369bc71ff8c52d10b8be04202195c4999785a5c865b4043f0ac27",
+      "name": "cycle5_multi_arm__temporal_ridge_point_return_H10",
+      "status": "completed",
+      "training_metrics": {
+        "_trainer_config_source": "inline",
+        "test_directional_accuracy": 0.6205743996038623,
+        "test_ic": 0.32886537901639196,
+        "test_mae": 18.224533729097512,
+        "test_pearson": 0.3362271230973073,
+        "test_profitable_accuracy": 0.6412604781123875,
+        "test_r2": 0.10370266318131849,
+        "test_rmse": 26.206691264574836
+      }
+    },
+    {
+      "axis_values": {
+        "horizon_value": "H60",
+        "model_type": "temporal_ridge",
+        "return_type": "point_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 4.796646083937958,
+      "experiment_id": "cycle5_multi_arm__temporal_ridge_point_return_H60_20260509T025504_229f6042",
+      "fingerprint": "229f60424432527a6a1d59320b30247f470e49eaabb287667076ed114ec8e48d",
+      "name": "cycle5_multi_arm__temporal_ridge_point_return_H60",
+      "status": "completed",
+      "training_metrics": {
+        "_trainer_config_source": "inline",
+        "test_directional_accuracy": 0.6205743996038623,
+        "test_ic": 0.32886537901639196,
+        "test_mae": 18.224533729097512,
+        "test_pearson": 0.3362271230973073,
+        "test_profitable_accuracy": 0.6412604781123875,
+        "test_r2": 0.10370266318131849,
+        "test_rmse": 26.206691264574836
+      }
+    },
+    {
+      "axis_values": {
+        "horizon_value": "H300",
+        "model_type": "temporal_ridge",
+        "return_type": "point_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 4.7533775409683585,
+      "experiment_id": "cycle5_multi_arm__temporal_ridge_point_return_H300_20260509T025508_71e195ee",
+      "fingerprint": "71e195ee5f6be55b1d3db015ada8958a2d4f8c1917163741890df8fa97d32b53",
+      "name": "cycle5_multi_arm__temporal_ridge_point_return_H300",
+      "status": "completed",
+      "training_metrics": {
+        "_trainer_config_source": "inline",
+        "test_directional_accuracy": 0.6205743996038623,
+        "test_ic": 0.32886537901639196,
+        "test_mae": 18.224533729097512,
+        "test_pearson": 0.3362271230973073,
+        "test_profitable_accuracy": 0.6412604781123875,
+        "test_r2": 0.10370266318131849,
+        "test_rmse": 26.206691264574836
+      }
+    },
+    {
+      "axis_values": {
+        "horizon_value": "H10",
+        "model_type": "temporal_ridge",
+        "return_type": "smoothed_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 0.0,
+      "experiment_id": "cycle5_smoke__temporal_ridge_smoothed_return_H10_20260509T024449_96d28107",
+      "fingerprint": "96d28107ec2ffde89c569645fbae33de44958725d47451604bf02ea4670e881a",
+      "name": "cycle5_multi_arm__temporal_ridge_smoothed_return_H10",
+      "status": "skipped_duplicate",
+      "training_metrics": {}
+    },
+    {
+      "axis_values": {
+        "horizon_value": "H60",
+        "model_type": "temporal_ridge",
+        "return_type": "smoothed_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 4.750397874973714,
+      "experiment_id": "cycle5_multi_arm__temporal_ridge_smoothed_return_H60_20260509T025513_090d48d6",
+      "fingerprint": "090d48d67983d867d1f90475afd68aea035ab17616c5fc037cfe1433d765387f",
+      "name": "cycle5_multi_arm__temporal_ridge_smoothed_return_H60",
+      "status": "completed",
+      "training_metrics": {
+        "_trainer_config_source": "inline",
+        "test_directional_accuracy": 0.6205743996038623,
+        "test_ic": 0.32886537901639196,
+        "test_mae": 18.224533729097512,
+        "test_pearson": 0.3362271230973073,
+        "test_profitable_accuracy": 0.6412604781123875,
+        "test_r2": 0.10370266318131849,
+        "test_rmse": 26.206691264574836
+      }
+    },
+    {
+      "axis_values": {
+        "horizon_value": "H300",
+        "model_type": "temporal_ridge",
+        "return_type": "smoothed_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 4.7695166249759495,
+      "experiment_id": "cycle5_multi_arm__temporal_ridge_smoothed_return_H300_20260509T025518_ca37e58b",
+      "fingerprint": "ca37e58b59fcf235acce30974f4564c1c56af882713d4776e1ee9bf6adfdb4ab",
+      "name": "cycle5_multi_arm__temporal_ridge_smoothed_return_H300",
+      "status": "completed",
+      "training_metrics": {
+        "_trainer_config_source": "inline",
+        "test_directional_accuracy": 0.6205743996038623,
+        "test_ic": 0.32886537901639196,
+        "test_mae": 18.224533729097512,
+        "test_pearson": 0.3362271230973073,
+        "test_profitable_accuracy": 0.6412604781123875,
+        "test_r2": 0.10370266318131849,
+        "test_rmse": 26.206691264574836
+      }
+    },
+    {
+      "axis_values": {
+        "horizon_value": "H10",
+        "model_type": "tlob",
+        "return_type": "point_return"
+      },
+      "backtest_metrics": {},
+      "duration_seconds": 2.0436716668773443,
+      "experiment_id": "cycle5_multi_arm__tlob_point_return_H10_20260509T025520_334a18c8",
+      "fingerprint": "334a18c80ae7a5bd8bdc9c6f0a42291ea0dd6e62f8d20e8d6a837b1e9f7af6e1",
+      "name": "cycle5_multi_arm__tlob_point_return_H10",
+      "status": "failed",
+      "training_metrics": {
+        "_trainer_config_source": "inline"
+      }
+    }
+  ],
+  "sweep_failure_info": {},
+  "sweep_id": "cycle5_multi_arm_20260509T025453",
+  "tags": [
+    "nvda",
+    "cycle5",
+    "regression",
+    "multi-arm",
+    "v3p0",
+    "sweep",
+    "mvp-3",
+    "phase-y-composability"
+  ],
+  "training_config": {},
+  "training_metrics": {}
+}

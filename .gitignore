@@ -38,6 +38,16 @@ ledger/records/*.json
 # here as part of α-5/100 (Phase α-1.1 hardening cycle, 2026-05-10).
 ledger/runs/
 
+# --- Ledger dormancy snapshot (2026-07-07, TRACKED archive) ---
+# The LIVE ledger/{index.json,records/*.json,runs/} above stay ignored
+# (auto-rebuilt runtime data). This one-time snapshot of the 186
+# frozen-in-practice records + index is version-controlled so the
+# 2026-03..2026-05 orchestrator-experiment provenance survives a re-clone.
+# The patterns above are path-anchored and already do NOT match this
+# subtree; these negations are explicit/defensive, not required today.
+!ledger/archive/
+!ledger/archive/**
+
 # Phase R-17 F1 (2026-05-11): backtester producer-side ledger records land at
 # `<manifest.parent.parent>/ledger/runs/` per readability:334 convention. For
 # manifests in experiments/sweeps/, that resolves to experiments/ledger/runs/.

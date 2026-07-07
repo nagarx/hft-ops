@@ -1,0 +1,167 @@
+{
+  "artifacts": [],
+  "axis_values": {
+    "horizon_value": "H60",
+    "model_type": "tlob",
+    "return_type": "smoothed_return"
+  },
+  "backtest_metrics": {},
+  "backtest_params": {},
+  "cache_info": {},
+  "compatibility_fingerprint": "5dc8a67daa99096ef91b1a0ce2ae898d84eef16bce44c8d9e4fc9ed10a917d12",
+  "contract_version": "3.0",
+  "created_at": "2026-05-10T00:57:08.616555+00:00",
+  "dataset_health": {},
+  "description": "Cycle 5 first canonical multi-arm sweep on v3p0 corpus. 12 grid points (model_type \u00d7 return_type \u00d7 horizons). Produces FIRST live empirical validation of cross-arm pairwise-bootstrap-compare tooling shipped in Phase V.B.4. Target: \u226510 records with populated experiment_provenance_ hash (Phase Y composability) + \u22651 BH FDR-significant cross-arm IC delta.\n",
+  "duration_seconds": 376.02411170792766,
+  "experiment_id": "cycle5_multi_arm__tlob_smoothed_return_H60_20260510T005708_51dae5eb",
+  "experiment_provenance_hash": "3629e964a7e6c72872271719c638c0697ff060f51da961e5dd7a628db3518fc1",
+  "extraction_config": {},
+  "feature_set_ref": {
+    "content_hash": "122fe5cbfb657bf91dddeef4e687f7d8d6f120ccd67b7ce57528063bf62e43d2",
+    "name": "nvda_short_term_98_src98_v1"
+  },
+  "fingerprint": "51dae5eb5b455c82dfd8ca5dcb410cfd13a7057b31e901b0b34c0c568e94d3d3",
+  "gate_reports": {},
+  "hypothesis": "H1 (label-execution alignment): point_return arms produce HIGHER test-set directional accuracy than smoothed_return arms at H10 60s, REVERSING the R9-R14 pattern (which trained on smoothed labels and showed DA=48.3% on point returns). If H1 holds with BH q < 0.10 across model_type axis, point-return labels are tradeable. H2 (architecture invariance): temporal_ridge captures \u226580% of TLOB IC at H10 (replicates CLAUDE.md \u00a7Validated Findings: \"TemporalRidge captures 91% of TLOB IC\"). Cycle 5 confirms or refutes on v3p0 corpus. H3 (horizon decay): IC decays monotonically H10 > H60 > H300 (replicates OFI ACF=0.266 at 5m persistence ceiling).\n",
+  "manifest_path": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/experiments/sweeps/cycle5_multi_arm.yaml",
+  "name": "cycle5_multi_arm__tlob_smoothed_return_H60",
+  "notes": "",
+  "parent_experiment_id": "",
+  "provenance": {
+    "config_hashes": {
+      "extractor": "2720f09c7dc550c0f36952146b40597c33f276351e6b5a4d2ee638eab260e98c",
+      "manifest": "ed7285462afe30c8313e76e3571d38596cf090649c28c32b9188f84de8fb4d0c",
+      "trainer": "e28f59b47071d678ca6942b6e401140a8204a97ee0b9dbdd5cf6cfcc91f804f4"
+    },
+    "contract_version": "3.0",
+    "data_dir_hash": "6c2381c95ec63d7686720f35bc188f26a8fd447902a4ab8ffd0a4cfce60fb572",
+    "git": {
+      "branch": "",
+      "commit_hash": "not_git_tracked",
+      "dirty": false,
+      "short_hash": "not_git_"
+    },
+    "retroactive": false,
+    "schema_version": "1.0",
+    "timestamp_utc": "2026-05-10T00:57:08.629299+00:00"
+  },
+  "record_type": "training",
+  "signal_export_output_dir": "/Users/knight/code_local/HFT-pipeline-v2/outputs/experiments/tlob_smoothed_return_H60/signals/test",
+  "stages_completed": [
+    "training",
+    "signal_export"
+  ],
+  "status": "completed",
+  "sub_records": [],
+  "sweep_failure_info": {},
+  "sweep_id": "cycle5_multi_arm_20260510T003111",
+  "tags": [
+    "nvda",
+    "cycle5",
+    "regression",
+    "multi-arm",
+    "v3p0",
+    "sweep",
+    "mvp-3",
+    "phase-y-composability"
+  ],
+  "training_config": {
+    "data": {
+      "data_dir": "../data/exports/e5_timebased_60s_v3p0",
+      "feature_count": 98,
+      "feature_set": "nvda_short_term_98_src98_v1",
+      "horizon_idx": 0,
+      "labeling_strategy": "regression",
+      "labels": {
+        "horizons": [
+          10,
+          60,
+          300
+        ],
+        "primary_horizon_idx": 1,
+        "return_type": "smoothed_return",
+        "sample_weights": "none",
+        "source": "forward_prices",
+        "task": "regression"
+      },
+      "normalization": {
+        "clip_value": 10.0,
+        "eps": 1e-08,
+        "exclude_features": [
+          93
+        ],
+        "strategy": "hybrid"
+      },
+      "num_classes": 3,
+      "sequence": {
+        "stride": 1,
+        "window_size": 20
+      }
+    },
+    "description": "Cycle 5 multi-arm base; axes override model_type, data.labels.return_type, and training.horizon_value.",
+    "log_level": "INFO",
+    "model": {
+      "dropout": 0.1,
+      "input_size": 98,
+      "model_type": "tlob",
+      "num_classes": 3,
+      "regression_loss_delta": 12.6,
+      "regression_loss_type": "huber",
+      "task_type": "regression",
+      "tlob_dataset_type": "nvda",
+      "tlob_hidden_dim": 32,
+      "tlob_mlp_expansion": 4.0,
+      "tlob_num_heads": 2,
+      "tlob_num_layers": 2,
+      "tlob_use_bin": true,
+      "tlob_use_cvml": false,
+      "tlob_use_sinusoidal_pe": true
+    },
+    "model_config_hash": "de47c0ef49abc0ef5d9d69efe1d4003a8b9551f24d5e6574b77f52fc041ecbb4",
+    "name": "cycle5_multi_arm_base",
+    "output_dir": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle5_multi_arm_20260510T003111",
+    "tags": [
+      "cycle5",
+      "nvda",
+      "regression",
+      "multi-arm",
+      "v3p0",
+      "sweep"
+    ],
+    "train": {
+      "batch_size": 128,
+      "early_stopping_patience": 5,
+      "epochs": 30,
+      "gradient_clip_norm": 1.0,
+      "learning_rate": 0.0005,
+      "loss_type": "huber",
+      "mixed_precision": false,
+      "num_workers": 0,
+      "pin_memory": false,
+      "scheduler": "cosine",
+      "seed": 42,
+      "task_type": "regression",
+      "use_class_weights": false,
+      "weight_decay": 0.01
+    }
+  },
+  "training_metrics": {
+    "_trainer_config_source": "inline",
+    "best_val_directional_accuracy": 0.5422875752491858,
+    "best_val_ic": 0.13384181594965225,
+    "best_val_loss": 481.41944006224793,
+    "best_val_mae": 43.96267538617922,
+    "best_val_pearson": 0.11898099829063745,
+    "best_val_profitable_accuracy": 0.5474171164225135,
+    "best_val_r2": 0.0035034156945468187,
+    "best_val_rmse": 61.98074659599178,
+    "test_directional_accuracy": 0.5436316375789083,
+    "test_ic": 0.14595854781981918,
+    "test_mae": 49.354655819597276,
+    "test_pearson": 0.13367182704718672,
+    "test_profitable_accuracy": 0.5505911465493538,
+    "test_r2": 0.010971866669875263,
+    "test_rmse": 74.33321717488309
+  }
+}

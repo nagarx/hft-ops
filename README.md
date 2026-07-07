@@ -144,9 +144,9 @@ hft-ops/
 │   ├── scheduler/                # Phase 8A parallel-sweep scheduler + GPU semaphore
 │   │                             # + content-addressed extraction cache
 │   ├── monitor/                  # F5 read-only ledger × discovery-verdict × drift
-│   │                             # surface (scans the 5 allowlisted discovery trees —
+│   │                             # surface (scans the 7 allowlisted discovery trees —
 │   │                             # see monitor/discovery_reader.py DISCOVERY_TREES;
-│   │                             # crypto/multiday trees are NOT scanned)
+│   │                             # .venv/site-packages results-glob hits are guarded out)
 │   ├── feature_sets/             # Phase 4 FeatureSet producer + writer + registry
 │   │                             # (schema + hashing co-moved to hft_contracts in Phase 6)
 │   ├── provenance/               # Shim re-exporting hft_contracts.provenance
