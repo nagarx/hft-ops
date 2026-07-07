@@ -61,16 +61,24 @@ Experiment Manifest (YAML)
     ├─ manifest/loader.py      Parse + resolve ${...} variables
     ├─ manifest/validator.py   Cross-module config validation
     │
-    ├─ stages/extraction.py    → cargo run --bin export_dataset
-    ├─ stages/raw_analysis.py  → MBO-LOB-analyzer/scripts/run_analysis.py
-    ├─ stages/dataset_analysis → lob-dataset-analyzer/scripts/run_analysis.py
-    ├─ stages/training.py      → lob-model-trainer/scripts/train.py
-    ├─ stages/backtesting.py   → lob-backtester/scripts/backtest_deeplob.py
+    │  Stage runners (_build_stage_runners order; subprocess unless noted):
+    ├─ stages/extraction.py       → cargo run --bin export_dataset
+    ├─ stages/raw_analysis.py     → MBO-LOB-analyzer/scripts/run_analysis.py
+    ├─ stages/dataset_analysis.py → lob-dataset-analyzer/scripts/run_analysis.py
+    ├─ stages/validation.py       → IC gate (in-process: hft_evaluator.fast_gate)
+    ├─ stages/training.py         → lob-model-trainer/scripts/train.py
+    ├─ stages/post_training_gate  → regression-detection gate (in-process; opt-in)
+    ├─ stages/signal_export.py    → lob-model-trainer/scripts/export_signals.py
+    ├─ stages/backtesting.py      → lob-backtester backtest script
+    │  (stages/contract_preflight.py — in-process preflight inside training; NOT a registered stage)
     │
+    ├─ scheduler/              Parallel sweep exec + content-addressed extraction cache (Phase 8A)
+    ├─ feature_sets/           FeatureSet registry (Phase 4 producer/writer/registry)
     ├─ provenance/lineage.py   Capture git hash, config hash, data hash
     ├─ ledger/dedup.py         Fingerprint-based duplicate detection
     ├─ ledger/ledger.py        Append-only JSON-backed storage
-    └─ ledger/comparator.py    Cross-experiment comparison + ranking
+    ├─ ledger/comparator.py    Cross-experiment comparison + ranking
+    └─ monitor/                Read-only ledger × discovery-verdict × drift surface (F5)
 ```
 
 ### Key Invariants
@@ -153,17 +161,20 @@ Validation checks:
 
 ### 2.5 stages/
 
-Each stage runner implements: `validate_inputs()`, `run()`, `validate_outputs()`.
+Each stage runner implements: `validate_inputs()`, `run()`, `validate_outputs()`. `_build_stage_runners()` (in `cli.py`) is the single dispatch-order SSoT shared by `run` and `sweep run`; a stage runs only when `manifest.stages.<name>.enabled`. The registered stages, in order (subprocess stages invoke a sibling-repo CLI with no Python imports; two gate stages run **in-process**):
 
-All stages invoke module CLIs as subprocesses (no Python imports):
+| Stage | Runner | How it runs |
+|-------|--------|-------------|
+| extraction | `ExtractionRunner` | subprocess → `cargo run --release --bin export_dataset --features parallel -- --config ...` (consults the extraction cache first — §2.9) |
+| raw_analysis | `RawAnalysisRunner` | subprocess → `MBO-LOB-analyzer/scripts/run_analysis.py` |
+| dataset_analysis | `DatasetAnalysisRunner` | subprocess → `lob-dataset-analyzer/scripts/run_analysis.py` |
+| validation | `ValidationRunner` | **in-process** — the mandatory IC gate; calls `hft_evaluator.fast_gate.run_fast_gate` as a **library** (Phase 2b: library-over-subprocess for lower latency + simpler tests) |
+| training | `TrainingRunner` | subprocess → `lob-model-trainer/scripts/train.py`; runs `contract_preflight` in-process first (see below) |
+| post_training_gate | `PostTrainingGateRunner` | **in-process** — regression-detection gate (floor / prior-best-ratio via `ExperimentLedger.filter()` / cost-breakeven); default `enabled=False`, opt-in |
+| signal_export | `SignalExportRunner` | subprocess → `lob-model-trainer/scripts/export_signals.py` |
+| backtesting | `BacktestRunner` | subprocess → `lob-backtester` backtest script |
 
-| Stage | Command |
-|-------|---------|
-| extraction | `cargo run --release --bin export_dataset --features parallel -- --config ...` |
-| raw_analysis | `python MBO-LOB-analyzer/scripts/run_analysis.py --profile ... --data-dir ...` |
-| dataset_analysis | `python lob-dataset-analyzer/scripts/run_analysis.py --profile ... --data-dir ...` |
-| training | `python lob-model-trainer/scripts/train.py --config ... --output-dir ...` |
-| backtesting | `python lob-backtester/scripts/backtest_deeplob.py --experiment ...` |
+**Not a registered stage**: `stages/contract_preflight.py` — an **in-process** InputContract pre-flight invoked inside `TrainingRunner.run`. It validates the resolved trainer config against `_INPUT_CONTRACTS` (a read-only `MappingProxyType` mirror of the live `lobmodels.ModelRegistry`) and fails the training stage with a `gate_report` on a contract violation. The module is AST-locked torch-free (Phase VI snapshot-migration guard). Support modules: `stages/base.py` (shared runner base) + `stages/_override_discipline.py` (sweep-override SSoT helper).
 
 Training stage: accepts either `config: <path>` (legacy) or inline `trainer_config: <dict>` (Phase 2b — exactly-one-of). Applies manifest overrides to the effective config, resolves `horizon_value` to `horizon_idx` from export metadata, materialises the effective config to disk when inline (`_materialize_inline_config`) after rewriting any relative `_base:` paths against the manifest directory (`_absolutize_inline_base_paths`).
 
@@ -249,21 +260,93 @@ Regression guard: `tests/test_fingerprint_base_mutation.py` (5 tests):
 4. Depth overruns raise `ValueError`.
 5. Malformed `_base:` values (wrong type) raise `ValueError`.
 
+### 2.8 feature_sets/
+
+The Phase 4 FeatureSet registry — content-addressed selection artifacts at `contracts/feature_sets/<name>.json` bridging the evaluator (producer) and the trainer (consumer). Flat submodule layout so callers write `from hft_ops.feature_sets import FeatureSet`:
+
+| Submodule | Responsibility |
+|-----------|----------------|
+| `hashing` | content-addressed SHA-256 over `(sorted-unique indices, source_feature_count, contract_version)` |
+| `schema` | `FeatureSet` / `FeatureSetRef` / `FeatureSetAppliesTo` / `FeatureSetProducedBy` dataclasses + validators |
+| `writer` | atomic JSON writes (refuse-overwrite + idempotent-on-match) |
+| `registry` | read-side queries (`list` / `get` / `verify`) |
+| `producer` | evaluator → FeatureSet orchestration |
+
+`schema` + `hashing` co-moved to `hft_contracts.feature_sets.*` in Phase 6; the package re-exports from those canonical homes (`writer` / `registry` / `producer` stay hft-ops-side). Consumed by the trainer's `resolve_feature_set`; surfaced via the `hft-ops feature-sets` group + `hft-ops evaluate --save-feature-set` (§5).
+
+### 2.9 scheduler/ — parallel sweep execution + extraction cache (Phase 8A)
+
+A CROSS-stage concern (parallelism dispatches stages; cache reuse spans grid points), so it lives outside `stages/`. Five modules by responsibility:
+
+| Module | Responsibility |
+|--------|----------------|
+| `executor` | `WorkerPoolExecutor` — thread-backed concurrent grid-point dispatch (threads, not processes: workers are subprocess-bound, so the GIL is released during subprocess I/O). Applies the `--on-failure` policy (`continue` / `abort` / `retry:N`) + a transient-vs-fatal error taxonomy. |
+| `resources` | `ResourceSpec` + `GPUSemaphore` — a `filelock`-backed exclusive-GPU lock that survives worker crashes (`fcntl.flock` releases on FD close per POSIX). |
+| `signal_handler` | `SubprocessPidTracker` + a scoped SIGINT handler: on Ctrl-C, cascade SIGTERM → grace → SIGKILL to every tracked subprocess PID; restores the prior handler on exit (pytest-safe). |
+| `sweep_dispatch` | `run_grid_point_stages` — the pure per-grid-point stage runner shared by the sequential and parallel `sweep run` paths (no ledger writes). |
+| `extraction_cache` | content-addressed extraction cache at `data/exports/_cache/<64hex>/` (populate / resolve_or_link / gc). |
+
+**Load-bearing invariants** (do not break when touching sweep execution or caching):
+
+1. **Single-writer**: workers NEVER touch the ledger — they return `WorkerResult` dicts; only the parent serializes `_record_experiment` writes (and the final `sweep_aggregate` record). Dedup is centralized in the parent; workers never query the ledger for dedup.
+2. **GPU-semaphore scope**: `run_grid_point_stages` holds the `GPUSemaphore` only around the GPU-using stages (`training` + `signal_export`); non-GPU stages run without it, maximizing cross-worker parallelism.
+3. **Thread-count injection**: the parent computes `per_worker_threads = cpu_budget / n_parallel` and injects `RAYON_NUM_THREADS` / `OMP_NUM_THREADS` / `MKL_NUM_THREADS` per worker so the Rust extractor + Python trainer do not oversubscribe physical cores.
+4. **Cache key = treatment + build environment**: the key hashes the resolved (post-override, post-`_base`) extractor config **and** the build environment (extractor / reconstructor / hft-statistics git SHAs + `Cargo.lock` + compiled-binary SHA + platform target + `contract_version` + raw-input manifest) — so a code/dep change invalidates a cache that a filename check would miss. Platform-dispatch linking (APFS clonefile / Btrfs+XFS reflink / ext4 hardlink-readonly / cross-fs symlink) + per-hit full-file SHA validation; finalized entries are chmod-readonly.
+5. **Cache outcome is an OBSERVATION, not a treatment** (Invariant 4): the hit/miss outcome is recorded on the record as `cache_info` but never enters `dedup.py::compute_fingerprint` — a cache hit vs miss must not change the fingerprint. The cache-only build-environment inputs (the git/binary/platform SHAs that distinguish a hit from a miss) are DISJOINT from the fingerprint surface. `ResourceSpec` (GPU/CPU execution policy) likewise never enters the fingerprint.
+
+For phase/version/CLI detail see the Phase 8A ship-banners above, the `[extraction_cache]` section of `contracts/pipeline_contract.toml`, and `CHANGELOG.md` (do not hand-copy counts here). CLI: `hft-ops cache {ls,gc,pin,unpin}` + the `--parallel` / `--on-failure` / `--gpus` / `--cpu-budget` flags on `sweep run` (§5).
+
+### 2.10 Discovery integration — monitor/ + the discovery ledger lane (F5)
+
+The bridge between hft-ops and the current research arc: every discovery probe (the `glbx_discovery/` / `xsec_equity_discovery/` / `nvda_discovery/` / … harnesses) emits a normalized verdict JSON, and this subsystem makes those verdicts queryable, fingerprinted, and drift-monitored alongside training runs — one experiment × verdict × provenance × drift surface.
+
+**Read side — `monitor/` (READ-ONLY, torch-free).** A pure reader/adapter over BOTH the experiment ledger AND the discovery-harness `<tree>/**/results/*.json` verdicts (each normalized via the shared root-level `discovery_verdict` adapters). Invariants: it NEVER writes the ledger, rebuilds the index, or touches harness code; and no module here imports torch / lobmodels / lobtrainer at module scope (locked by an AST scan + a `sys.modules` runtime sentinel). Five modules:
+
+| Module | Responsibility |
+|--------|----------------|
+| `ledger_reader` | projects `ledger/records/*.json` (via `ExperimentRecord.index_entry()`) into flat `LedgerRow`s; resolves one headline metric per `record_type`; skip-malformed (records read errors, never raises) |
+| `discovery_reader` | reads the discovery trees' `results/*.json` → normalized `Verdict`s; skips `_`-prefixed internals + a filename/glob denylist (sharded data caches co-located in `results/`); a per-file parse failure is recorded, never raised |
+| `drift` | four **observational** drift checks (never auto-fix): stale index-envelope vs disk, fingerprint divergence (same name → ≠ config fingerprints, or ≠ provenance hashes under one fingerprint), stale-stats-version verdict, contract/schema-version mismatch |
+| `table` | `build_monitor_table` — fuses ledger rows + verdicts into one filterable `MonitorRow` surface annotated with drift flags; **collapses** a probe that is BOTH a registered ledger record AND an on-disk verdict onto their shared `config_sha256`/fingerprint so it is not double-counted |
+| `render` | `render_text` / `render_markdown` / `render_json` (table) + `render_drift_text` / `render_drift_json` (drift report) |
+
+The set of discovery tree names is a code constant in `discovery_reader.py` (`DISCOVERY_TREES`), and the file/glob denylists live there too — read them in code for the live lists rather than trusting any enumeration here.
+
+**Write side — `ledger/discovery_record.py::record_from_verdict`.** Adapts a normalized `Verdict` (or a raw harness dict, normalized here via the same `discovery_verdict` adapters) into a fingerprinted `ExperimentRecord` with `record_type="discovery"` (`RecordType.DISCOVERY`). Construction delegates to the `hft_contracts.experiment_recorder.record_from_artifacts` SSoT (never hand-rolled). **The fingerprint IS the probe config hash** (`provenance.config_sha256`, the probe's treatment identity) — it FAILS LOUD (`FingerprintNormalizationError`) if that is not a 64-hex lowercase SHA-256, so distinct probes never conflate (the dedup Phase-3 §3.3b class). The verdict string + rails (`any_tradeable_edge`, `power_class`, `mde`, `family_fwer_p`, DSR, …) are OBSERVATIONS: they land on `training_metrics` / `notes` and NEVER enter any fingerprint input. A discovery probe structurally lacks the four Phase Y trust components, so it composes with `require_complete_provenance=False`.
+
+**CLI**: `hft-ops monitor table` (the unified surface, with `--kind` / `--source-tree` / `--edge-only` / `--status` / `--name-contains` / `--format {text,markdown,json}` filters) and `hft-ops monitor drift` (`--fail-on warn|error` for a CI hook) — both lazy-import the torch-free `monitor/` modules so they never pull the torch import path. Separately, `hft-ops ledger backfill --record-type discovery` adds a discovery-typed record from a metadata-only retroactive manifest — a **distinct** write path that does not call `record_from_verdict`.
+
+### 2.11 cli.py — navigation (a #PY-121 god-object)
+
+`cli.py` is the single largest file in the module (root CLAUDE.md flags it as a `#PY-121` god-object; run `wc -l`). Its organizing structure, to orient without scrolling the whole file:
+
+- **Top-level `main` group commands**: `run`, `validate`, `compare`, `diff`, `check-dup`, `evaluate`.
+- **Sub-groups**: `ledger` (`list` / `show` / `search` / `rebuild-index` / `fingerprint-explain` / `backfill`), `sweep` (`expand` / `run` / `results` / `compare`), `feature-sets` (`list` / `show`), `cache` (`ls` / `gc` / `pin` / `unpin`), `monitor` (`table` / `drift`).
+- **Shared helpers**: `_build_stage_runners(manifest)` — the stage dispatch-order SSoT (§2.5), used by both `run` and `sweep run`; `_record_experiment(...)` — the post-run harvest loop that assembles + registers the `ExperimentRecord` (captures training metrics, harvests every stage's `gate_report` + the extraction `cache_info`, and passes the signal_export captured metrics to the `record_from_artifacts` SSoT for trust-column harvest — `feature_set_ref` / `compatibility_fingerprint` / `signal_export_output_dir`).
+- **Parallel split**: the `sweep run --parallel > 1` branch is extracted into `cli_parallel_sweep.py::run_sweep_parallel`, which preserves the single-writer invariant (§2.9) — workers run `run_grid_point_stages`; the parent serializes all ledger writes + the final `sweep_aggregate`.
+
 ---
 
 ## 3. Data Flow
 
+Each stage runs only when `manifest.stages.<name>.enabled` (so the chain is a superset — analysis/gate/export stages are commonly skipped):
+
 ```
 hft-ops run manifest.yaml
     │
-    ├─1─ VALIDATE: parse → resolve vars → check contract → cross-validate configs → dedup check
-    ├─2─ EXTRACT:  cargo run (skip if exists + metadata validates)
-    ├─3─ ANALYZE RAW:  python run_analysis.py (optional)
-    ├─4─ ANALYZE DATASET:  python run_analysis.py
-    ├─5─ TRAIN:  resolve horizon_idx → apply overrides → python train.py
-    ├─6─ BACKTEST:  python backtest_deeplob.py
-    └─7─ RECORD:  build ExperimentRecord → compute fingerprint → write to ledger
+    ├─0─ VALIDATE:         parse → resolve vars → check contract → cross-validate configs → dedup check
+    ├─1─ EXTRACT:          cargo run (extraction-cache lookup; skip-if-exists + metadata validates)
+    ├─2─ ANALYZE RAW:      python run_analysis.py (optional)
+    ├─3─ ANALYZE DATASET:  python run_analysis.py (optional)
+    ├─4─ IC GATE:          validation runner (in-process fast_gate; warn/abort/record_only)
+    ├─5─ TRAIN:            contract_preflight → resolve horizon_idx → apply overrides → python train.py
+    ├─6─ POST-TRAIN GATE:  regression-detection gate (in-process; opt-in, default disabled)
+    ├─7─ SIGNAL EXPORT:    python export_signals.py
+    ├─8─ BACKTEST:         python backtest_deeplob.py
+    └─9─ RECORD:  build ExperimentRecord → harvest gate_reports + cache_info + trust columns → fingerprint → write to ledger
 ```
+
+Parallel sweeps dispatch the same per-grid-point stage chain via `scheduler/` (§2.9); the F5 `monitor/` surface (§2.10) reads the resulting ledger records + discovery verdicts read-only.
 
 ---
 
@@ -294,13 +377,18 @@ hft-ops run manifest.yaml
 | `hft-ops ledger search --tags ... --min-f1 ...` | Search ledger |
 | `hft-ops ledger rebuild-index [--dry-run]` | Re-project all records through the current `index_entry()` whitelist (Phase 7.4 Round 4, commit `6ba4e93`). Needed after hft-contracts whitelist expansions; see `ExperimentRecord.index_entry()` for current fields. |
 | `hft-ops ledger fingerprint-explain <manifest.yaml>` | Show the inputs `compute_fingerprint` hashed (Phase 4 4c.3) — debugging dedup decisions |
+| `hft-ops ledger backfill <manifest> --record-type <type>` | Retroactively register a historical experiment (E1-E16-style pre-orchestrator runs) with `provenance.retroactive=True`. `--record-type` ∈ {training, analysis, calibration, backtest, evaluation, sweep_aggregate, **discovery**}. Optional `--metrics-file` / `--parent-id` / `--status` / `--notes`. |
 | `hft-ops check-dup <manifest>` | Check for duplicates |
 | `hft-ops sweep expand <manifest>` | Dry expansion showing grid points |
-| `hft-ops sweep run <manifest>` | Execute all grid points (`--continue-on-failure`) |
+| `hft-ops sweep run <manifest>` | Execute all grid points. Scheduler flags (§2.9): `--parallel N`, `--on-failure continue\|abort\|retry:N`, `--gpus "0,1"\|none\|auto`, `--cpu-budget N` (`--continue-on-failure` deprecated, removal 2026-10-31). |
 | `hft-ops sweep results <sweep_id>` | Compare results from a sweep |
+| `hft-ops sweep compare <sweep_id>` | Paired moving-block-bootstrap significance across a sweep's arms (BH q-values); `compare_sweep_statistical` adapter over `hft_metrics.pairwise_paired_bootstrap_compare` (Phase V.B.4b) |
 | `hft-ops feature-sets list` | List registry entries at `contracts/feature_sets/` |
 | `hft-ops feature-sets show <name>` | Show full FeatureSet JSON |
 | `hft-ops evaluate --save-feature-set <name>` | Produce a FeatureSet from an evaluator run (Phase 4 Batch 4b) |
+| `hft-ops cache {ls,gc,pin,unpin}` | Manage the content-addressed extraction cache (§2.9): list / LRU-by-mtime GC with size-budget / pin / unpin |
+| `hft-ops monitor table` | Unified read-only experiment × verdict × provenance × drift table (§2.10); filters `--kind` / `--source-tree` / `--edge-only` / `--status` / `--name-contains` / `--format {text,markdown,json}` |
+| `hft-ops monitor drift` | Report ledger/verdict drift (stale index envelope, fingerprint divergence, stale stats-version, schema mismatch); `--fail-on warn\|error` exit-code hook for CI |
 
 ---
 
