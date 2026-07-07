@@ -67,3 +67,52 @@ def test_missing_trees_tolerated(tmp_path):
     reader = DiscoveryVerdictReader(tmp_path)   # no discovery trees present at all
     assert reader.read_all() == []
     assert reader.read_errors == []
+
+
+def test_void_and_non_verdict_artifacts_denylisted(tmp_path):
+    # Phase-2 TRUTH (2026-07-07): the VOID superseded verdict
+    # (variance_dl_verdict.json — FINDING-110 / results/SUPERSEDED.md) and the 5
+    # known non-verdict result artifacts must be name-skipped by DEFAULT_DENYLIST,
+    # never surfaced as monitor rows; the CORRECTED variance_dl_v2_verdict.json
+    # must survive.
+    res = "nvda_discovery/variance_dl/results"
+    _put(tmp_path, res, "tradeflow_esnq_P_A7.json")  # unrelated real verdict — survives
+    d = tmp_path / res
+    # Corrected v2 verdict (real verdict shape) — must NOT be denylisted.
+    shutil.copy(FIX / "gex_variance_verdict.json", d / "variance_dl_v2_verdict.json")
+    denylisted = [
+        "variance_dl_verdict.json",              # VOID STOP verdict (class 2)
+        "composite_vrp_confront_env_gates.json", # class 3 — non-verdict artifacts
+        "frozen_scale_model.json",
+        "strike_grids.json",
+        "nvda_0dte_iv.json",
+        "execution_timing_curve.json",
+    ]
+    for name in denylisted:
+        (d / name).write_text('{"note": "must never become a monitor row"}')
+
+    reader = DiscoveryVerdictReader(tmp_path)
+    verdicts = reader.read_all()
+    got = {Path(v.source_path).name for v in verdicts}
+    expected = {"tradeflow_esnq_P_A7.json", "variance_dl_v2_verdict.json"}
+    assert got == expected, (
+        f"denylist must drop the VOID verdict + non-verdict artifacts. "
+        f"expected {expected}, got {got}"
+    )
+    assert reader.read_errors == []  # denylist skip happens BEFORE parsing
+
+
+def test_default_denylist_covers_known_hazards():
+    # Regression lock on the DEFAULT_DENYLIST contents: the VOID variance-DL STOP
+    # verdict + the 5 non-verdict JSONs that live in scanned results/ dirs today.
+    must_deny = {
+        "variance_dl_verdict.json",
+        "composite_vrp_confront_env_gates.json",
+        "frozen_scale_model.json",
+        "strike_grids.json",
+        "nvda_0dte_iv.json",
+        "execution_timing_curve.json",
+    }
+    assert must_deny <= set(DiscoveryVerdictReader.DEFAULT_DENYLIST)
+    # The corrected verdict must never be denylisted.
+    assert "variance_dl_v2_verdict.json" not in DiscoveryVerdictReader.DEFAULT_DENYLIST

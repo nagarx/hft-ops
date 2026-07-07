@@ -12,6 +12,73 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ## [0.3.0-dev] — in progress
 
+### Curation Phase-2 TRUTH (2026-07-07) — monitor denylist hardening + doc drift fixes
+
+**Changed — `monitor/discovery_reader.py` `DEFAULT_DENYLIST` extended (corrupt-result hazard)**
+
+- `variance_dl_verdict.json` denylisted: the `STOP-DL-SPANNED-BY-CARRIERS`
+  verdict is VOID per its sibling `results/SUPERSEDED.md` (crippled-model
+  artifact, FINDING-110); the fused `hft-ops monitor table` previously served
+  it as a live row. The corrected `variance_dl_v2_verdict.json` is served
+  normally.
+- 5 non-verdict result artifacts denylisted (they previously rendered as
+  phantom UNRESOLVED rows via the CommonCoreAdapter catch-all):
+  `composite_vrp_confront_env_gates.json`, `frozen_scale_model.json`,
+  `strike_grids.json`, `nvda_0dte_iv.json`, `execution_timing_curve.json`.
+- Docstrings now state the reader's ACTUAL scope: exactly the 5
+  `DISCOVERY_TREES` harnesses; `crypto_discovery/` / `multiday_discovery/`
+  are NOT scanned (adding them is a Phase-3 change requiring a
+  `.venv`/`site-packages` path guard).
+- NEW tests in `tests/test_monitor_discovery_reader.py`: denylist behavior
+  (VOID verdict + non-verdict artifacts skipped, v2 verdict survives) +
+  a regression lock on the `DEFAULT_DENYLIST` contents.
+
+**Documentation** — adversarially-confirmed drift fixes across `README.md`
+(nonexistent `ledger search --min-ic` flag; `contract_version: "2.2"` example
+that hard-fails the 3.0 validator; 5-of-9 dependency list + install command
+missing the hft-metrics / discovery-verdict editable installs; stale
+architecture tree; archived `PHASE7_ROADMAP.md` pointer), `EXPERIMENT_GUIDE.md`
+(phantom `export_hmhp_signals.py` → `export_signals.py`; orchestrator-first
+`hft-ops run` framing; "Schema 2.2" → 3.0; manifest/sweep inventory refresh
+incl. `seed_stability.yaml` shipped-not-backlog), `CODEBASE.md` (banner/§6
+self-contradictory hand-typed test counts → run-command pointers per
+hft-rules §11; stage-8 `backtest_deeplob.py` fossil → C2 no-default truth;
+9-dep table; §2.10 monitor scope caveat), `stages/backtesting.py` module
+docstring (same C2 fossil), and `experiments/sweeps/README.md`
+(`sweep results` takes a sweep ID, not a manifest path; dead
+`archive/pre_hft_ops_scripts/` pointer → `lob-model-trainer/scripts/archive/`).
+
+### Catch-up summary (2026-05-19 → 2026-07-07) — entries not written at ship time
+
+This block back-fills the gap after the 2026-05-16 bundle below (the file
+was dormant while the work landed; per-commit detail in `git log`):
+
+- **F5 read-only monitor** (`0db6675`, 2026-06-20; fixes `678ae57` + `1fc6e21`):
+  NEW `monitor/` package (ledger_reader / discovery_reader / drift / table /
+  render) + `hft-ops monitor table|drift` CLI over ledger records × discovery
+  verdicts; torch-free, read-only. Runtime dep `discovery-verdict>=0.1.0`
+  declared.
+- **Discovery ledger lane** (`225eca2`, 2026-06-27): `ledger/discovery_record.py::
+  record_from_verdict` adapter (`RecordType.DISCOVERY`), monitor dedup
+  collapse, shard-cache skip-glob hygiene; `hft-contracts>=2.10.0`.
+- **E8 point-return-DA tripwire** (`0d2cbb2`, 2026-06-18): post_training_gate
+  Phase 3c check consuming `hft_metrics.deflated_proportion_test`
+  (`hft-metrics>=0.1.21`).
+- **Fail-loud clusters** (`6eb3626` + `e89c2fd` 2026-05-31, `dc393b0` +
+  `286b8ea` 2026-06-01): stage-name/key SSoT contract boundaries, regression
+  backtest-metric harvest + missing-script fail-loud, no-dark-stage
+  surfacing, scheduler/feature_sets/ledger hygiene trio.
+- **Foundation Integrity** (`0612926` + `b9ed7bd`, 2026-05-30): C1 enforcement
+  delegation + P1a producer-provenance resolver + cache-hit
+  `producer_commits` regression lock.
+- **Hygiene / fixes** (`da90bed` 2026-05-24 atomic gate_report.json write
+  #PY-371; `e100888` + `943ab5c` 2026-05-25 DRY stage dispatch + public
+  hft-metrics imports; `1427c9d` 2026-05-19 cyclic `${}` fail-loud + path
+  traversal).
+- **Research-cycle sweeps** (`d617a75` + `3603eab` 2026-05-19, `c4e2813`
+  2026-06-27): R-19 / R-20 / R-22 manifests + analyzers + verdicts +
+  validation/design SSoT checkpoint.
+
 ### Option B Path B' TIER 1 Hygiene Bundle (2026-05-16 LATE) — #PY-291 + #PY-293-NARROW
 
 **Shipped — 2 fixes closing Wave 2-C hidden findings from Cross-Pipeline Validation cycle 2026-05-16.**

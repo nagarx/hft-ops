@@ -16,8 +16,14 @@ duplicate experiments, and aggregates sweep results.
 ```bash
 cd hft-ops
 python -m venv .venv
-.venv/bin/pip install -e ".[dev]" -e ../hft-contracts/
+.venv/bin/pip install -e ".[dev]" -e ../hft-contracts/ -e ../hft-metrics/ -e ../discovery_verdict/
 ```
+
+All three sibling packages are local-only editable installs: `hft-contracts`
+(contract plane), `hft-metrics` (sweep-compare + post-training-gate
+primitives), and `discovery-verdict` (root `discovery_verdict/`, consumed by
+the F5 monitor). Omitting the latter two breaks `hft-ops sweep compare`,
+the post-training gate, and `hft-ops monitor` at import time.
 
 ## Quick Start
 
@@ -40,7 +46,7 @@ hft-ops diff <experiment_id_1> <experiment_id_2>
 # Browse the ledger
 hft-ops ledger list
 hft-ops ledger show <experiment_id>
-hft-ops ledger search --tags "nvda,tlob" --min-ic 0.30
+hft-ops ledger search --tags "nvda,tlob" --min-f1 0.40   # flags: --tags/--min-f1/--min-accuracy/--model-type
 hft-ops ledger rebuild-index           # re-project records through the current index_entry whitelist
 hft-ops ledger fingerprint-explain <manifest.yaml>  # show fingerprint inputs
 
@@ -67,7 +73,7 @@ Every experiment is defined by a single YAML file in `experiments/`:
 experiment:
   name: "e5_60s_huber_cvml_unified"
   hypothesis: "Huber loss + 60s bars improve regression IC over 5s bars"
-  contract_version: "2.2"
+  contract_version: "3.0"   # must equal hft_contracts.SCHEMA_VERSION (validator hard-fails otherwise)
   tags: [nvda, tlob, regression, h10, 60s]
 
 stages:
@@ -122,25 +128,33 @@ re-specified. Variable substitution (`${...}`) resolves cross-stage paths.
 hft-ops/
 ├── src/hft_ops/
 │   ├── cli.py                    # Click CLI entry point (all subcommands)
+│   ├── cli_parallel_sweep.py     # `sweep run --parallel` branch (single-writer invariant)
 │   ├── config.py                 # Global OpsConfig
 │   ├── paths.py                  # PipelinePaths (multi-repo path resolution)
-│   ├── manifest/                 # Manifest parsing, loading, validation, resolution
+│   ├── manifest/                 # Manifest schema, parsing, loading, validation,
+│   │                             # variable resolution, slot taxonomy + sweep
+│   │                             # expansion / cross-stage override routing (sweep.py)
 │   ├── stages/                   # 8 stage runners (subprocess wrappers + gate runners):
 │   │                             # extraction, raw_analysis, dataset_analysis,
 │   │                             # validation (IC gate), training,
 │   │                             # post_training_gate (regression detection),
 │   │                             # signal_export, backtesting
 │   ├── ledger/                   # Experiment records, storage, dedup fingerprint,
-│   │                             # sweep aggregate writer
+│   │                             # sweep aggregate writer, statistical compare
+│   ├── scheduler/                # Phase 8A parallel-sweep scheduler + GPU semaphore
+│   │                             # + content-addressed extraction cache
+│   ├── monitor/                  # F5 read-only ledger × discovery-verdict × drift
+│   │                             # surface (scans the 5 allowlisted discovery trees —
+│   │                             # see monitor/discovery_reader.py DISCOVERY_TREES;
+│   │                             # crypto/multiday trees are NOT scanned)
 │   ├── feature_sets/             # Phase 4 FeatureSet producer + writer + registry
 │   │                             # (schema + hashing co-moved to hft_contracts in Phase 6)
 │   ├── provenance/               # Shim re-exporting hft_contracts.provenance
-│   ├── sweep.py                  # Sweep expansion + cross-stage override routing
 │   └── utils.py                  # Shared utilities
 ├── experiments/                  # Experiment manifest YAMLs
 │   └── sweeps/                   # Sweep templates (loss_ablation, horizon_sensitivity, ...)
 ├── ledger/                       # Experiment records (append-only JSON)
-└── tests/                        # 433 tests across 30 test files
+└── tests/                        # pytest suite — run `pytest --collect-only -q` for the live count
 ```
 
 ## Phase History Highlights
@@ -173,18 +187,25 @@ hft-ops/
 
 ## Dependencies
 
-- `hft-contracts` — contract validation + canonical dataclasses
-- `click>=8.0` — CLI framework
-- `pyyaml>=6.0` — manifest parsing
-- `rich>=13.0` — terminal output
-- `tomli>=2.0; python_version < '3.11'` — TOML parsing pre-3.11
+Nine runtime dependencies (authoritative pins + rationale comments live in
+`pyproject.toml` `[project.dependencies]`):
+
+- `hft-contracts` — contract validation + canonical dataclasses (local editable)
+- `hft-metrics` — paired-bootstrap sweep compare + E8 tripwire gate primitives (local editable)
+- `discovery-verdict` — normalized verdict schema + adapters for the F5 monitor (local editable, root `discovery_verdict/`)
+- `click` — CLI framework
+- `pyyaml` — manifest parsing
+- `rich` — terminal output
+- `tomli` (Python <3.11) — TOML parsing pre-3.11
+- `filelock` — GPU semaphore + extraction-cache locking (Phase 8A)
+- `packaging` — SemVer parsing for the ledger index envelope (Phase 8B)
 
 ## Running Tests
 
 ```bash
 cd hft-ops
 .venv/bin/python -m pytest tests/ -v
-# Expected: 433 passed (post Phase 7 Stage 7.4 Round 6)
+# Run `pytest --collect-only -q` for the live test count (hand-typed counts drift — hft-rules §11)
 ```
 
 ## Related Documentation
@@ -193,4 +214,5 @@ cd hft-ops
 - `EXPERIMENT_GUIDE.md` — 10-step end-to-end walkthrough.
 - Pipeline-wide ground-truth docs (at monorepo root):
   `CLAUDE.md`, `PIPELINE_ARCHITECTURE.md`, `DOCUMENTATION_INDEX.md`,
-  `PHASE7_ROADMAP.md`, `contracts/pipeline_contract.toml`.
+  `PHASE_P_BACKLOG.md` (absorbed the archived `PHASE7_ROADMAP.md`),
+  `contracts/pipeline_contract.toml`.

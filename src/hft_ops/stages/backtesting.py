@@ -2,8 +2,12 @@
 Backtesting stage runner.
 
 Invokes a backtester script (configurable via manifest) with the model
-checkpoint, signal directory, and backtest parameters. Supports multiple
-scripts: ``backtest_deeplob.py`` (default), ``run_readability_backtest.py``,
+checkpoint, signal directory, and backtest parameters. There is NO default
+script — C2 (2026-05-31) removed the former ``backtest_deeplob.py`` default
+(it resolved pipeline-root-relative to a nonexistent path AND its argparse
+rejects the runner's flags; see ``manifest/schema.py::BacktestingStage``);
+an unset ``stages.backtesting.script`` fails loud at validate-time.
+Supported scripts: ``run_readability_backtest.py``,
 ``run_regression_backtest.py``, ``run_spread_signal_backtest.py``.
 
 The standard ``params`` block (``initial_capital``, ``position_size``,

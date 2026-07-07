@@ -11,7 +11,8 @@ own fingerprint.
 cd hft-ops
 hft-ops sweep expand  experiments/sweeps/<name>.yaml     # preview grid (dry)
 hft-ops sweep run     experiments/sweeps/<name>.yaml     # execute all points
-hft-ops sweep results experiments/sweeps/<name>.yaml     # compare records
+hft-ops sweep results <sweep_id>                         # compare records (takes the sweep ID
+                                                         # printed by `sweep run`, NOT a manifest path)
 ```
 
 ## Authoring Rules
@@ -57,6 +58,13 @@ Templates documented but not yet shipped. Author additively in Tier 2
 
 Legacy ad-hoc scripts (`scripts/e5_baselines.py`, `scripts/e4_baselines.py`,
 `scripts/run_simple_model_ablation.py`, etc.) hand-rolled subprocess loops to
-run parameter sweeps. Those scripts are archived under `archive/pre_hft_ops_scripts/`
-and the per-axis logic moves here. The trainer never needs to be invoked
-manually to vary a hyperparameter; author one sweep manifest instead.
+run parameter sweeps. Those scripts are archived under
+`lob-model-trainer/scripts/archive/` (Phase 6 6D fossil headers; see that
+archive's `README.md`) and the per-axis logic moves here. The trainer never
+needs to be invoked manually to vary a hyperparameter; author one sweep
+manifest instead.
+
+Research-cycle sweep manifests (`cycle*_*.yaml`) also live in this directory
+alongside the templates above — run `ls experiments/sweeps/` for the live
+inventory (a filename suffix like `SUPERSEDED_DUPLICATE_OF_*` marks a
+superseded manifest kept in place for provenance).

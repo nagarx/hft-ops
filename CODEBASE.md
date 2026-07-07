@@ -2,7 +2,7 @@
 
 > **Pipeline scope (2026-06-02).** This module is part of an **intraday trading research pipeline** — an experiment-first platform for discovering and validating *any* profitable **intraday** trading edge (no overnight positions), across approach classes (microstructure/HFT, scalping, intraday momentum, intraday statistical arbitrage, …) and instruments (equities, futures, same-day options). The pipeline *originated* as a high-frequency NVDA MBO/LOB microstructure system — that origin explains the "HFT" / "LOB" / "MBO" naming here — and that microstructure-direction program is now one (largely-closed) track among many. **Names are historical; the mission is general.** This module's role: the experiment orchestrator — a manifest-driven, subprocess-based multi-stage runner (extraction → analysis → IC-gate → training → signal-export → backtesting) with a JSON ledger, fingerprint dedup, the FeatureSet registry, sweep manifests, and content-addressed caching; the "control panel" for reproducible experiments (extending it to new approach classes is additive — register §9). For the full mission + approach taxonomy + capability-readiness boundary, see root `CLAUDE.md` §Research Scope & Charter (+ `CROSS_ASSET_OFI_FINDINGS_AND_ISSUES_2026_06_01.md` §9).
 
-> **Version**: 0.3.0-dev | **Schema**: 3.0 (Phase G G.6.A bump 2.2 → 3.0 MAJOR per CLAUDE.md root rule: any modification to stable features 0-97 = BREAKING) | **Tests**: 1054 pass (Phase 8B envelope auto-rebuild + Phase 8A scheduler + Phase 8C-α post-stage artifact routing + Phase V.A.4 trust-column harvest + R-NN cycle hygiene cumulative; +421 since 633 banner). | **Last Updated**: 2026-05-21 (Cycle A-rev #PY-341 doc-hygiene bundle — banner refresh per validation cycle Wave 2K finding)
+> **Version**: 0.3.0-dev (pyproject; NOTE `src/hft_ops/__init__.py::__version__` still says 0.2.0 — known code-side drift, pyproject is authoritative) | **Schema**: 3.0 (Phase G G.6.A bump 2.2 → 3.0 MAJOR per CLAUDE.md root rule: any modification to stable features 0-97 = BREAKING) | **Tests**: run `.venv/bin/python -m pytest --collect-only -q` for the live count — hand-typed counts are banned here per hft-rules §11 (the prior banner count contradicted §6 for weeks). | **Last Updated**: 2026-07-07 (Curation Phase-2 TRUTH — test-count/dependency/data-flow drift fixes + monitor denylist hardening)
 >
 > **Phase 7.5 SHIPPED (2026-04-23)** — orchestrator integration gaps closed; first `hft-ops validate` + `hft-ops run --dry-run` successful in pipeline history:
 >   - **Task 1a** (`680ba77`): 3 HMHP manifests re-pointed from archived `export_hmhp_signals.py` (Phase 6 6D fossil) to canonical `lob-model-trainer/scripts/export_signals.py`.
@@ -224,6 +224,14 @@ module is a re-export shim with removal deadline 2026-10-31):
 
 **compare_experiments(entries, metric_keys, sort_by, ...)** — sorted comparison table. `diff_experiments(a, b)` — config + metric diff between two records.
 
+**On-disk layout note (stray-output convention)**: besides the canonical
+`ledger/records/*.json` + `ledger/index.json`, backtester *producer-side*
+run records accumulate under `experiments/ledger/runs/` — a side effect of
+the `<manifest.parent.parent>/ledger/runs/` path convention when manifests
+live in `experiments/sweeps/` (Phase R-17 F1, 2026-05-11). Both `ledger/runs/`
+and `experiments/ledger/runs/` are gitignored as regenerable artifacts (see
+`.gitignore` for the rationale comments); they are NOT the queryable ledger.
+
 ### 2.7b Fingerprint Resolution (Phase 3)
 
 `compute_fingerprint` routes trainer YAMLs (both file-based `stages.training.config:` and inline `stages.training.trainer_config:`) through `lobtrainer.config.merge.resolve_inheritance` before hashing, so the fingerprint is computed over the **resolved effective dict** rather than the pre-inheritance raw YAML.
@@ -298,14 +306,14 @@ For phase/version/CLI detail see the Phase 8A ship-banners above, the `[extracti
 
 ### 2.10 Discovery integration — monitor/ + the discovery ledger lane (F5)
 
-The bridge between hft-ops and the current research arc: every discovery probe (the `glbx_discovery/` / `xsec_equity_discovery/` / `nvda_discovery/` / … harnesses) emits a normalized verdict JSON, and this subsystem makes those verdicts queryable, fingerprinted, and drift-monitored alongside training runs — one experiment × verdict × provenance × drift surface.
+The bridge between hft-ops and the current research arc: each discovery probe in the **five scanned trees** (`glbx_discovery/`, `xsec_equity_discovery/`, `nvda_discovery/`, `opra_discovery/`, `pead_discovery/` — the `DISCOVERY_TREES` constant) emits a normalized verdict JSON, and this subsystem makes those verdicts queryable, fingerprinted, and drift-monitored alongside training runs — one experiment × verdict × provenance × drift surface. **Scope caveat**: the monitor does NOT fuse every harness on disk — `crypto_discovery/` and `multiday_discovery/` are deliberately NOT scanned (adding them is a Phase-3 change that must ship with a `.venv`/`site-packages` path guard, since their embedded virtualenvs contain third-party test fixtures matching `**/results/*.json` that would inject phantom UNRESOLVED rows).
 
 **Read side — `monitor/` (READ-ONLY, torch-free).** A pure reader/adapter over BOTH the experiment ledger AND the discovery-harness `<tree>/**/results/*.json` verdicts (each normalized via the shared root-level `discovery_verdict` adapters). Invariants: it NEVER writes the ledger, rebuilds the index, or touches harness code; and no module here imports torch / lobmodels / lobtrainer at module scope (locked by an AST scan + a `sys.modules` runtime sentinel). Five modules:
 
 | Module | Responsibility |
 |--------|----------------|
 | `ledger_reader` | projects `ledger/records/*.json` (via `ExperimentRecord.index_entry()`) into flat `LedgerRow`s; resolves one headline metric per `record_type`; skip-malformed (records read errors, never raises) |
-| `discovery_reader` | reads the discovery trees' `results/*.json` → normalized `Verdict`s; skips `_`-prefixed internals + a filename/glob denylist (sharded data caches co-located in `results/`); a per-file parse failure is recorded, never raised |
+| `discovery_reader` | reads the discovery trees' `results/*.json` → normalized `Verdict`s; skips `_`-prefixed internals + a filename/glob denylist (sharded data caches, non-verdict artifacts co-located in `results/`, and SUPERSEDED/VOID verdicts — e.g. the FINDING-110-voided `variance_dl_verdict.json`, whose corrected sibling `variance_dl_v2_verdict.json` is served normally); a per-file parse failure is recorded, never raised |
 | `drift` | four **observational** drift checks (never auto-fix): stale index-envelope vs disk, fingerprint divergence (same name → ≠ config fingerprints, or ≠ provenance hashes under one fingerprint), stale-stats-version verdict, contract/schema-version mismatch |
 | `table` | `build_monitor_table` — fuses ledger rows + verdicts into one filterable `MonitorRow` surface annotated with drift flags; **collapses** a probe that is BOTH a registered ledger record AND an on-disk verdict onto their shared `config_sha256`/fingerprint so it is not double-counted |
 | `render` | `render_text` / `render_markdown` / `render_json` (table) + `render_drift_text` / `render_drift_json` (drift report) |
@@ -342,7 +350,9 @@ hft-ops run manifest.yaml
     ├─5─ TRAIN:            contract_preflight → resolve horizon_idx → apply overrides → python train.py
     ├─6─ POST-TRAIN GATE:  regression-detection gate (in-process; opt-in, default disabled)
     ├─7─ SIGNAL EXPORT:    python export_signals.py
-    ├─8─ BACKTEST:         python backtest_deeplob.py
+    ├─8─ BACKTEST:         python <stages.backtesting.script>  (NO default since C2 2026-05-31 —
+    │                      manifest must set it, e.g. lob-backtester run_regression_backtest.py /
+    │                      run_readability_backtest.py; unset fails loud at validate-time)
     └─9─ RECORD:  build ExperimentRecord → harvest gate_reports + cache_info + trust columns → fingerprint → write to ledger
 ```
 
@@ -394,37 +404,47 @@ Parallel sweeps dispatch the same per-grid-point stage chain via `scheduler/` (�
 
 ## 6. Testing
 
-**433 tests** at HEAD (post Phase 7 Stage 7.4 Round 6 post-push-audit fix —
-added `_build_post_training_gate` loader + 4 regression tests + 1 parity
-test iterating `fields(Stages)` to prevent the class of silent-drop bug).
+For the live totals run `pytest --collect-only -q` (test count) and
+`ls tests/*.py | wc -l` (file count) — hand-typed counts are banned in this
+doc per hft-rules §11 (this section previously carried a count that
+contradicted the top banner for weeks).
 
-Test file inventory (30 files, grouped by concern). For exact per-file counts
-run `pytest --collect-only -q`; the figures below are anchor points from
-incremental phase landings:
+Test concern map (a **historical orientation subset** from the Phase-7-era
+landings, NOT the full inventory — `ls tests/` for the live file list; the
+monitor / scheduler / cache / r16* / security suites landed after this map
+was drawn):
 
-| Group | Tests (approx.) | Coverage |
-|---|---|---|
-| **Manifest schema + loader** — `test_manifest_schema.py`, `test_validator.py` | 45 + 16 | Schema defaults, YAML loading, variable resolution, Stages parity, post_training_gate loader (Round 6 regression) |
-| **Ledger + dedup** — `test_ledger.py`, `test_dedup.py`, `test_fingerprint_base_mutation.py`, `test_fingerprint_feature_set_*.py`, `test_fingerprint_hard_fail.py`, `test_ledger_rebuild_index.py`, `test_cli_fingerprint_explain.py`, `test_experiment_record_feature_set_ref.py` | 80+ | CRUD, fingerprint determinism, §2.7b resolved-dict hashing, feature_set normalization, rebuild-index CLI, gate_reports persistence |
-| **Provenance** — `test_provenance.py` | 20+ | Hashing, git info, Provenance building, shim back-compat |
-| **Sweep** — `test_sweep.py`, `test_sweep_cross_stage_routing.py`, `test_sweep_axis_values_preserved.py`, `test_sweep_aggregate_writer.py`, `test_variable_resolution_post_expansion.py`, `test_sweep_templates.py` | 70+ | Grid expansion, cross-stage routing, aggregate writer, post-expansion resolver, MVP templates |
-| **Stage runners** — `test_validation_stage.py`, `test_post_training_gate.py`, `test_signal_export_harvest.py`, `test_training_capture_metrics.py` | 120+ | IC gate, PostTrainingGateRunner (3 checks × 3 dispositions), feature_set_ref harvest, C1-complete regression-metric capture |
-| **FeatureSet** — `test_feature_sets.py`, `test_feature_sets_producer.py`, `test_feature_sets_registry_walkup.py`, `test_feature_sets_writer.py` | 60+ | Schema, hashing, producer, registry walk-up, atomic writer |
-| **Phase 2b regression guards** — `test_bugfixes_phase2b.py` | 16 | Compat banner, inline-base absolutization |
-| **Post-ship CLIs** — `test_ledger_rebuild_index.py`, `test_cli_fingerprint_explain.py` | 14 | Round 4 post-validation CLI additions |
+| Group | Coverage |
+|---|---|
+| **Manifest schema + loader** — `test_manifest_schema.py`, `test_validator.py` | Schema defaults, YAML loading, variable resolution, Stages parity, post_training_gate loader (Round 6 regression) |
+| **Ledger + dedup** — `test_ledger.py`, `test_dedup.py`, `test_fingerprint_base_mutation.py`, `test_fingerprint_feature_set_*.py`, `test_fingerprint_hard_fail.py`, `test_ledger_rebuild_index.py`, `test_cli_fingerprint_explain.py`, `test_experiment_record_feature_set_ref.py` | CRUD, fingerprint determinism, §2.7b resolved-dict hashing, feature_set normalization, rebuild-index CLI, gate_reports persistence |
+| **Provenance** — `test_provenance.py` | Hashing, git info, Provenance building, shim back-compat |
+| **Sweep** — `test_sweep.py`, `test_sweep_cross_stage_routing.py`, `test_sweep_axis_values_preserved.py`, `test_sweep_aggregate_writer.py`, `test_variable_resolution_post_expansion.py`, `test_sweep_templates.py` | Grid expansion, cross-stage routing, aggregate writer, post-expansion resolver, MVP templates |
+| **Stage runners** — `test_validation_stage.py`, `test_post_training_gate.py`, `test_signal_export_harvest.py`, `test_training_capture_metrics.py` | IC gate, PostTrainingGateRunner (3 checks × 3 dispositions), feature_set_ref harvest, C1-complete regression-metric capture |
+| **FeatureSet** — `test_feature_sets.py`, `test_feature_sets_producer.py`, `test_feature_sets_registry_walkup.py`, `test_feature_sets_writer.py` | Schema, hashing, producer, registry walk-up, atomic writer |
+| **Phase 2b regression guards** — `test_bugfixes_phase2b.py` | Compat banner, inline-base absolutization |
+| **Monitor (F5)** — `test_monitor_*.py`, `test_cli_monitor.py` | DiscoveryVerdictReader denylist/skip rules, ledger reader, drift checks, table fusion/collapse, render, torch-free sentinel |
 
 ```bash
-.venv/bin/python -m pytest tests/ -v     # expect 433 passed
+.venv/bin/python -m pytest tests/ -v     # run `pytest --collect-only -q` for the live count
 ```
 
 ---
 
 ## 7. Dependencies
 
+Nine runtime dependencies (authoritative pins + per-pin rationale comments
+live in `pyproject.toml` `[project.dependencies]`). The three local monorepo
+packages must be editable-installed alongside hft-ops (see README §Installation):
+
 | Package | Purpose |
 |---------|---------|
-| `hft-contracts` | Contract constants and validation |
+| `hft-contracts` (local editable) | Contract constants, validation, `experiment_recorder` / `RecordType.DISCOVERY` SSoT |
+| `hft-metrics` (local editable) | `pairwise_paired_bootstrap_compare` (sweep compare) + `deflated_proportion_test` (E8 tripwire gate) |
+| `discovery-verdict` (local editable, root `discovery_verdict/`) | Normalized verdict schema + adapters consumed by `monitor/discovery_reader` |
 | `click` | CLI framework |
 | `pyyaml` | YAML manifest parsing |
 | `rich` | Terminal tables and formatting |
 | `tomli` (Python <3.11) | TOML config parsing |
+| `filelock` | GPU semaphore + extraction-cache locking (Phase 8A) |
+| `packaging` | SemVer MAJOR.MINOR parsing for the ledger index envelope (Phase 8B) |

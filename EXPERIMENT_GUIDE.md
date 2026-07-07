@@ -12,7 +12,7 @@ Every experiment is defined by a single YAML manifest in `hft-ops/experiments/`.
 hft-ops/experiments/nvda_hmhp_40feat_xnas_h10.yaml
   ├── Extraction config → feature-extractor-MBO-LOB
   ├── Training config → lob-model-trainer
-  ├── Signal export → lob-model-trainer/scripts/export_hmhp_signals.py
+  ├── Signal export → lob-model-trainer/scripts/export_signals.py
   ├── Backtesting → lob-backtester/scripts/run_readability_backtest.py
   └── Profiler references → mbo-statistical-profiler analysis
 ```
@@ -43,6 +43,20 @@ hft-ops/experiments/nvda_hmhp_40feat_xnas_h10.yaml
 
 ## Running an Experiment
 
+**Preferred (orchestrated)** — one command runs every enabled stage
+(extraction → analysis → IC gate → training → post-training gate →
+signal export → backtesting) and records the ledger entry:
+
+```bash
+cd hft-ops
+hft-ops run experiments/my_new_experiment.yaml          # full pipeline
+hft-ops run experiments/my_new_experiment.yaml --dry-run
+```
+
+**Manual stage-by-stage fallback** (deprecation-warned for training unless
+`HFT_OPS_ORCHESTRATED=1` is set; skips the IC gate + ledger recording that
+`hft-ops run` provides — use only for debugging a single stage):
+
 ### Step 1: Extraction (if not already done)
 ```bash
 cd feature-extractor-MBO-LOB
@@ -60,8 +74,9 @@ python3 -m lobtrainer.cli train configs/experiments/my_config.yaml \
 ### Step 3: Signal Export
 ```bash
 cd lob-model-trainer
-python3 scripts/export_hmhp_signals.py \
-    --experiment outputs/experiments/my_experiment \
+python3 scripts/export_signals.py \
+    --config configs/experiments/my_config.yaml \
+    --checkpoint outputs/experiments/my_experiment/checkpoints/best.pt \
     --split test
 ```
 
@@ -363,7 +378,7 @@ training run.
 ## Data Flow and Contracts
 
 ```
-pipeline_contract.toml (Schema 2.2)
+pipeline_contract.toml (Schema 3.0)
     ├── [features] → Feature indices for extractor + trainer
     ├── [labels] → Label encoding for extractor + trainer
     ├── [signals] → Signal format for trainer → backtester
@@ -462,18 +477,25 @@ profiler_references:
 
 ## Current Experiments
 
-Single-run manifests under `hft-ops/experiments/`:
+Single-run manifests under `hft-ops/experiments/` (run `ls experiments/*.yaml`
+for the live inventory — this table is an orientation map, not a ledger):
 
 | Manifest | Model | Features | Exchange | FeatureSet (Phase 7.1) | Status |
 |---|---|---|---|---|---|
 | nvda_hmhp_128feat_xnas_h10 | HMHP | 119 | XNAS | nvda_analysis_ready_119_src128_v1 | Trained + Analyzed |
 | nvda_hmhp_40feat_xnas_h10 | HMHP | 40 | XNAS | nvda_short_term_40_src128_v1 | Trained + Backtested |
 | nvda_hmhp_128feat_arcx_h10 | HMHP | 119 | ARCX | nvda_analysis_ready_119_src128_v1 | Trained + Analyzed |
+| nvda_hmhp_tb_volscaled | HMHP | 98 | XNAS | — (inline) | Triple-barrier vol-scaled multi-horizon |
 | e5_60s_huber_cvml_unified | TLOB | 98 | XNAS | — (inline feature_indices) | Regression E5 reference |
+| e5_60s_importance_audit | TLOB | 98 | XNAS | — (inline) | Phase 8C-α permutation-importance exemplar |
 | nvda_tlob_h100_tb_volscaled | TLOB | 128 | XNAS | — (inline) | Classification baseline |
 | nvda_tlob_h10_v1 | TLOB | 128 | XNAS | — (inline) | Classification baseline |
+| cycle7_evaluator_v1 | — (evaluator) | — | XNAS | producer run | DOC-ONLY manifest (not `hft-ops run`-nable; documents the Cycle-7 evaluator-derived FeatureSet ship) |
 
-Sweep templates under `hft-ops/experiments/sweeps/`:
+Sweep templates under `hft-ops/experiments/sweeps/` (the 5 canonical
+routing-class templates; additional `cycle*` research-cycle sweep manifests
+live in the same directory — run `ls experiments/sweeps/` for the live
+inventory):
 
 | Sweep | Grid Points | Axes | Scope |
 |---|---|---|---|
@@ -481,6 +503,7 @@ Sweep templates under `hft-ops/experiments/sweeps/`:
 | horizon_sensitivity | 9 | training.horizon × backtesting.hold_events | Cross-stage |
 | backtest_cost_sensitivity | 9 | backtesting.costs.* (nested) | Backtest-only |
 | e5_phase2_sweep | 4 | CVML on/off × Huber δ | Same-stage |
+| seed_stability | 5 | train.seed | Same-stage (Phase V.B.1) |
 
 ---
 
@@ -587,6 +610,9 @@ ledger-visible for future dashboards that want to opt in.
 | `loss_ablation.yaml` | `loss_type × delta` | 6 | Same-stage training axes (Huber vs MSE). |
 | `horizon_sensitivity.yaml` | `bin_size × horizon_value` | 9 | **Cross-stage** — primary validator of Block 1 routing + Block 4 variable rebinding. |
 | `backtest_cost_sensitivity.yaml` | `spread × threshold` | 9 | **Nested-dataclass** — `backtesting.params.*` axes. |
+| `seed_stability.yaml` | `train.seed` | 5 | Single-axis seed-variance probe (Phase V.B.1, shipped 2026-04-21); prerequisite for `sweep compare`. |
 
-Backlog (additive, author as needed): `seed_stability`, `feature_set_ablation`,
+Research-cycle sweeps (`cycle*_*.yaml`) also live in `experiments/sweeps/` —
+run `ls experiments/sweeps/` for the live inventory.
+Backlog (additive, author as needed): `feature_set_ablation`,
 `model_family`. See `experiments/sweeps/README.md`.

@@ -2,6 +2,14 @@
 (``<tree>/**/results/*.json``) and normalizes each via the shared
 ``discovery_verdict`` adapters into ``Verdict``s.
 
+Scope: the reader scans EXACTLY the trees in ``DISCOVERY_TREES`` (the 5
+root-allowlisted harnesses) — it does NOT "fuse every harness on disk".
+``crypto_discovery/`` and ``multiday_discovery/`` are deliberately NOT
+scanned: adding them is a Phase-3 change that MUST ship together with a
+``.venv``/``site-packages`` path guard, because their embedded virtualenvs
+contain third-party test fixtures matching ``**/results/*.json`` (e.g.
+statsmodels) that would inject phantom UNRESOLVED rows.
+
 Torch-free: imports ONLY ``discovery_verdict`` (stdlib-only) + stdlib. Read-only:
 it touches no harness code or output (the harnesses don't expose importable
 verdict builders and don't import each other; the monitor is a pure reader/adapter).
@@ -20,12 +28,16 @@ class DiscoveryVerdictReader:
     """Reads ``<repo_root>/<tree>/**/results/*.json`` -> ``list[Verdict]``.
 
     Skips internals (``_``-prefixed) + a filename denylist (feature dumps, re-run
-    snapshots) + a glob denylist (sharded data caches like
-    ``nvda_atm_iv.shard0of4.json`` that share the ``results/`` dir but are NOT
-    verdicts). ``include_gate_outs=False`` drops ``GATED_OUT`` verdicts. A per-file
-    parse/normalize failure is recorded into ``read_errors`` and skipped, never raised.
+    snapshots, SUPERSEDED/VOID verdicts, non-verdict result artifacts) + a glob
+    denylist (sharded data caches like ``nvda_atm_iv.shard0of4.json`` that share
+    the ``results/`` dir but are NOT verdicts). ``include_gate_outs=False`` drops
+    ``GATED_OUT`` verdicts. A per-file parse/normalize failure is recorded into
+    ``read_errors`` and skipped, never raised.
     """
 
+    # The FULL scan scope — the 5 root-allowlisted harnesses only. crypto_discovery/
+    # and multiday_discovery/ are NOT scanned (see module docstring: Phase-3 addition
+    # requires a .venv/site-packages guard first).
     DISCOVERY_TREES = (
         "glbx_discovery",
         "xsec_equity_discovery",
@@ -34,7 +46,34 @@ class DiscoveryVerdictReader:
         "pead_discovery",
     )
     SKIP_PREFIXES = ("_",)
-    DEFAULT_DENYLIST = frozenset({"gex_features.json", "gate_rerun_2026_06_19.json"})
+    # Filename denylist (basename match, checked before parsing). Three classes:
+    #   1. Feature dumps / re-run snapshots — not verdicts.
+    #   2. SUPERSEDED / VOID verdicts — ``variance_dl_verdict.json``
+    #      (STOP-DL-SPANNED-BY-CARRIERS) is VOID per its sibling
+    #      ``results/SUPERSEDED.md``: a crippled-model artifact (scale-stripping
+    #      input z-score), NOT a real null (FINDING-110). The corrected verdict is
+    #      ``variance_dl_v2_verdict.json`` (INDETERMINATE-DL-UNDERPOWERED-V2),
+    #      which the reader serves normally. Serving the VOID row would surface a
+    #      corrupt result on the fused monitor table.
+    #   3. Non-verdict result artifacts co-located in scanned ``results/`` dirs
+    #      (model freezes, IV/strike-grid data panels, descriptive curves). They
+    #      have no top-level ``verdict`` key and would fall through to the
+    #      CommonCoreAdapter catch-all as phantom UNRESOLVED rows.
+    DEFAULT_DENYLIST = frozenset(
+        {
+            # class 1 — dumps / snapshots
+            "gex_features.json",
+            "gate_rerun_2026_06_19.json",
+            # class 2 — VOID verdict (FINDING-110; see SUPERSEDED.md beside it)
+            "variance_dl_verdict.json",
+            # class 3 — non-verdict artifacts (phantom-UNRESOLVED guards)
+            "composite_vrp_confront_env_gates.json",  # nvda composite_vrp_confront env-gate report
+            "frozen_scale_model.json",  # nvda conditional_scale_variance model freeze
+            "strike_grids.json",  # nvda expiry_friday_memo strike-grid data
+            "nvda_0dte_iv.json",  # nvda iv_noninertness IV panel cache
+            "execution_timing_curve.json",  # xsec hks_periodicity descriptive curve
+        }
+    )
     # Glob denylist for sharded data caches co-located in a harness ``results/``
     # dir but which are NOT verdicts (shape ``{"days": ...}``, not underscore-
     # prefixed). e.g. iv_shadow's ``nvda_atm_iv.shard0of4.json`` cache — without
