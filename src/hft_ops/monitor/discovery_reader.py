@@ -127,6 +127,14 @@ class DiscoveryVerdictReader:
             base = self.repo_root / tree
             if not base.is_dir():
                 continue
+            # DIRECT children of results/ ONLY — intentional (#PY-392, 2026-07-13):
+            # nested results/ subdirs (e.g. variance_dl/results/oof_v2/) hold
+            # ancillary evidence by construction (discovery_verdict/
+            # ARTIFACT_POLICY.md Class 1), never verdict rows, and must not
+            # render on the fused table. The root orphan guard
+            # (scripts/ci/check_results_registered.py) diverges deliberately:
+            # it scans results/ RECURSIVELY so nested evidence JSONs still get
+            # the tracked+registered check.
             for path in sorted(base.glob("**/results/*.json")):
                 if any(part in self.SKIP_PATH_PARTS for part in path.parts):
                     continue
