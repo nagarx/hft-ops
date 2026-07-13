@@ -84,6 +84,12 @@ class DiscoveryVerdictReader:
             "gate_rerun_2026_06_19.json",
             # class 2 — VOID verdict (FINDING-110; see SUPERSEDED.md beside it)
             "variance_dl_verdict.json",
+            # class 2 — obsolete-STOP pilot of the same VOID run (AUD-29,
+            # 2026-07-13 ground-truth audit): carries STOP-DL-SPANNED-BY-CARRIERS
+            # from the crippled v1 model; the live verdict is
+            # variance_dl_v2_verdict.json (INDETERMINATE-DL-UNDERPOWERED-V2).
+            # Rendering it would surface the superseded STOP on the fused table.
+            "variance_dl_PILOT_verdict.json",
             # class 3 — non-verdict artifacts (phantom-UNRESOLVED guards)
             "composite_vrp_confront_env_gates.json",  # nvda composite_vrp_confront env-gate report
             "frozen_scale_model.json",  # nvda conditional_scale_variance model freeze
