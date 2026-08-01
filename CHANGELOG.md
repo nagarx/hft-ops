@@ -10,7 +10,23 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ---
 
-## [0.3.0-dev] — in progress
+## [0.3.0] — 2026-08-01
+
+### Released — finalized from `0.3.0-dev` under VERSIONING.md R5 (2026-08-01)
+
+- **Version finalized `0.3.0-dev` -> `0.3.0`.** R5: a pre-release suffix is not a
+  state, it is a range of states wearing one name; finalize before tagging. No
+  code change accompanies the finalization — the 0.3.0 content is everything
+  listed below, unchanged. Tagged `v0.3.0`.
+- **Fixed a two-version split inside this package.** `pyproject.toml` was bumped
+  `0.2.0` -> `0.3.0-dev` in commit `348814f`, but `src/hft_ops/__init__.py`
+  `__version__` was left at `"0.2.0"` and had never moved since `ba4b9bb`. The
+  package therefore made two different version claims about itself for the whole
+  0.3.0 development line. `__version__` is now `"0.3.0"`, equal to the manifest.
+  Measured blast radius: NIL — `hft_ops.__version__` is read nowhere in the
+  monorepo (the `tool_version` recorded by `feature_sets/producer.py` reads
+  `hft_evaluator.__version__`, not this one), and no first-party manifest depends
+  on `hft-ops`. The defect was latent, not active; it is fixed so it stays that way.
 
 ### Curation Phase-3 ORGANIZE (2026-07-07) — monitor scans crypto_discovery + multiday_discovery
 
