@@ -76,6 +76,40 @@ def _ver_tuple(s) -> tuple[int, ...]:
 
 
 def current_hft_metrics_version() -> Optional[str]:
+    """The hft-metrics version that is ACTUALLY EXECUTING.
+
+    2026-08-02 (Codex-audit fleet, orchestrator-verified): this used to read
+    ``importlib.metadata.version("hft-metrics")`` FIRST, which reports the
+    version recorded in the installed distribution's metadata -- NOT the version
+    of the source tree an editable install actually imports. In this monorepo
+    every venv is an editable install of one shared source tree, so the metadata
+    is stale by many releases while the executing code is current.
+
+    Measured in the hft-ops venv:
+        importlib.metadata -> 0.1.7        (stale distribution metadata)
+        hft_metrics.__version__ -> 0.1.35  (the code that runs)
+
+    That silently NEUTERED this module's own staleness check. Counterfactual,
+    run through the real loaders over 189 ledger records / 98 verdicts:
+        installed=0.1.7   -> stale_verdict findings = 0   (what it reported)
+        installed=0.1.35  -> stale_verdict findings = 70  (what it should)
+    Seventy sealed verdicts, pinned across 12 hft-metrics versions from 0.1.15
+    to 0.1.33, every one older than the executing 0.1.35, silently passed a
+    staleness check that exists to flag exactly them. The one tool whose job is
+    detecting version drift was blind to it, because it asked the wrong oracle.
+
+    ``__version__`` is the authority; distribution metadata is the fallback.
+    (VERSIONING.md's Python-deviation carve-out rests on the claim that "all 100
+    capture sites read ``__version__``" -- this site and
+    ``feature_sets/producer.py::_evaluator_version`` were the counter-examples.)
+    """
+    try:
+        import hft_metrics
+        v = getattr(hft_metrics, "__version__", None)
+        if v:
+            return str(v)
+    except Exception:
+        pass
     try:
         from importlib.metadata import version
         return version("hft-metrics")

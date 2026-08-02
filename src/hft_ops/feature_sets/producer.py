@@ -261,22 +261,39 @@ def produce_feature_set(
 
 
 def _evaluator_version() -> str:
-    """Return the installed hft-feature-evaluator version, or ``"unknown"``.
+    """Return the EXECUTING hft-feature-evaluator version, or ``"unknown"``.
 
-    Tries ``importlib.metadata`` first (PEP 566), falls back to
-    ``hft_evaluator.__version__`` if the package defines it. Never
-    raises — producer flow must not fail on a version-query hiccup.
+    2026-08-02 (Codex-audit fleet): the priority order was INVERTED — this tried
+    ``importlib.metadata`` FIRST, which reports the installed distribution's
+    recorded metadata, not the source tree an editable install imports. Every
+    venv here is an editable install of one shared tree, so the metadata is
+    stale while the executing code is current. Measured:
+
+        importlib.metadata          -> 0.1.0   (stale)
+        hft_evaluator.__version__   -> 0.1.1   (what actually runs)
+
+    This return value is written straight into ``FeatureSetProducedBy.
+    tool_version`` (see the ``produced_by=`` construction above) — a HASHED
+    PROVENANCE FIELD. A stale value there stamps every future FeatureSet
+    artifact with a version that never produced it. No artifact on disk is
+    currently poisoned (the 6 curated sets carry no ``tool_version``), but this
+    path is live and would stamp the next one.
+
+    ``__version__`` is the authority; distribution metadata is the fallback.
+    Never raises — producer flow must not fail on a version-query hiccup.
     """
+    try:
+        import hft_evaluator
+
+        v = getattr(hft_evaluator, "__version__", None)
+        if v:
+            return str(v)
+    except Exception:
+        pass
     try:
         from importlib.metadata import version
 
         return version("hft-feature-evaluator")
-    except Exception:
-        pass
-    try:
-        import hft_evaluator
-
-        return getattr(hft_evaluator, "__version__", "unknown")
     except Exception:
         return "unknown"
 
