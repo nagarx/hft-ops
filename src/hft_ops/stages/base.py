@@ -94,6 +94,86 @@ class StageRunner(Protocol):
         ...
 
 
+def enforce_output_contract(
+    runner: Any,
+    manifest: ExperimentManifest,
+    config: OpsConfig,
+    result: StageResult,
+) -> StageResult:
+    """Fail a COMPLETED stage whose declared output postcondition is violated.
+
+    Every stage runner declares ``validate_outputs(manifest, config) ->
+    List[str]`` — the postcondition for the artifacts it promises to produce.
+    Until 2026-08-03 that method was defined EIGHT times (the ``StageRunner``
+    protocol plus seven implementations) and **called zero times**:
+
+        grep -rn "validate_outputs" src/hft_ops/  ->  8 lines, all `def`
+
+    So a stage was marked COMPLETED — and, for extraction, became
+    cache-eligible — without its outputs ever being checked. A subprocess that
+    exited 0 while writing nothing produced a green stage, a cached empty
+    directory, and a downstream stage failing far from the cause.
+
+    This helper is the single enforcement point. Call it immediately after
+    ``runner.run(...)`` returns, and (inside a runner) before publishing
+    anything derived from the outputs.
+
+    Fails CLOSED: a non-empty violation list flips the stage to FAILED and
+    surfaces every violation in ``error_message`` (which ``cli.py`` prints),
+    aborting the pipeline at the true point of failure. A ``validate_outputs``
+    that *raises* is also treated as a violation rather than swallowed — per
+    hft-rules §8, a broken postcondition is a hard error, not a silent pass.
+
+    Only COMPLETED stages are checked. SKIPPED (cache hit, ``skip_if_exists``,
+    dry run) and already-FAILED stages are returned untouched — a stage that
+    did not run has no postcondition to meet, and a stage that already failed
+    keeps its original, more informative error.
+
+    Runners without a ``validate_outputs`` attribute (``PostTrainingGateRunner``
+    is the one such stage in ``_build_stage_runners``) are skipped rather than
+    crashing the orchestrator on ``AttributeError``.
+
+    Args:
+        runner: The stage runner that just executed.
+        manifest: Experiment manifest (passed through to ``validate_outputs``).
+        config: Ops config (passed through to ``validate_outputs``).
+        result: The ``StageResult`` returned by ``runner.run``.
+
+    Returns:
+        The same ``StageResult`` instance, mutated in place when the output
+        contract is violated. Returned for call-site readability.
+    """
+    if result.status != StageStatus.COMPLETED:
+        return result
+
+    validate = getattr(runner, "validate_outputs", None)
+    if validate is None:
+        return result
+
+    try:
+        violations = [str(v) for v in (validate(manifest, config) or [])]
+    except Exception as exc:  # noqa: BLE001 — a raising postcondition is a violation
+        violations = [
+            f"validate_outputs() raised {type(exc).__name__}: {exc}"
+        ]
+
+    if not violations:
+        return result
+
+    result.status = StageStatus.FAILED
+    detail = (
+        f"Output validation failed after the stage reported success "
+        f"({len(violations)} violation(s)): " + "; ".join(violations)
+    )
+    result.error_message = (
+        f"{result.error_message}\n{detail}" if result.error_message else detail
+    )
+    # Observability per hft-rules §8 — the structured list survives into the
+    # ledger record alongside the human-readable message.
+    result.captured_metrics["output_validation_errors"] = violations
+    return result
+
+
 _MAX_CAPTURED_LINES = 200
 
 

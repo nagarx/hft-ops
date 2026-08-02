@@ -32,6 +32,7 @@ from hft_ops.stages.base import (
     StageResult,
     StageStatus,
     _format_subprocess_failure,
+    enforce_output_contract,
     run_subprocess,
     _tail,
 )
@@ -210,6 +211,15 @@ class ExtractionRunner:
             result.status = StageStatus.FAILED
             result.error_message = str(e)
 
+        # -------- Enforce the output contract BEFORE cache publication ----
+        # The driver (cli.py) also enforces this for every stage, but that
+        # happens after `run()` returns — too late to stop a bad export from
+        # being published into the content-addressed cache below, where it
+        # would be silently re-linked into every future run with the same
+        # cache key. Enforcing here flips `result.status` to FAILED, which the
+        # `== COMPLETED` guard on the populate block then short-circuits.
+        enforce_output_contract(self, manifest, config, result)
+
         # -------- Populate cache on success ------------------------------
         if (
             result.status == StageStatus.COMPLETED
@@ -255,16 +265,33 @@ class ExtractionRunner:
             errors.append(f"Extraction output directory not found: {output_dir}")
             return errors
 
-        meta_files = sorted(output_dir.glob("*_metadata.json"))
+        # RECURSIVE globs (2026-08-03). These were non-recursive until the
+        # postcondition was first actually WIRED into the stage driver, at
+        # which point they turned out to be broken: an export dir is
+        # `<export>/{train,val,test}/<day>_*.{npy,json}` — the per-day
+        # artifacts live one level DOWN, never at the top level, which holds
+        # only `dataset_manifest.json` / `export_config.toml`. Measured on
+        # `data/exports/e5_timebased_60s_v3p0`: top-level glob → 0 / 0 / 0;
+        # `**/` glob → 230 / 230 / 230. So the old form returned three
+        # spurious violations for EVERY valid export on disk, and failing
+        # closed on it would have broken every extraction run.
+        #
+        # `*_labels.npy` intentionally also matches `*_regression_labels.npy`
+        # (fnmatch `*` spans `<day>_regression`), so the check is satisfied by
+        # BOTH classification exports (`_labels.npy`) and regression exports
+        # (which omit `_labels.npy` entirely and emit only
+        # `_regression_labels.npy` — see root CLAUDE.md §Cross-Module Data
+        # Contracts). Verified: 230 matches on a pure-regression export.
+        meta_files = sorted(output_dir.glob("**/*_metadata.json"))
         if not meta_files:
-            errors.append(f"No metadata JSON files in {output_dir}")
+            errors.append(f"No metadata JSON files under {output_dir}")
 
-        seq_files = sorted(output_dir.glob("*_sequences.npy"))
+        seq_files = sorted(output_dir.glob("**/*_sequences.npy"))
         if not seq_files:
-            errors.append(f"No sequence .npy files in {output_dir}")
+            errors.append(f"No sequence .npy files under {output_dir}")
 
-        label_files = sorted(output_dir.glob("*_labels.npy"))
+        label_files = sorted(output_dir.glob("**/*_labels.npy"))
         if not label_files:
-            errors.append(f"No label .npy files in {output_dir}")
+            errors.append(f"No label .npy files under {output_dir}")
 
         return errors

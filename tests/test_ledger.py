@@ -497,16 +497,27 @@ class TestIndexSchemaNeedsRebuildHelper:
     def test_patch_diff_no_rebuild(self) -> None:
         """PATCH-only diff is reserved for docstring changes; no rebuild.
 
-        Phase Y / γ-1 LITE close-out (#PY-94, 2026-05-10) bumped code-side
-        to "1.6.0"; this test uses "1.6.99" (same MAJOR.MINOR, differing
-        PATCH) to preserve the PATCH-invariance contract. History: 8C-α
-        Stage C.2 set 1.3.0 → V.A.4 adds compatibility_fingerprint column
-        → 1.4.0 → Phase X.3/D adds experiment_provenance_hash → 1.5.0
-        → Phase Y/γ-1 LITE adds model_config_hash top-level mirror → 1.6.0.
+        The synthetic on-disk version is DERIVED from the code-side
+        ``INDEX_SCHEMA_VERSION`` (same MAJOR.MINOR, PATCH forced to 99)
+        rather than hardcoded. Prior to 2026-08-03 this test pinned the
+        literal ``"1.6.99"``, which meant it broke on every legitimate
+        MINOR bump — it failed on the 1.6.0 → 1.7.0 zero-skill-floor bump
+        for a reason that had nothing to do with PATCH-invariance, the
+        contract it exists to protect. History: 8C-α Stage C.2 set 1.3.0
+        → V.A.4 adds compatibility_fingerprint → 1.4.0 → Phase X.3/D adds
+        experiment_provenance_hash → 1.5.0 → Phase Y/γ-1 LITE adds
+        model_config_hash → 1.6.0 → zero-skill floor keys → 1.7.0.
         """
+        from hft_contracts import INDEX_SCHEMA_VERSION
         from hft_ops.ledger.ledger import _index_schema_needs_rebuild
 
-        assert not _index_schema_needs_rebuild("1.6.99")
+        major, minor, _patch = INDEX_SCHEMA_VERSION.split(".", 2)
+        patch_only_diff = f"{major}.{minor}.99"
+        assert patch_only_diff != INDEX_SCHEMA_VERSION, (
+            "Test constructed a version identical to the code-side one; "
+            "it would then assert nothing about PATCH-invariance."
+        )
+        assert not _index_schema_needs_rebuild(patch_only_diff)
 
     def test_minor_diff_triggers_rebuild(self) -> None:
         """MINOR diff is the default whitelist-extension trigger.

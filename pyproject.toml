@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hft-ops"
-version = "0.3.0"
+version = "0.4.0"
 description = "Central experiment orchestrator for the HFT pipeline"
 requires-python = ">=3.10"
 dependencies = [
@@ -24,7 +24,15 @@ dependencies = [
     # uses `RecordType.DISCOVERY` (the discovery-lane ledger value first shipped
     # in hft-contracts 2.10.0). A pre-2.10.0 install would AttributeError at
     # `RecordType.DISCOVERY`. Strictly additive (new enum VALUE); no symbols removed.
-    "hft-contracts>=2.10.0",
+    # 2026-08-03: bumped >=2.10.0 → >=2.12.0 — hft-contracts 2.12.0 adds the eight
+    # zero-skill-floor keys to `ExperimentRecord.index_entry()`'s training_metrics
+    # whitelist and bumps INDEX_SCHEMA_VERSION 1.6.0 → 1.7.0. `hft-ops ledger list`
+    # / prior-best lookup can only SEE whether a run cleared its label's floor with
+    # that projection in place (hft-rules §13 makes the floor a mandatory companion
+    # to any reported R²). A pre-2.12.0 install silently drops the floor from the
+    # index — no error, just the original blindness. Strictly additive; the
+    # MAJOR.MINOR envelope bump triggers `ledger.py::_load_index` auto-rebuild.
+    "hft-contracts>=2.12.0",
     "click>=8.0",
     "pyyaml>=6.0",
     "rich>=13.0",

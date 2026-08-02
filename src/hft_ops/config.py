@@ -45,6 +45,18 @@ class OpsConfig:
     # Parent builds per-worker OpsConfig via ``dataclasses.replace`` to
     # avoid sharing mutable state across threads.
     env_overrides: Dict[str, str] = field(default_factory=dict)
+    # 2026-08-03: explicit interpreter contract for the cross-repo trainer
+    # scripts (``train.py`` / ``export_signals.py``). Stages used to launch
+    # them with ``sys.executable`` — the hft-ops interpreter — which cannot
+    # import ``lobtrainer`` (no pydantic, no torch), so ``hft-ops run`` could
+    # not train at all. ``None`` means "resolve by the documented precedence"
+    # in ``hft_ops.interpreters.resolve_trainer_python``:
+    #   OpsConfig.trainer_python > $HFT_OPS_TRAINER_PYTHON
+    #   > <trainer_dir>/.venv/bin/python > sys.executable
+    # Reachable from the CLI as ``hft-ops --trainer-python <path>`` — a
+    # constructor default that no config path threads is an unreachable knob,
+    # not a default (hft-rules §5).
+    trainer_python: Optional[str] = None
 
     @classmethod
     def from_pipeline_root(
@@ -54,6 +66,7 @@ class OpsConfig:
         verbose: bool = False,
         dry_run: bool = False,
         cache_extraction: bool = True,
+        trainer_python: Optional[str] = None,
     ) -> OpsConfig:
         """Build config from an explicit or auto-detected pipeline root."""
         if pipeline_root is not None:
@@ -68,4 +81,5 @@ class OpsConfig:
             verbose=verbose,
             dry_run=dry_run,
             cache_extraction=cache_extraction,
+            trainer_python=trainer_python,
         )

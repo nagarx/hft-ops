@@ -49,7 +49,11 @@ from hft_contracts.provenance import build_provenance
 from hft_ops.stages.backtesting import BacktestRunner
 from hft_ops.stages.post_training_gate import PostTrainingGateRunner
 from hft_ops.stages.signal_export import SignalExportRunner
-from hft_ops.stages.base import StageResult, StageStatus
+from hft_ops.stages.base import (
+    StageResult,
+    StageStatus,
+    enforce_output_contract,
+)
 from hft_ops.stages.dataset_analysis import DatasetAnalysisRunner
 from hft_ops.stages.extraction import ExtractionRunner
 from hft_ops.stages.raw_analysis import RawAnalysisRunner
@@ -320,6 +324,20 @@ def _parse_and_validate_stages(stages: Optional[str]) -> Optional[set]:
         "unavailable (e.g., missing git SHAs)."
     ),
 )
+@click.option(
+    "--trainer-python",
+    type=str,
+    default=None,
+    help=(
+        "Interpreter used to launch lob-model-trainer scripts (train.py / "
+        "export_signals.py). hft-ops is deliberately torch-free and CANNOT "
+        "import lobtrainer with its own interpreter, so these stages need "
+        "the trainer's venv. Resolution order: this flag > "
+        "$HFT_OPS_TRAINER_PYTHON > <lob-model-trainer>/.venv/bin/python > "
+        "sys.executable. A preflight import check runs before the stage "
+        "starts and fails loudly on a mismatch."
+    ),
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -327,12 +345,14 @@ def main(
     verbose: bool,
     strict_index: bool,
     cache_extraction: bool,
+    trainer_python: Optional[str],
 ) -> None:
     """hft-ops: Central experiment orchestrator for the HFT pipeline."""
     ctx.ensure_object(dict)
     ctx.obj["pipeline_root"] = pipeline_root
     ctx.obj["verbose"] = verbose
     ctx.obj["cache_extraction"] = cache_extraction
+    ctx.obj["trainer_python"] = trainer_python
     # Phase 8B: set the env var here so downstream ExperimentLedger()
     # constructions (including inside subprocesses) auto-detect via
     # ``_detect_strict_index_from_env``. The env-var path avoids needing
@@ -373,6 +393,7 @@ def run(
         verbose=ctx.obj.get("verbose", False),
         dry_run=dry_run,
         cache_extraction=ctx.obj.get("cache_extraction", True),
+        trainer_python=ctx.obj.get("trainer_python"),
     )
 
     console.print(f"[bold]Loading manifest:[/bold] {manifest_path}")
@@ -450,6 +471,12 @@ def run(
             break
 
         result = runner.run(manifest, ops_config)
+        # Enforce the stage's declared output postcondition BEFORE the status
+        # is reported / recorded. Until 2026-08-03 `validate_outputs` was
+        # declared 8 times and called zero times, so a stage could reach
+        # COMPLETED without producing any of the artifacts it promised.
+        # Fails closed: violations flip the stage to FAILED and abort below.
+        enforce_output_contract(runner, manifest, ops_config, result)
         results[stage_name] = result
 
         status_color = {
@@ -1805,6 +1832,7 @@ def sweep_run(
         verbose=ctx.obj.get("verbose", False),
         dry_run=dry_run,
         cache_extraction=ctx.obj.get("cache_extraction", True),
+        trainer_python=ctx.obj.get("trainer_python"),
     )
 
     console.print(f"[bold]Loading sweep manifest:[/bold] {manifest_path}")
@@ -1955,6 +1983,10 @@ def sweep_run(
                 break
 
             result = runner.run(exp, ops_config)
+            # Same output-contract enforcement as the single-run driver above
+            # — a sweep grid point must not reach COMPLETED without producing
+            # the artifacts its stage declared (see enforce_output_contract).
+            enforce_output_contract(runner, exp, ops_config, result)
             results[stage_name] = result
 
             if result.status == StageStatus.FAILED:

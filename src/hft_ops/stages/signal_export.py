@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from hft_ops.config import OpsConfig
+from hft_ops.interpreters import (
+    InterpreterPreflightError,
+    resolve_and_preflight_trainer_python,
+)
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.stages.base import (
     _format_subprocess_failure,
@@ -605,7 +608,24 @@ class SignalExportRunner:
             )
             return result
 
-        cmd = [sys.executable, str(script)]
+        # Interpreter pre-flight (2026-08-03). ``export_signals.py`` is a
+        # lob-model-trainer script and needs the trainer's interpreter for
+        # exactly the reason the training stage does — hft-ops is torch-free
+        # and cannot import ``lobtrainer``. Same contract, same env override.
+        try:
+            trainer_python = resolve_and_preflight_trainer_python(
+                config.paths,
+                configured=config.trainer_python,
+                stage_name=self.stage_name,
+            )
+        except InterpreterPreflightError as exc:
+            result.status = StageStatus.FAILED
+            result.error_message = str(exc)
+            return result
+
+        result.captured_metrics["trainer_python"] = str(trainer_python)
+
+        cmd = [str(trainer_python), str(script)]
         cmd.extend(["--config", str(resolved_config)])
 
         if stage.checkpoint:

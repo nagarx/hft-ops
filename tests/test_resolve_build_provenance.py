@@ -407,7 +407,16 @@ def test_extraction_stage_run_populates_producer_commits(tmp_path, monkeypatch):
     never invokes cargo; the tmp pipeline_root has no git checkouts, so the
     resolver fails OPEN (``partial``) rather than crashing the completed stage —
     locking that the capture's argument evaluation (config.paths.* property
-    joins) is safe in the real run path."""
+    joins) is safe in the real run path.
+
+    2026-08-03: the fake subprocess now WRITES a minimal well-formed export
+    (``<out>/train/<day>_{metadata.json,sequences.npy,labels.npy}``) instead of
+    writing nothing. Since ``validate_outputs`` is now enforced before the
+    stage may report COMPLETED, a subprocess that exits 0 having produced no
+    artifacts is — correctly — a FAILED stage. Writing the artifacts keeps this
+    test focused on the producer_commits capture it was written to lock, and
+    additionally proves the enforced output contract PASSES on a well-formed
+    split-subdir export."""
     import types
 
     from hft_ops.config import OpsConfig
@@ -420,12 +429,20 @@ def test_extraction_stage_run_populates_producer_commits(tmp_path, monkeypatch):
     from hft_ops.stages.base import StageStatus
     from hft_ops.stages.extraction import ExtractionRunner
 
+    export_dir = tmp_path / "data" / "exports" / "test_out"
+
+    def _fake_extractor(cmd, cwd=None, verbose=False, env=None):
+        """Stand in for cargo: emit the artifacts a real export would emit."""
+        split = export_dir / "train"
+        split.mkdir(parents=True, exist_ok=True)
+        (split / "20250203_metadata.json").write_text("{}")
+        (split / "20250203_sequences.npy").write_bytes(b"")
+        (split / "20250203_labels.npy").write_bytes(b"")
+        return types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
     # Fake a successful cargo build (rc=0); never actually shells out.
     monkeypatch.setattr(
-        "hft_ops.stages.extraction.run_subprocess",
-        lambda cmd, cwd=None, verbose=False, env=None: types.SimpleNamespace(
-            returncode=0, stdout="ok", stderr=""
-        ),
+        "hft_ops.stages.extraction.run_subprocess", _fake_extractor
     )
 
     config = OpsConfig.from_pipeline_root(

@@ -10,6 +10,100 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ---
 
+## [0.4.0] — 2026-08-03
+
+Two verified orchestrator defects, both of the same family: a declared
+safeguard that was never actually connected to anything.
+
+### Fixed — `validate_outputs` was declared 8 times and CALLED ZERO TIMES
+
+Measured before the fix::
+
+    grep -rn --no-ignore-files "validate_outputs" src/hft_ops/
+      -> 8 lines: the StageRunner protocol + 7 implementations, every one a
+         `def`. No call site existed anywhere in the package.
+
+Every stage declared the artifacts it promised to produce and the orchestrator
+never checked one. A subprocess that exited 0 without writing anything gave a
+green COMPLETED stage, a **cached** empty export, and a downstream stage failing
+far from the cause.
+
+- **NEW `stages/base.py::enforce_output_contract(runner, manifest, config,
+  result)`** — the single enforcement point. Fails CLOSED: a non-empty violation
+  list flips the stage to FAILED, surfaces every violation in `error_message`
+  (which `cli.py` prints), and records the structured list under
+  `captured_metrics["output_validation_errors"]`. A `validate_outputs` that
+  *raises* is treated as a violation, not swallowed (hft-rules §8). Only
+  COMPLETED stages are checked — SKIPPED (cache hit / `skip_if_exists` /
+  dry-run) and already-FAILED stages are untouched. Runners without the method
+  (`PostTrainingGateRunner`) are skipped rather than raising `AttributeError`.
+- **Wired at three sites**: the `cli.run` stage loop, the `cli.sweep_run`
+  grid-point loop, and — additionally — inside `ExtractionRunner.run` *before*
+  the cache-populate block. The in-runner call is load-bearing: the driver-level
+  check happens after `run()` returns, too late to stop a bad export being
+  published into the content-addressed cache and silently re-linked into every
+  future run sharing that cache key.
+- **`ExtractionRunner.validate_outputs` globs made RECURSIVE.** Wiring the
+  postcondition exposed that it was broken: an export is
+  `<dir>/{train,val,test}/<day>_*.{npy,json}`, so the non-recursive globs
+  measured **0 / 0 / 0** against `data/exports/e5_timebased_60s_v3p0` where the
+  recursive form measures **230 / 230 / 230**. Failing closed on the old form
+  would have broken every extraction run. `*_labels.npy` intentionally also
+  matches `*_regression_labels.npy`, so both classification and regression
+  exports satisfy it.
+
+### Fixed — the orchestrator could not launch training at all
+
+`stages/training.py` built its command as `[sys.executable, train.py, ...]` —
+the interpreter running hft-ops itself. Measured::
+
+    hft-ops/.venv/bin/python  lob-model-trainer/scripts/train.py --help
+        -> EXIT 1: ModuleNotFoundError: No module named 'pydantic'
+    lob-model-trainer/.venv/bin/python  <same script>
+        -> EXIT 0
+
+hft-ops is deliberately torch-free (locked by `test_monitor_torch_free.py` and
+the contract-preflight AST test), so its interpreter cannot import
+`lobtrainer` — while root `CLAUDE.md` and hft-rules §13 both mandate
+`hft-ops run` for any published R², because it is the path that emits and
+persists the zero-skill floor.
+
+The fix is NOT to install trainer dependencies into the hft-ops venv — that
+couples two deliberately-separate dependency sets and rots silently again. The
+interpreter is now an explicit, configurable, **preflighted** contract:
+
+- **NEW `hft_ops/interpreters.py`** — `resolve_trainer_python`,
+  `preflight_interpreter`, `resolve_and_preflight_trainer_python`,
+  `InterpreterPreflightError`. Resolution order:
+  `OpsConfig.trainer_python` > `$HFT_OPS_TRAINER_PYTHON` >
+  `<trainer_dir>/.venv/bin/python` > `sys.executable` (the last preserves
+  back-compat for a single-venv/CI install).
+- **PREFLIGHT before the stage starts.** `<python> -c "import lobtrainer"`,
+  cached per (interpreter, module) so a sweep pays it once. Failure raises with
+  the interpreter path, the failing import, the underlying error, and all three
+  ways to fix it — converting a silent rot into a loud startup error.
+- **NEW `OpsConfig.trainer_python`** + **NEW CLI flag `--trainer-python`**,
+  threaded into BOTH `OpsConfig` construction sites (`run` and `sweep run`). A
+  constructor default that no config path threads is an unreachable knob, not a
+  default (hft-rules §5; the `EarlyStopping.min_delta` scar, FINDING-136).
+- **`signal_export` gets the same treatment** — `export_signals.py` is also a
+  `lob-model-trainer` script and had the identical defect.
+
+### Notes
+
+- `tests/test_ledger.py::test_patch_diff_no_rebuild` no longer hardcodes the
+  current `INDEX_SCHEMA_VERSION`; it derives the synthetic PATCH-only version
+  from the code-side constant. The literal pin broke on every legitimate MINOR
+  bump for a reason unrelated to the PATCH-invariance contract it protects.
+- `tests/test_resolve_build_provenance.py::test_extraction_stage_run_populates_producer_commits`
+  now has its fake extractor WRITE a minimal well-formed export. Under the
+  enforced contract, exiting 0 having produced nothing is — correctly — a FAILED
+  stage; the test keeps its original focus and additionally proves the contract
+  passes on a real split-subdir export.
+- Suite: 1302 passed, 2 skipped (baseline 1272/2; +30 new tests).
+
+---
+
 ## [0.3.0] — 2026-08-01
 
 ### Released — finalized from `0.3.0-dev` under VERSIONING.md R5 (2026-08-01)

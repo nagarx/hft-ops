@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -19,6 +18,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from hft_ops.config import OpsConfig
+from hft_ops.interpreters import (
+    InterpreterPreflightError,
+    resolve_and_preflight_trainer_python,
+)
 from hft_ops.ledger.dedup import _load_trainer_merge_module
 from hft_ops.manifest.schema import ExperimentManifest
 from hft_ops.paths import PipelinePaths
@@ -521,9 +524,34 @@ class TrainingRunner:
             }
             return result
 
+        # Interpreter pre-flight (2026-08-03). The trainer runs in its OWN
+        # venv: hft-ops is deliberately torch-free, so `sys.executable` —
+        # what this used to pass — cannot `import lobtrainer` and every
+        # `hft-ops run` died on a ModuleNotFoundError inside the subprocess,
+        # after the whole pipeline's setup had already been paid for. Resolve
+        # the interpreter from the explicit contract and PROVE it can import
+        # the trainer before shelling out.
+        try:
+            trainer_python = resolve_and_preflight_trainer_python(
+                config.paths,
+                configured=config.trainer_python,
+                stage_name=self.stage_name,
+            )
+        except InterpreterPreflightError as exc:
+            result.status = StageStatus.FAILED
+            result.error_message = str(exc)
+            result.captured_metrics["gate_report"] = {
+                "status": "fail",
+                "reason": "trainer_interpreter_preflight",
+                "summary": str(exc)[:256],
+            }
+            return result
+
+        result.captured_metrics["trainer_python"] = str(trainer_python)
+
         script = config.paths.trainer_dir / "scripts" / "train.py"
         cmd = [
-            sys.executable, str(script),
+            str(trainer_python), str(script),
             "--config", str(effective_config),
         ]
 
