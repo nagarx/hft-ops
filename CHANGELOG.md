@@ -10,6 +10,25 @@ producer `hft-contracts.SCHEMA_VERSION`.
 
 ---
 
+## [0.4.1] — 2026-08-04
+
+### Added
+
+- `hft_ops.publication.development_authority`, the sole issuer for the
+  content-addressed schema-4 development-authority receipt. It derives exact
+  Git and evidence identities from clean checkouts, uses no-replace publication,
+  and hard-codes only bounded code/test permissions; production, admission,
+  activation, historical, and research permissions remain false.
+- Mutation tests proving dirty inputs, non-admitting-evidence drift, unrelated
+  hft-ops changes, and non-idempotent publication fail loudly.
+
+### Changed
+
+- Requires `hft-contracts>=2.13.1`, whose authority schema binds both the exact
+  validator commit and corrected D0 receipt.
+
+---
+
 ## [0.4.0] — 2026-08-03
 
 Two verified orchestrator defects, both of the same family: a declared

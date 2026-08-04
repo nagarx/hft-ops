@@ -2,7 +2,7 @@
 
 > **Pipeline scope (2026-06-02).** This module is part of an **intraday trading research pipeline** — an experiment-first platform for discovering and validating *any* profitable **intraday** trading edge (no overnight positions), across approach classes (microstructure/HFT, scalping, intraday momentum, intraday statistical arbitrage, …) and instruments (equities, futures, same-day options). The pipeline *originated* as a high-frequency NVDA MBO/LOB microstructure system — that origin explains the "HFT" / "LOB" / "MBO" naming here — and that microstructure-direction program is now one (largely-closed) track among many. **Names are historical; the mission is general.** This module's role: the experiment orchestrator — a manifest-driven, subprocess-based multi-stage runner (extraction → analysis → IC-gate → training → signal-export → backtesting) with a JSON ledger, fingerprint dedup, the FeatureSet registry, sweep manifests, and content-addressed caching; the "control panel" for reproducible experiments (extending it to new approach classes is additive — register §9). For the full mission + approach taxonomy + capability-readiness boundary, see root `CLAUDE.md` §Research Scope & Charter (+ `CROSS_ASSET_OFI_FINDINGS_AND_ISSUES_2026_06_01.md` §9).
 
-> **Version**: 0.3.0-dev (pyproject; NOTE `src/hft_ops/__init__.py::__version__` still says 0.2.0 — known code-side drift, pyproject is authoritative) | **Schema**: 3.0 (Phase G G.6.A bump 2.2 → 3.0 MAJOR per CLAUDE.md root rule: any modification to stable features 0-97 = BREAKING) | **Tests**: run `.venv/bin/python -m pytest --collect-only -q` for the live count — hand-typed counts are banned here per hft-rules §11 (the prior banner count contradicted §6 for weeks). | **Last Updated**: 2026-07-07 (Curation Phase-2 TRUTH — test-count/dependency/data-flow drift fixes + monitor denylist hardening)
+> **Version**: 0.4.1 | **Schema**: 3.0 (feature schema 4 remains a separate candidate migration) | **Tests**: run `.venv/bin/python -m pytest --collect-only -q` for the live count — hand-typed counts are banned here per hft-rules §11. | **Last Updated**: 2026-08-04 (bounded schema-4 development-authority ownership)
 >
 > **Phase 7.5 SHIPPED (2026-04-23)** — orchestrator integration gaps closed; first `hft-ops validate` + `hft-ops run --dry-run` successful in pipeline history:
 >   - **Task 1a** (`680ba77`): 3 HMHP manifests re-pointed from archived `export_hmhp_signals.py` (Phase 6 6D fossil) to canonical `lob-model-trainer/scripts/export_signals.py`.
@@ -78,6 +78,7 @@ Experiment Manifest (YAML)
     ├─ ledger/dedup.py         Fingerprint-based duplicate detection
     ├─ ledger/ledger.py        Append-only JSON-backed storage
     ├─ ledger/comparator.py    Cross-experiment comparison + ranking
+    ├─ publication/            Immutable development/generation authority plane
     └─ monitor/                Read-only ledger × discovery-verdict × drift surface (F5)
 ```
 
@@ -267,6 +268,22 @@ Regression guard: `tests/test_fingerprint_base_mutation.py` (5 tests):
 3. Cycles raise `ValueError` (not a silent empty dict).
 4. Depth overruns raise `ValueError`.
 5. Malformed `_base:` values (wrong type) raise `ValueError`.
+
+### 2.7c publication/ — external authority ownership
+
+`publication/development_authority.py` is the only schema-4 development
+authority issuer. It derives repository commits, packet hashes, and corrected
+D0 identity from clean checkouts; callers cannot supply those values or alter
+the permission map. `hft_contracts.immutable_write_json` publishes the receipt
+exactly once at
+`ledger/mbo_backbone_transitions/schema4_development/<content-sha>.json`.
+Byte-identical retries are idempotent and any unrelated hft-ops change blocks
+issuance. The issuer-code commit and the receipt-only commit are deliberately
+separate so the root verifier can reject hitchhiking policy or code changes.
+
+The receipt authorizes candidate contract/code/test work and quarantined D0/D1
+evidence only. Corrected or production artifacts, admission, activation,
+historical rederivation, and research claims remain false.
 
 ### 2.8 feature_sets/
 

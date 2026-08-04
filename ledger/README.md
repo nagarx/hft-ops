@@ -33,3 +33,12 @@ back into the contract + orchestrator + sweep machinery (root `CLAUDE.md`
 teardown — the store is append-only. Re-enable simply by running
 `hft-ops run <manifest>` (writes new `records/*.json`) and, if needed,
 `hft-ops ledger rebuild-index`.
+
+## Tracked authority records are a separate ledger
+
+`ledger/mbo_backbone_transitions/` is not experiment runtime data and is not
+covered by the dormancy statement above. Receipts there are content-addressed,
+no-replace, version-controlled authority records. A schema-4 development
+authority permits bounded candidate implementation only; it cannot admit or
+activate a generation, authorize historical rederivation, or support a
+research claim.

@@ -11,6 +11,10 @@ command that validates cross-module consistency, tracks provenance, enforces
 pre-training signal-quality gates, detects post-training regressions, prevents
 duplicate experiments, and aggregates sweep results.
 
+It also owns pipeline admission/activation authority. The initial schema-4
+development receipt is intentionally narrower: it permits candidate code and
+quarantined D0/D1 evidence only, never production artifacts or research claims.
+
 ## Installation
 
 ```bash
@@ -64,6 +68,19 @@ hft-ops feature-sets show nvda_short_term_40_src128_v1
 hft-ops evaluate --config <evaluator.yaml> --criteria <criteria.yaml> \
     --save-feature-set <name>_v1 --applies-to-assets NVDA --applies-to-horizons 10
 ```
+
+After committing the issuer code as a clean hft-ops baseline, issue the
+content-addressed development receipt with an explicit UTC timestamp:
+
+```bash
+PYTHONPATH=src:../hft-contracts/src python -m \
+  hft_ops.publication.development_authority \
+  --pipeline-root .. \
+  --issued-at-utc 2026-08-04T12:00:00Z
+```
+
+The next commit must add only the emitted receipt. The root verifier enforces
+that two-commit boundary and the receipt's non-admitting permission map.
 
 ## Experiment Manifest
 
