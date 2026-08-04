@@ -1,0 +1,65 @@
+{
+  "content": {
+    "artifact": "mbo_schema4_development_authority_v1",
+    "artifact_permissions": {
+      "corrected_market_artifact_generation": false,
+      "generation_activation": false,
+      "generation_admission": false,
+      "historical_rederivation": false,
+      "historical_result_admission": false,
+      "production_generation": false,
+      "quarantined_d0_d1_evidence": true
+    },
+    "authority_repository": "nagarx/hft-ops",
+    "claim_permissions": {
+      "generic_f064": false,
+      "research_claims": false
+    },
+    "development_evidence": {
+      "d0_receipt": {
+        "path": "contracts/mbo_backbone/d0_evidence_receipt_v2.json",
+        "sha256": "be532460eac1d55d323893079fe5752ce3fe08a15f40c90c2b50f60a4b98bec7"
+      }
+    },
+    "implementation_permissions": {
+      "extractor_schema4_candidate_code": true,
+      "generation_resolver": true,
+      "hft_ops_admission_activation_code": true,
+      "reconstructor_v0_4_candidate_code": true,
+      "schema4_contract_and_codegen": true,
+      "shared_receipt_contracts": true
+    },
+    "issued_at_utc": "2026-08-04T11:59:11Z",
+    "issuer": "hft-ops",
+    "operator_decision_id": "operator-message-2026-08-04-next-development-cycle",
+    "packet_manifest_content_sha256": "c0f15e78d2c72d009453e27b02610e2dbed6ab8694527e9e3467745954d2be38",
+    "remediation_authority_content_sha256": "0cb034ded608786c6191217e6fa5965be58d5aab2ed4c67d4ff8ceb809f5568c",
+    "repository_bindings": {
+      "hft_contracts": {
+        "commit": "4566f922f0185e48ff73977b1a6185df7395611a",
+        "repository": "nagarx/hft-contracts"
+      },
+      "hft_ops": {
+        "baseline_commit": "abdc8d2b0f3c46142c9c6e2166f52e9c1e792115",
+        "repository": "nagarx/hft-ops"
+      },
+      "hft_wiki": {
+        "evidence_commit": "1d183d73a81c8e1d74f770ebe575cd8b075f0188",
+        "repository": "nagarx/hft-wiki"
+      },
+      "root": {
+        "commit": "cf652898346e6dd30968db1a30268b8043f93f6f",
+        "repository": "nagarx/hft-discovery"
+      }
+    },
+    "status": "authorized_development_nonadmitting",
+    "supersession": {
+      "basis": "operator_message_2026_08_04_next_development_cycle",
+      "does_not_assert_phase0_closure": true,
+      "supersedes_local_restriction": "phase_0_mechanical_only"
+    },
+    "transition": "schema4_development_authorize"
+  },
+  "content_sha256": "ba1cdd6e9b906ac233c5fcabc96aec014c470887b38728ce483ceefaf0dcd3d2",
+  "schema": "mbo_schema4_development_authority_v1"
+}
