@@ -39,6 +39,13 @@ from hft_ops.stages.base import (
 
 logger = logging.getLogger(__name__)
 
+# Cargo feature set for export_dataset. SINGLE SOURCE — used by BOTH the
+# pre-hash `cargo build` (which fixes which binary the cache key describes) and
+# the `cargo run` that performs the extraction. They MUST agree: a feature
+# mismatch produces a different binary, so cargo would rebuild between the hash
+# and the run and re-open the very TOCTOU the pre-hash build closes.
+_EXTRACTOR_CARGO_FEATURES = "parallel"
+
 
 class ExtractionRunner:
     """Runs feature extraction via cargo run --bin export_dataset.
@@ -75,7 +82,9 @@ class ExtractionRunner:
                 errors.append(f"Extractor config not found: {config_path}")
 
         if not config.paths.extractor_dir.exists():
-            errors.append(f"Extractor directory not found: {config.paths.extractor_dir}")
+            errors.append(
+                f"Extractor directory not found: {config.paths.extractor_dir}"
+            )
 
         return errors
 
@@ -96,6 +105,70 @@ class ExtractionRunner:
 
         # -------- Phase 8A.0 cache consult (before extraction) -----------
         if config.cache_extraction and output_dir is not None:
+            # TOCTOU CLOSURE (2026-08-11) — build BEFORE hashing.
+            #
+            # ``compiled_binary_sha256`` is one of the 9 cache-key inputs and is
+            # read from ``target/release/export_dataset`` right here, while the
+            # extraction below runs ``cargo run --release``, which REBUILDS if any
+            # source changed. Those are two different artifacts whenever a source
+            # edit is pending, and the window is exactly the one that matters:
+            # MBO-LOB-reconstructor is consumed through a path ``[patch]``
+            # (feature-extractor-MBO-LOB/.cargo/config.toml, gitignored), so an
+            # uncommitted edit there reaches this build immediately. Edit the
+            # reconstructor, do not rebuild by hand, run the stage, take a cache
+            # MISS, and the freshly-rebuilt binary's output is populated under a
+            # key that names the PRE-EDIT binary. The reverse is equally wrong: a
+            # pre-fix cached extraction stays reachable until something happens to
+            # rebuild the binary.
+            #
+            # Building first makes the hashed artifact the artifact that runs;
+            # ``cargo run`` below then finds it up to date and simply executes it.
+            #
+            # DELIBERATELY NOT FIXED by adding a ``reconstructor_dirty`` key input.
+            # CacheKeyInputs' own docstring requires a MAJOR
+            # CACHE_MANIFEST_SCHEMA_VERSION bump for any new field, which would
+            # invalidate every existing cache entry — to buy a STRICTLY WEAKER
+            # signal. Git-dirtiness is a proxy; the compiled binary hash is the
+            # ground truth (a source edit can only change the output by changing
+            # the binary), and dirtiness would additionally false-invalidate on a
+            # docs-only reconstructor edit.
+            #
+            # A failed build is self-limiting and needs no special handling: the
+            # ``cargo run`` below performs the same build, fails identically, the
+            # stage is marked FAILED, and ``populate()`` is never reached — so no
+            # entry can be written under any key.
+            if not config.dry_run:
+                try:
+                    build_proc = run_subprocess(
+                        [
+                            "cargo",
+                            "build",
+                            "--release",
+                            "--bin",
+                            "export_dataset",
+                            "--features",
+                            _EXTRACTOR_CARGO_FEATURES,
+                        ],
+                        cwd=config.paths.extractor_dir,
+                        verbose=config.verbose,
+                        env=config.env_overrides or None,
+                    )
+                    if build_proc.returncode != 0:
+                        logger.warning(
+                            "Pre-hash `cargo build` failed (rc=%d) — the cache key "
+                            "will describe whatever binary is currently on disk. "
+                            "The extraction below runs the same build and will "
+                            "surface the real error.\n%s",
+                            build_proc.returncode,
+                            _tail(build_proc.stderr or ""),
+                        )
+                except Exception as exc:  # pragma: no cover — defensive
+                    logger.warning(
+                        "Pre-hash `cargo build` could not be run (%s); cache key "
+                        "may describe a stale binary.",
+                        exc,
+                    )
+
             try:
                 cache_key_inputs = prepare_cache_key_inputs(
                     extractor_config_path=config.paths.resolve(stage.config),
@@ -131,7 +204,9 @@ class ExtractionRunner:
                     )
                     result.status = StageStatus.SKIPPED
                     result.output_dir = str(output_dir)
-                    result.captured_metrics["cache_seconds_saved"] = outcome.seconds_saved
+                    result.captured_metrics["cache_seconds_saved"] = (
+                        outcome.seconds_saved
+                    )
                     result.captured_metrics["cache_linked_files"] = outcome.linked_files
                     result.captured_metrics["cache_link_type"] = outcome.link_type
                     # P1a producer provenance (finding A-PROV): a cache HIT means
@@ -139,9 +214,11 @@ class ExtractionRunner:
                     # shas are part of the cache key), so capturing them now is
                     # correct lineage for the linked data. Fail-open observation —
                     # never blocks the run; harvested by cli._record_experiment.
-                    result.captured_metrics["producer_commits"] = resolve_build_provenance(
-                        extractor_dir=config.paths.extractor_dir,
-                        reconstructor_dir=config.paths.reconstructor_dir,
+                    result.captured_metrics["producer_commits"] = (
+                        resolve_build_provenance(
+                            extractor_dir=config.paths.extractor_dir,
+                            reconstructor_dir=config.paths.reconstructor_dir,
+                        )
                     )
                     return result
                 elif outcome.status == "poisoned":
@@ -171,11 +248,18 @@ class ExtractionRunner:
         # -------- Subprocess invocation ----------------------------------
         config_path = config.paths.resolve(stage.config)
         cmd = [
-            "cargo", "run", "--release",
-            "--bin", "export_dataset",
-            "--features", "parallel",
+            "cargo",
+            "run",
+            "--release",
+            "--bin",
+            "export_dataset",
+            "--features",
+            # MUST match the pre-hash `cargo build` above — see
+            # _EXTRACTOR_CARGO_FEATURES.
+            _EXTRACTOR_CARGO_FEATURES,
             "--",
-            "--config", str(config_path),
+            "--config",
+            str(config_path),
         ]
 
         start = time.monotonic()
@@ -205,7 +289,9 @@ class ExtractionRunner:
             else:
                 result.status = StageStatus.FAILED
                 # Phase α-2 / #PY-80 (2026-05-10) — surface stderr.
-                result.error_message = _format_subprocess_failure(proc, "export_dataset")
+                result.error_message = _format_subprocess_failure(
+                    proc, "export_dataset"
+                )
         except Exception as e:
             result.duration_seconds = time.monotonic() - start
             result.status = StageStatus.FAILED
@@ -244,9 +330,7 @@ class ExtractionRunner:
                 )
             except Exception as exc:
                 # Non-fatal — extraction succeeded, cache is opportunistic.
-                logger.warning(
-                    "Cache populate failed (extraction succeeded): %s", exc
-                )
+                logger.warning("Cache populate failed (extraction succeeded): %s", exc)
 
         return result
 
