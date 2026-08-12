@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hft-ops"
-version = "0.4.1"
+version = "0.5.0"
 description = "Central experiment orchestrator for the HFT pipeline"
 requires-python = ">=3.10"
 dependencies = [
@@ -32,9 +32,9 @@ dependencies = [
     # to any reported R²). A pre-2.12.0 install silently drops the floor from the
     # index — no error, just the original blindness. Strictly additive; the
     # MAJOR.MINOR envelope bump triggers `ledger.py::_load_index` auto-rebuild.
-    # 2026-08-04: 2.13.1 owns the exact schema-4 development-authority
-    # contract, immutable receipt publication, and validator/evidence binding.
-    "hft-contracts>=2.13.1",
+    # 2026-08-04: 2.15.0 adds typed acceptance evidence, qualification,
+    # exact producer/verifier build-pair trust, and pre-admission resolution.
+    "hft-contracts>=2.15.0",
     "click>=8.0",
     "pyyaml>=6.0",
     "rich>=13.0",
@@ -88,6 +88,11 @@ dev = ["pytest>=7.0", "pytest-tmp-files>=0.0.2"]
 
 [project.scripts]
 hft-ops = "hft_ops.cli:main"
+
+[tool.uv.sources]
+hft-contracts = { path = "../hft-contracts" }
+hft-metrics = { path = "../hft-metrics" }
+discovery-verdict = { path = "../discovery_verdict" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
