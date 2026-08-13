@@ -45,9 +45,7 @@ _UNRESOLVED = "unresolved"
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
-    )
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
 
 
 def _init_git_repo(repo: Path) -> str:
@@ -61,7 +59,10 @@ def _init_git_repo(repo: Path) -> str:
     _git(repo, "commit", "-q", "-m", "init")
     out = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=repo, check=True, capture_output=True, text=True,
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
     )
     return out.stdout.strip()
 
@@ -251,8 +252,7 @@ def test_resolve_patched_crate_dir_ignores_crates_io_table(tmp_path: Path):
         '[patch.crates-io]\nhft-statistics = { path = "../hft-statistics" }\n'
     )
     assert (
-        resolve_patched_crate_dir(ext, "hft-statistics", "hft-statistics.git")
-        is None
+        resolve_patched_crate_dir(ext, "hft-statistics", "hft-statistics.git") is None
     )
 
 
@@ -262,8 +262,7 @@ def test_resolve_patched_crate_dir_corrupt_toml(tmp_path: Path):
     (ext / ".cargo").mkdir(parents=True)
     (ext / ".cargo" / "config.toml").write_text("this is = = not valid toml [[[")
     assert (
-        resolve_patched_crate_dir(ext, "hft-statistics", "hft-statistics.git")
-        is None
+        resolve_patched_crate_dir(ext, "hft-statistics", "hft-statistics.git") is None
     )
 
 
@@ -280,8 +279,7 @@ def test_resolve_patched_crate_dir_non_string_path_is_failsoft(tmp_path: Path):
     )
     # Parser is fail-soft (no TypeError):
     assert (
-        resolve_patched_crate_dir(ext, "hft-statistics", "hft-statistics.git")
-        is None
+        resolve_patched_crate_dir(ext, "hft-statistics", "hft-statistics.git") is None
     )
     # And the top-level resolver never raises on such a config:
     out = resolve_build_provenance(
@@ -341,6 +339,34 @@ def test_producer_commits_flows_into_record(tmp_path: Path):
     from hft_ops.paths import PipelinePaths
     from hft_ops.stages.base import StageResult, StageStatus
 
+    # As of 2026-08-14 `build_provenance` raises UntrackedSourceError when
+    # `pipeline_root` is not a git repository, so a run can never silently
+    # record itself as un-re-derivable (174 of 189 ledger records carry
+    # `not_git_tracked`). This test drives the PRODUCTION path
+    # (`cli._record_experiment`), which deliberately has no override — in real
+    # use the pipeline root IS a repo. So make the fixture one, rather than
+    # teaching production to bypass its own guard.
+    # `git init` alone is NOT enough: the guard needs a resolvable HEAD, and a
+    # fresh repo has no commits, so `commit_hash` is still "". One empty commit
+    # makes the fixture a genuine tracked checkout. `-c user.*` keeps it working
+    # on a machine with no global git identity.
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
     paths = PipelinePaths(pipeline_root=tmp_path)
 
     commits = {
@@ -360,8 +386,11 @@ def test_producer_commits_flows_into_record(tmp_path: Path):
     )
 
     experiment_id = _record_experiment(
-        manifest, paths, fingerprint="d" * 64,
-        results=results, total_duration=1.0,
+        manifest,
+        paths,
+        fingerprint="d" * 64,
+        results=results,
+        total_duration=1.0,
     )
 
     record = ExperimentLedger(paths.ledger_dir).get(experiment_id)
@@ -378,6 +407,34 @@ def test_producer_commits_empty_when_extraction_absent(tmp_path: Path):
     from hft_ops.paths import PipelinePaths
     from hft_ops.stages.base import StageResult, StageStatus
 
+    # As of 2026-08-14 `build_provenance` raises UntrackedSourceError when
+    # `pipeline_root` is not a git repository, so a run can never silently
+    # record itself as un-re-derivable (174 of 189 ledger records carry
+    # `not_git_tracked`). This test drives the PRODUCTION path
+    # (`cli._record_experiment`), which deliberately has no override — in real
+    # use the pipeline root IS a repo. So make the fixture one, rather than
+    # teaching production to bypass its own guard.
+    # `git init` alone is NOT enough: the guard needs a resolvable HEAD, and a
+    # fresh repo has no commits, so `commit_hash` is still "". One empty commit
+    # makes the fixture a genuine tracked checkout. `-c user.*` keeps it working
+    # on a machine with no global git identity.
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
     paths = PipelinePaths(pipeline_root=tmp_path)
     training_result = StageResult(stage_name="training")
     training_result.status = StageStatus.COMPLETED
@@ -388,8 +445,11 @@ def test_producer_commits_empty_when_extraction_absent(tmp_path: Path):
         experiment=ExperimentHeader(name="test_producer_commits_absent"),
     )
     experiment_id = _record_experiment(
-        manifest, paths, fingerprint="e" * 64,
-        results=results, total_duration=1.0,
+        manifest,
+        paths,
+        fingerprint="e" * 64,
+        results=results,
+        total_duration=1.0,
     )
 
     record = ExperimentLedger(paths.ledger_dir).get(experiment_id)
@@ -441,12 +501,11 @@ def test_extraction_stage_run_populates_producer_commits(tmp_path, monkeypatch):
         return types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     # Fake a successful cargo build (rc=0); never actually shells out.
-    monkeypatch.setattr(
-        "hft_ops.stages.extraction.run_subprocess", _fake_extractor
-    )
+    monkeypatch.setattr("hft_ops.stages.extraction.run_subprocess", _fake_extractor)
 
     config = OpsConfig.from_pipeline_root(
-        pipeline_root=tmp_path, cache_extraction=False  # skip the cache-consult path
+        pipeline_root=tmp_path,
+        cache_extraction=False,  # skip the cache-consult path
     )
     manifest = ExperimentManifest(
         experiment=ExperimentHeader(name="test_extraction_producer_commits"),

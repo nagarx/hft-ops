@@ -97,7 +97,9 @@ class TestHashDirectoryManifest:
 
 class TestGitInfo:
     def test_roundtrip(self):
-        info = GitInfo(commit_hash="abc123", branch="main", dirty=True, short_hash="abc1")
+        info = GitInfo(
+            commit_hash="abc123", branch="main", dirty=True, short_hash="abc1"
+        )
         d = info.to_dict()
         restored = GitInfo.from_dict(d)
         assert restored.commit_hash == "abc123"
@@ -120,6 +122,7 @@ class TestCaptureGitInfo:
         downstream tools can filter / detect untracked records.
         """
         from hft_ops.provenance.lineage import NOT_GIT_TRACKED_SENTINEL
+
         info = capture_git_info(tmp_path)
         assert info.commit_hash == NOT_GIT_TRACKED_SENTINEL
         assert info.short_hash == NOT_GIT_TRACKED_SENTINEL[:8]
@@ -134,6 +137,7 @@ class TestProvenanceRetroactiveAndSchema:
 
     def test_default_schema_version(self):
         from hft_ops.provenance.lineage import PROVENANCE_SCHEMA_VERSION
+
         prov = Provenance()
         assert prov.schema_version == PROVENANCE_SCHEMA_VERSION
         assert prov.schema_version == "1.0"
@@ -184,10 +188,17 @@ class TestProvenance:
         manifest = tmp_path / "manifest.yaml"
         manifest.write_text("experiment:\n  name: test\n")
 
+        # allow_untracked_source: `tmp_path` is never a git repo, and as of
+        # 2026-08-14 `build_provenance` raises UntrackedSourceError rather than
+        # silently recording an un-re-derivable run (174 of 189 ledger records
+        # carry `not_git_tracked`; 186 cannot name the code that produced them).
+        # Taking the override is the intended path for a synthetic fixture, and
+        # it is RECORDED on the Provenance so a reader can see it was taken.
         prov = build_provenance(
             tmp_path,
             manifest_path=manifest,
             contract_version="2.2",
+            allow_untracked_source=True,
         )
         assert prov.config_hashes["manifest"] != ""
         assert prov.contract_version == "2.2"
@@ -208,6 +219,7 @@ class TestProvenance:
             tmp_path,
             trainer_config_dict=trainer_cfg,
             contract_version="2.2",
+            allow_untracked_source=True,  # synthetic fixture; see test_build_provenance
         )
         assert "trainer" in prov.config_hashes, (
             "Inline trainer_config must populate config_hashes['trainer']"
@@ -220,6 +232,7 @@ class TestProvenance:
             tmp_path,
             trainer_config_dict=dict(trainer_cfg),  # fresh copy
             contract_version="2.2",
+            allow_untracked_source=True,  # synthetic fixture; see test_build_provenance
         )
         assert prov.config_hashes["trainer"] == prov2.config_hashes["trainer"], (
             "Deterministic canonical hash: same dict → same digest"
