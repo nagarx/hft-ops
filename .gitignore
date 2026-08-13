@@ -60,3 +60,8 @@ experiments/ledger/runs/
 # if a developer mirrors CI locally via 'gh workflow run' or the
 # equivalent manual checkout. Added by Phase V.A.0 audit (Agent 2 #1).
 _deps/
+
+# Nested git worktrees for the codex/* custody branches. The CONTENT is fully
+# backed up: each branch is committed with 0 uncommitted changes and is on origin
+# (verified 2026-08-14). These are checkouts, not work. Mirrors MBO-LOB-reconstructor 3ab27aa.
+.worktrees/
