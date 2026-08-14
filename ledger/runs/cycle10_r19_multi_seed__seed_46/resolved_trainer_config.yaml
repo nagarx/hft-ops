@@ -1,0 +1,63 @@
+name: cycle10_r19_multi_seed_base
+description: 'R-19 multi-seed base. Inline-merged from r19_tlob_tb_v3p0_h30.yaml _base
+  composition: nvda_98feat_triple_barrier.yaml + triple_barrier_volscaled.yaml + classification_triple_barrier.yaml
+  + r19 overrides. Single axis: train.seed.
+
+  '
+data:
+  data_dir: ../data/exports/nvda_v3p0_tb_pt40_sl20_h30
+  feature_count: 98
+  feature_set: nvda_r19_tb_v3p0_98feat_v1
+  labeling_strategy: triple_barrier
+  num_classes: 3
+  sequence:
+    window_size: 20
+    stride: 1
+  normalization:
+    strategy: hybrid
+    eps: 1.0e-08
+    clip_value: 10.0
+    exclude_features:
+    - 93
+  labels:
+    source: precomputed
+    task: classification
+  cache_in_memory: true
+model:
+  model_type: tlob
+  input_size: 98
+  num_classes: 3
+  dropout: 0.1
+  tlob_hidden_dim: 40
+  tlob_num_layers: 4
+  tlob_num_heads: 1
+  tlob_use_bin: true
+  tlob_use_sinusoidal_pe: true
+  tlob_mlp_expansion: 4.0
+  tlob_dataset_type: nvda
+train:
+  task_type: multiclass
+  loss_type: focal
+  focal_gamma: 2.0
+  use_class_weights: true
+  batch_size: 64
+  learning_rate: 0.0001
+  weight_decay: 1.0e-05
+  epochs: 100
+  early_stopping_patience: 15
+  gradient_clip_norm: 1.0
+  scheduler: cosine
+  num_workers: 0
+  pin_memory: true
+  mixed_precision: false
+  seed: 46
+output_dir: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513
+log_level: INFO
+tags:
+- cycle10
+- r19
+- py243
+- multi_seed
+- tlob
+- tb_v3p0
+- classification

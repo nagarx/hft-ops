@@ -36,7 +36,20 @@ ledger/records/*.json
 # regenerable from ledger/records/<run_id>.json once Phase Y
 # experiment_provenance_hash composer is end-to-end validated. Adding
 # here as part of α-5/100 (Phase α-1.1 hardening cycle, 2026-05-10).
-ledger/runs/
+ledger/runs/**
+# ↑ PAYLOAD stays ignored. EVIDENCE does not.
+# Measured 2026-08-14 by a preservation sweep, tested BY CONTENT against all 30 git object
+# stores on this machine: every .json/.yaml/.log under here was in NO object store. These are
+# MEASUREMENTS -- once the code moves they cannot be re-derived. Proven, not assumed:
+# lob-backtester's e5_round7_deep_itm.json records -1.93% and the same signals re-run through
+# current code give -3.600%. Arrays (.npy/.pt/.pkl) stay ignored: large and regenerable from a
+# checkpoint. Same error shape as `jobs/` in databento-ingest -- an ignore rule aimed at build
+# output that swallowed the source beside it.
+!ledger/runs/**/
+!ledger/runs/**/*.json
+!ledger/runs/**/*.yaml
+!ledger/runs/**/*.yml
+!ledger/runs/**/*.log
 
 # --- Ledger dormancy snapshot (2026-07-07, TRACKED archive) ---
 # The LIVE ledger/{index.json,records/*.json,runs/} above stay ignored

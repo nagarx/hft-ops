@@ -1,0 +1,19 @@
+2026-05-08 04:52:25,488 | root | INFO | Logging to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T025220/logs/train_20260508_045225.log
+2026-05-08 04:52:25,488 | __main__ | INFO | Starting experiment: E5_60s_Importance_Audit
+2026-05-08 04:52:25,488 | __main__ | INFO | Output directory: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T025220
+2026-05-08 04:52:25,491 | __main__ | INFO | Saved config to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T025220/config.yaml
+2026-05-08 04:52:25,493 | lobtrainer.utils.reproducibility | DEBUG | Set seed=42, deterministic_cudnn=True, cuda_available=False
+2026-05-08 04:52:25,493 | __main__ | INFO | Set random seed: 42
+2026-05-08 04:52:25,508 | lobtrainer.training.trainer | INFO | Trainer initialized: device=mps, output_dir=/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T025220
+2026-05-08 04:52:25,508 | __main__ | INFO | Starting training...
+2026-05-08 04:52:25,509 | lobtrainer.utils.reproducibility | DEBUG | Set seed=42, deterministic_cudnn=True, cuda_available=False
+2026-05-08 04:52:25,530 | lobtrainer.data.horizons_resolver | DEBUG | Resolved horizons from ../data/exports/e5_timebased_60s_v3p0/train/: [10, 60, 300] (verified consistent across 162 day(s))
+2026-05-08 04:52:25,530 | lobtrainer.training.trainer | INFO | Auto-resolved data.labels.horizons=[10, 60, 300] from ../data/exports/e5_timebased_60s_v3p0/train/*_horizons.json (Phase X.3 / Phase C.1 truth-pinning — was previously falling back to model.hmhp_horizons classification defaults).
+2026-05-08 04:52:25,545 | lobtrainer.models | INFO | Created tlob via registry (92,690 params)
+2026-05-08 04:52:25,570 | lobtrainer.training.trainer | INFO | Created model: tlob, 92,690 params (92,690 trainable)
+2026-05-08 04:52:26,150 | lobtrainer.training.trainer | DEBUG | Created optimizer: adamw(lr=0.0005, wd=0.01)
+2026-05-08 04:52:26,150 | lobtrainer.training.trainer | DEBUG | Created scheduler: cosine
+2026-05-08 04:52:26,152 | lobtrainer.training.callbacks | INFO | MetricLogger: saved history to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T025220/training_history.json
+2026-05-08 04:52:26,152 | lobtrainer.training.importance.callback | WARNING | PermutationImportanceCallback: eval_split='test' loader is None on trainer. Skipping importance computation. (Configure `data.test_days` / `data.val_days` or switch eval_split.)
+2026-05-08 04:52:26,152 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics summary: 0 issues, 0 warnings across 0 epochs
+2026-05-08 04:52:26,152 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics: saved report to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T025220/training_diagnostics.json

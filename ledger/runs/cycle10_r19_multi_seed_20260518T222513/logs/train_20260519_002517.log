@@ -1,0 +1,190 @@
+2026-05-19 00:25:17,806 | root | INFO | Logging to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/logs/train_20260519_002517.log
+2026-05-19 00:25:17,806 | __main__ | INFO | Starting experiment: cycle10_r19_multi_seed_base
+2026-05-19 00:25:17,806 | __main__ | INFO | Output directory: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513
+2026-05-19 00:25:17,808 | __main__ | INFO | Saved config to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/config.yaml
+2026-05-19 00:25:18,357 | lobtrainer.utils.reproducibility | DEBUG | Set seed=43, deterministic_cudnn=True, strict_determinism=False, cuda_available=False
+2026-05-19 00:25:18,357 | __main__ | INFO | Set random seed: 43
+2026-05-19 00:25:18,375 | lobtrainer.training.trainer | INFO | Trainer initialized: device=mps, output_dir=/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513
+2026-05-19 00:25:18,376 | __main__ | INFO | Starting training...
+2026-05-19 00:25:18,377 | lobtrainer.utils.reproducibility | DEBUG | Set seed=43, deterministic_cudnn=True, strict_determinism=False, cuda_available=False
+2026-05-19 00:25:18,402 | lobtrainer.data.horizons_resolver | DEBUG | Resolved horizons from ../data/exports/nvda_v3p0_tb_pt40_sl20_h30/train/: [30] (verified consistent across 163 day(s))
+2026-05-19 00:25:18,403 | lobtrainer.training.trainer | INFO | Auto-resolved data.labels.horizons=[30] from ../data/exports/nvda_v3p0_tb_pt40_sl20_h30/train/*_horizons.json (Phase X.3 / Phase C.1 truth-pinning — was previously falling back to model.hmhp_horizons classification defaults).
+2026-05-19 00:25:18,421 | lobtrainer.models | INFO | Created tlob via registry (130,296 params)
+2026-05-19 00:25:18,470 | lobtrainer.training.trainer | INFO | Created model: tlob, 130,296 params (130,296 trainable)
+2026-05-19 00:25:18,470 | lobtrainer.training.trainer | DEBUG | Created optimizer: adamw(lr=0.0001, wd=1e-05)
+2026-05-19 00:25:18,470 | lobtrainer.training.trainer | DEBUG | Created scheduler: cosine
+2026-05-19 00:25:18,472 | lobtrainer.training.trainer | INFO | FeatureSet resolved: 'nvda_r19_tb_v3p0_98feat_v1' → 98 / 98 features (contract_version=3.0, content_hash=122fe5cbfb657bf9...)
+2026-05-19 00:25:18,472 | lobtrainer.data.feature_selector | INFO | Created FeatureSelector from custom indices: 98 features from 98
+2026-05-19 00:25:18,472 | lobtrainer.training.trainer | INFO | Feature selection from config: custom (98 features from 98)
+2026-05-19 00:25:18,472 | lobtrainer.training.trainer | INFO | Loading cached hybrid normalization stats from ../data/exports/nvda_v3p0_tb_pt40_sl20_h30/hybrid_normalization_stats.json
+2026-05-19 00:25:18,473 | lobtrainer.data.normalization | DEBUG | HybridNormalizer initialized: LOB=40 features (prices=20, sizes=20), per-feature=52 features, excluded=6 features
+2026-05-19 00:25:18,473 | lobtrainer.training.trainer | INFO | Loading training data...
+2026-05-19 00:25:19,254 | lobtrainer.data.dataset | INFO | Loaded 163 days from train (aligned format)
+2026-05-19 00:25:19,405 | lobtrainer.data.dataset | INFO | Loaded 35 days from val (aligned format)
+2026-05-19 00:25:19,539 | lobtrainer.data.dataset | INFO | Loaded 35 days from test (aligned format)
+2026-05-19 00:25:19,539 | lobtrainer.data.dataset | INFO | triple_barrier labeling (contract): shift_for_crossentropy=False
+2026-05-19 00:25:19,542 | lobtrainer.data.dataset | INFO | triple_barrier labeling (contract): shift_for_crossentropy=False
+2026-05-19 00:25:19,543 | lobtrainer.data.dataset | INFO | triple_barrier labeling (contract): shift_for_crossentropy=False
+2026-05-19 00:25:43,822 | lobtrainer.training.strategies.classification | INFO |   Class Down: 34,138 (36.8%)
+2026-05-19 00:25:43,822 | lobtrainer.training.strategies.classification | INFO |   Class Stable: 43,197 (46.6%)
+2026-05-19 00:25:43,822 | lobtrainer.training.strategies.classification | INFO |   Class Up: 15,337 (16.5%)
+2026-05-19 00:25:44,157 | lobtrainer.training.strategies.classification | INFO | Using FocalLoss(gamma=2.0, alpha=tensor([0.9049, 0.7151, 2.0141], device='mps:0'))
+2026-05-19 00:25:44,157 | lobtrainer.training.trainer | INFO | Setup complete: strategy=ClassificationStrategy, train=1448 batches, val=309 batches
+2026-05-19 00:25:44,170 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics: monitoring enabled
+2026-05-19 00:25:44,170 | lobtrainer.training.trainer | INFO | Starting training: epochs 0..99 (100 remaining of 100 total)
+2026-05-19 00:28:27,569 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 0.405085
+2026-05-19 00:28:27,745 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/checkpoint_epoch000_0.4051.pt
+2026-05-19 00:28:27,746 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=0.405085)
+2026-05-19 00:28:27,747 | lobtrainer.training.callbacks | INFO | Epoch 1: train_accuracy=0.5094, train_loss=0.4151, val_accuracy=0.5846, val_decisive_prediction_rate=0.4613, val_loss=0.4051, val_macro_f1=0.4961, val_predicted_trade_win_rate=0.2321, val_profittarget_precision=0.2965, val_signal_rate=0.4613, val_stoploss_precision=0.5128, val_timeout_precision=0.6936, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:31:12,851 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.406321, no improvement for 1/15 epochs
+2026-05-19 00:31:12,852 | lobtrainer.training.callbacks | INFO | Epoch 2: train_accuracy=0.5498, train_loss=0.3769, val_accuracy=0.5589, val_decisive_prediction_rate=0.4269, val_loss=0.4063, val_macro_f1=0.4807, val_predicted_trade_win_rate=0.2462, val_profittarget_precision=0.2863, val_signal_rate=0.4269, val_stoploss_precision=0.5089, val_timeout_precision=0.6926, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:33:56,797 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 0.380179
+2026-05-19 00:33:56,940 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/checkpoint_epoch002_0.3802.pt
+2026-05-19 00:33:56,943 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=0.380179)
+2026-05-19 00:33:56,943 | lobtrainer.training.callbacks | INFO | Epoch 3: train_accuracy=0.5503, train_loss=0.3673, val_accuracy=0.5368, val_decisive_prediction_rate=0.5789, val_loss=0.3802, val_macro_f1=0.4959, val_predicted_trade_win_rate=0.2187, val_profittarget_precision=0.2842, val_signal_rate=0.5789, val_stoploss_precision=0.4442, val_timeout_precision=0.7750, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:36:37,031 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.381460, no improvement for 1/15 epochs
+2026-05-19 00:36:37,031 | lobtrainer.training.callbacks | INFO | Epoch 4: train_accuracy=0.5515, train_loss=0.3607, val_accuracy=0.5712, val_decisive_prediction_rate=0.4916, val_loss=0.3815, val_macro_f1=0.5099, val_predicted_trade_win_rate=0.2352, val_profittarget_precision=0.3020, val_signal_rate=0.4916, val_stoploss_precision=0.4971, val_timeout_precision=0.7324, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:39:14,786 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 0.372201
+2026-05-19 00:39:14,923 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/checkpoint_epoch004_0.3722.pt
+2026-05-19 00:39:14,926 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=0.372201)
+2026-05-19 00:39:14,926 | lobtrainer.training.callbacks | INFO | Epoch 5: train_accuracy=0.5504, train_loss=0.3565, val_accuracy=0.5407, val_decisive_prediction_rate=0.5540, val_loss=0.3722, val_macro_f1=0.4930, val_predicted_trade_win_rate=0.2272, val_profittarget_precision=0.2816, val_signal_rate=0.5540, val_stoploss_precision=0.4494, val_timeout_precision=0.7712, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:41:46,400 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.383749, no improvement for 1/15 epochs
+2026-05-19 00:41:46,402 | lobtrainer.training.callbacks | INFO | Epoch 6: train_accuracy=0.5504, train_loss=0.3532, val_accuracy=0.5462, val_decisive_prediction_rate=0.5152, val_loss=0.3837, val_macro_f1=0.4885, val_predicted_trade_win_rate=0.2334, val_profittarget_precision=0.2829, val_signal_rate=0.5152, val_stoploss_precision=0.4684, val_timeout_precision=0.7491, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:41:46,402 | lobtrainer.training.monitoring | WARNING | Epoch 6: Accuracy stagnation: no improvement for 5 epochs (best: 0.5846)
+2026-05-19 00:44:22,907 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.376535, no improvement for 2/15 epochs
+2026-05-19 00:44:22,908 | lobtrainer.training.callbacks | INFO | Epoch 7: train_accuracy=0.5476, train_loss=0.3513, val_accuracy=0.5081, val_decisive_prediction_rate=0.6271, val_loss=0.3765, val_macro_f1=0.4753, val_predicted_trade_win_rate=0.2148, val_profittarget_precision=0.2627, val_signal_rate=0.6271, val_stoploss_precision=0.4147, val_timeout_precision=0.8203, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:44:22,908 | lobtrainer.training.monitoring | WARNING | Epoch 7: Accuracy stagnation: no improvement for 6 epochs (best: 0.5846)
+2026-05-19 00:47:05,873 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 0.368984
+2026-05-19 00:47:05,996 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/checkpoint_epoch007_0.3690.pt
+2026-05-19 00:47:05,998 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=0.368984)
+2026-05-19 00:47:05,999 | lobtrainer.training.callbacks | DEBUG | ModelCheckpoint: removed old checkpoint /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/checkpoint_epoch000_0.4051.pt
+2026-05-19 00:47:05,999 | lobtrainer.training.callbacks | INFO | Epoch 8: train_accuracy=0.5494, train_loss=0.3488, val_accuracy=0.5199, val_decisive_prediction_rate=0.6250, val_loss=0.3690, val_macro_f1=0.4881, val_predicted_trade_win_rate=0.2155, val_profittarget_precision=0.2741, val_signal_rate=0.6250, val_stoploss_precision=0.4217, val_timeout_precision=0.8187, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:47:06,000 | lobtrainer.training.monitoring | WARNING | Epoch 8: Accuracy stagnation: no improvement for 7 epochs (best: 0.5846)
+2026-05-19 00:49:51,564 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.374768, no improvement for 1/15 epochs
+2026-05-19 00:49:51,566 | lobtrainer.training.callbacks | INFO | Epoch 9: train_accuracy=0.5496, train_loss=0.3469, val_accuracy=0.5373, val_decisive_prediction_rate=0.5715, val_loss=0.3748, val_macro_f1=0.4927, val_predicted_trade_win_rate=0.2271, val_profittarget_precision=0.2772, val_signal_rate=0.5715, val_stoploss_precision=0.4437, val_timeout_precision=0.7874, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:49:51,566 | lobtrainer.training.monitoring | WARNING | Epoch 9: Accuracy stagnation: no improvement for 8 epochs (best: 0.5846)
+2026-05-19 00:52:29,644 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.378116, no improvement for 2/15 epochs
+2026-05-19 00:52:29,645 | lobtrainer.training.callbacks | INFO | Epoch 10: train_accuracy=0.5486, train_loss=0.3447, val_accuracy=0.5736, val_decisive_prediction_rate=0.5354, val_loss=0.3781, val_macro_f1=0.5189, val_predicted_trade_win_rate=0.2325, val_profittarget_precision=0.3008, val_signal_rate=0.5354, val_stoploss_precision=0.4869, val_timeout_precision=0.7643, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:52:29,646 | lobtrainer.training.monitoring | WARNING | Epoch 10: Accuracy stagnation: no improvement for 9 epochs (best: 0.5846)
+2026-05-19 00:52:29,646 | lobtrainer.training.monitoring | WARNING | Epoch 10: Potential overfitting: train loss decreasing while val loss increasing
+2026-05-19 00:55:08,126 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.372626, no improvement for 3/15 epochs
+2026-05-19 00:55:08,127 | lobtrainer.training.callbacks | INFO | Epoch 11: train_accuracy=0.5494, train_loss=0.3430, val_accuracy=0.5347, val_decisive_prediction_rate=0.5963, val_loss=0.3726, val_macro_f1=0.4956, val_predicted_trade_win_rate=0.2234, val_profittarget_precision=0.2760, val_signal_rate=0.5963, val_stoploss_precision=0.4426, val_timeout_precision=0.8090, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:55:08,128 | lobtrainer.training.monitoring | WARNING | Epoch 11: Accuracy stagnation: no improvement for 10 epochs (best: 0.5846)
+2026-05-19 00:57:45,343 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.369354, no improvement for 4/15 epochs
+2026-05-19 00:57:45,344 | lobtrainer.training.callbacks | INFO | Epoch 12: train_accuracy=0.5491, train_loss=0.3415, val_accuracy=0.5660, val_decisive_prediction_rate=0.5732, val_loss=0.3694, val_macro_f1=0.5193, val_predicted_trade_win_rate=0.2266, val_profittarget_precision=0.2956, val_signal_rate=0.5732, val_stoploss_precision=0.4754, val_timeout_precision=0.7908, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 00:57:45,345 | lobtrainer.training.monitoring | WARNING | Epoch 12: Accuracy stagnation: no improvement for 11 epochs (best: 0.5846)
+2026-05-19 01:00:21,703 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 0.365981
+2026-05-19 01:00:21,825 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/checkpoint_epoch012_0.3660.pt
+2026-05-19 01:00:21,828 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=0.365981)
+2026-05-19 01:00:21,828 | lobtrainer.training.callbacks | DEBUG | ModelCheckpoint: removed old checkpoint /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/checkpoint_epoch002_0.3802.pt
+2026-05-19 01:00:21,828 | lobtrainer.training.callbacks | INFO | Epoch 13: train_accuracy=0.5514, train_loss=0.3391, val_accuracy=0.5191, val_decisive_prediction_rate=0.6203, val_loss=0.3660, val_macro_f1=0.4842, val_predicted_trade_win_rate=0.2186, val_profittarget_precision=0.2657, val_signal_rate=0.6203, val_stoploss_precision=0.4399, val_timeout_precision=0.8269, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:00:21,829 | lobtrainer.training.monitoring | WARNING | Epoch 13: Accuracy stagnation: no improvement for 12 epochs (best: 0.5846)
+2026-05-19 01:02:59,159 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.374110, no improvement for 1/15 epochs
+2026-05-19 01:02:59,161 | lobtrainer.training.callbacks | INFO | Epoch 14: train_accuracy=0.5502, train_loss=0.3375, val_accuracy=0.5773, val_decisive_prediction_rate=0.5181, val_loss=0.3741, val_macro_f1=0.5177, val_predicted_trade_win_rate=0.2372, val_profittarget_precision=0.2904, val_signal_rate=0.5181, val_stoploss_precision=0.5051, val_timeout_precision=0.7583, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:02:59,162 | lobtrainer.training.monitoring | WARNING | Epoch 14: Accuracy stagnation: no improvement for 13 epochs (best: 0.5846)
+2026-05-19 01:05:35,384 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.383102, no improvement for 2/15 epochs
+2026-05-19 01:05:35,386 | lobtrainer.training.callbacks | INFO | Epoch 15: train_accuracy=0.5491, train_loss=0.3360, val_accuracy=0.5686, val_decisive_prediction_rate=0.6086, val_loss=0.3831, val_macro_f1=0.5236, val_predicted_trade_win_rate=0.2210, val_profittarget_precision=0.2968, val_signal_rate=0.6086, val_stoploss_precision=0.4716, val_timeout_precision=0.8177, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:05:35,386 | lobtrainer.training.monitoring | WARNING | Epoch 15: Accuracy stagnation: no improvement for 14 epochs (best: 0.5846)
+2026-05-19 01:05:35,386 | lobtrainer.training.monitoring | WARNING | Epoch 15: Potential overfitting: train loss decreasing while val loss increasing
+2026-05-19 01:08:14,573 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 0.364790
+2026-05-19 01:08:14,701 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/checkpoint_epoch015_0.3648.pt
+2026-05-19 01:08:14,703 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=0.364790)
+2026-05-19 01:08:14,704 | lobtrainer.training.callbacks | DEBUG | ModelCheckpoint: removed old checkpoint /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/checkpoint_epoch004_0.3722.pt
+2026-05-19 01:08:14,704 | lobtrainer.training.callbacks | INFO | Epoch 16: train_accuracy=0.5512, train_loss=0.3350, val_accuracy=0.5096, val_decisive_prediction_rate=0.6155, val_loss=0.3648, val_macro_f1=0.4695, val_predicted_trade_win_rate=0.2204, val_profittarget_precision=0.2541, val_signal_rate=0.6155, val_stoploss_precision=0.4528, val_timeout_precision=0.8264, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:08:14,704 | lobtrainer.training.monitoring | WARNING | Epoch 16: Accuracy stagnation: no improvement for 15 epochs (best: 0.5846)
+2026-05-19 01:10:53,638 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.375575, no improvement for 1/15 epochs
+2026-05-19 01:10:53,638 | lobtrainer.training.callbacks | INFO | Epoch 17: train_accuracy=0.5503, train_loss=0.3327, val_accuracy=0.5325, val_decisive_prediction_rate=0.6507, val_loss=0.3756, val_macro_f1=0.5044, val_predicted_trade_win_rate=0.2134, val_profittarget_precision=0.2741, val_signal_rate=0.6507, val_stoploss_precision=0.4539, val_timeout_precision=0.8478, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:10:53,639 | lobtrainer.training.monitoring | WARNING | Epoch 17: Accuracy stagnation: no improvement for 16 epochs (best: 0.5846)
+2026-05-19 01:13:26,295 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.380229, no improvement for 2/15 epochs
+2026-05-19 01:13:26,296 | lobtrainer.training.callbacks | INFO | Epoch 18: train_accuracy=0.5538, train_loss=0.3314, val_accuracy=0.5384, val_decisive_prediction_rate=0.6317, val_loss=0.3802, val_macro_f1=0.5070, val_predicted_trade_win_rate=0.2161, val_profittarget_precision=0.2781, val_signal_rate=0.6317, val_stoploss_precision=0.4602, val_timeout_precision=0.8320, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:13:26,297 | lobtrainer.training.monitoring | WARNING | Epoch 18: Accuracy stagnation: no improvement for 17 epochs (best: 0.5846)
+2026-05-19 01:13:26,297 | lobtrainer.training.monitoring | WARNING | Epoch 18: Potential overfitting: train loss decreasing while val loss increasing
+2026-05-19 01:15:58,479 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.379882, no improvement for 3/15 epochs
+2026-05-19 01:15:58,480 | lobtrainer.training.callbacks | INFO | Epoch 19: train_accuracy=0.5496, train_loss=0.3299, val_accuracy=0.5111, val_decisive_prediction_rate=0.6634, val_loss=0.3799, val_macro_f1=0.4861, val_predicted_trade_win_rate=0.2104, val_profittarget_precision=0.2573, val_signal_rate=0.6634, val_stoploss_precision=0.4462, val_timeout_precision=0.8573, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:15:58,480 | lobtrainer.training.monitoring | WARNING | Epoch 19: Accuracy stagnation: no improvement for 18 epochs (best: 0.5846)
+2026-05-19 01:18:33,762 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.372529, no improvement for 4/15 epochs
+2026-05-19 01:18:33,762 | lobtrainer.training.callbacks | INFO | Epoch 20: train_accuracy=0.5511, train_loss=0.3275, val_accuracy=0.5419, val_decisive_prediction_rate=0.6540, val_loss=0.3725, val_macro_f1=0.5120, val_predicted_trade_win_rate=0.2110, val_profittarget_precision=0.2780, val_signal_rate=0.6540, val_stoploss_precision=0.4636, val_timeout_precision=0.8489, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:18:33,763 | lobtrainer.training.monitoring | WARNING | Epoch 20: Accuracy stagnation: no improvement for 19 epochs (best: 0.5846)
+2026-05-19 01:21:10,467 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.391657, no improvement for 5/15 epochs
+2026-05-19 01:21:10,468 | lobtrainer.training.callbacks | INFO | Epoch 21: train_accuracy=0.5528, train_loss=0.3261, val_accuracy=0.4781, val_decisive_prediction_rate=0.6701, val_loss=0.3917, val_macro_f1=0.4478, val_predicted_trade_win_rate=0.2083, val_profittarget_precision=0.2375, val_signal_rate=0.6701, val_stoploss_precision=0.4331, val_timeout_precision=0.8662, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:21:10,469 | lobtrainer.training.monitoring | WARNING | Epoch 21: Accuracy stagnation: no improvement for 20 epochs (best: 0.5846)
+2026-05-19 01:23:47,465 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.384022, no improvement for 6/15 epochs
+2026-05-19 01:23:47,467 | lobtrainer.training.callbacks | INFO | Epoch 22: train_accuracy=0.5516, train_loss=0.3242, val_accuracy=0.5099, val_decisive_prediction_rate=0.6471, val_loss=0.3840, val_macro_f1=0.4806, val_predicted_trade_win_rate=0.2137, val_profittarget_precision=0.2518, val_signal_rate=0.6471, val_stoploss_precision=0.4558, val_timeout_precision=0.8472, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:23:47,467 | lobtrainer.training.monitoring | WARNING | Epoch 22: Accuracy stagnation: no improvement for 21 epochs (best: 0.5846)
+2026-05-19 01:26:19,929 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.383819, no improvement for 7/15 epochs
+2026-05-19 01:26:19,930 | lobtrainer.training.callbacks | INFO | Epoch 23: train_accuracy=0.5530, train_loss=0.3222, val_accuracy=0.5308, val_decisive_prediction_rate=0.5988, val_loss=0.3838, val_macro_f1=0.4912, val_predicted_trade_win_rate=0.2223, val_profittarget_precision=0.2640, val_signal_rate=0.5988, val_stoploss_precision=0.4831, val_timeout_precision=0.8122, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:26:19,930 | lobtrainer.training.monitoring | WARNING | Epoch 23: Accuracy stagnation: no improvement for 22 epochs (best: 0.5846)
+2026-05-19 01:28:55,484 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.391560, no improvement for 8/15 epochs
+2026-05-19 01:28:55,486 | lobtrainer.training.callbacks | INFO | Epoch 24: train_accuracy=0.5543, train_loss=0.3211, val_accuracy=0.5261, val_decisive_prediction_rate=0.6401, val_loss=0.3916, val_macro_f1=0.4960, val_predicted_trade_win_rate=0.2147, val_profittarget_precision=0.2609, val_signal_rate=0.6401, val_stoploss_precision=0.4635, val_timeout_precision=0.8400, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:28:55,486 | lobtrainer.training.monitoring | WARNING | Epoch 24: Accuracy stagnation: no improvement for 23 epochs (best: 0.5846)
+2026-05-19 01:31:28,167 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.388557, no improvement for 9/15 epochs
+2026-05-19 01:31:28,168 | lobtrainer.training.callbacks | INFO | Epoch 25: train_accuracy=0.5580, train_loss=0.3189, val_accuracy=0.5315, val_decisive_prediction_rate=0.5806, val_loss=0.3886, val_macro_f1=0.4876, val_predicted_trade_win_rate=0.2258, val_profittarget_precision=0.2653, val_signal_rate=0.5806, val_stoploss_precision=0.4777, val_timeout_precision=0.7956, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:31:28,169 | lobtrainer.training.monitoring | WARNING | Epoch 25: Accuracy stagnation: no improvement for 24 epochs (best: 0.5846)
+2026-05-19 01:34:01,808 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.405766, no improvement for 10/15 epochs
+2026-05-19 01:34:01,810 | lobtrainer.training.callbacks | INFO | Epoch 26: train_accuracy=0.5571, train_loss=0.3179, val_accuracy=0.5310, val_decisive_prediction_rate=0.6169, val_loss=0.4058, val_macro_f1=0.4966, val_predicted_trade_win_rate=0.2176, val_profittarget_precision=0.2684, val_signal_rate=0.6169, val_stoploss_precision=0.4608, val_timeout_precision=0.8195, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:34:01,811 | lobtrainer.training.monitoring | WARNING | Epoch 26: Accuracy stagnation: no improvement for 25 epochs (best: 0.5846)
+2026-05-19 01:36:37,865 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.393690, no improvement for 11/15 epochs
+2026-05-19 01:36:37,866 | lobtrainer.training.callbacks | INFO | Epoch 27: train_accuracy=0.5593, train_loss=0.3157, val_accuracy=0.4825, val_decisive_prediction_rate=0.6507, val_loss=0.3937, val_macro_f1=0.4467, val_predicted_trade_win_rate=0.2120, val_profittarget_precision=0.2365, val_signal_rate=0.6507, val_stoploss_precision=0.4386, val_timeout_precision=0.8503, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:36:37,867 | lobtrainer.training.monitoring | WARNING | Epoch 27: Accuracy stagnation: no improvement for 26 epochs (best: 0.5846)
+2026-05-19 01:39:12,459 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.405078, no improvement for 12/15 epochs
+2026-05-19 01:39:12,461 | lobtrainer.training.callbacks | INFO | Epoch 28: train_accuracy=0.5595, train_loss=0.3132, val_accuracy=0.4969, val_decisive_prediction_rate=0.6150, val_loss=0.4051, val_macro_f1=0.4509, val_predicted_trade_win_rate=0.2197, val_profittarget_precision=0.2406, val_signal_rate=0.6150, val_stoploss_precision=0.4832, val_timeout_precision=0.8245, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:39:12,461 | lobtrainer.training.monitoring | WARNING | Epoch 28: Accuracy stagnation: no improvement for 27 epochs (best: 0.5846)
+2026-05-19 01:41:50,120 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.399508, no improvement for 13/15 epochs
+2026-05-19 01:41:50,121 | lobtrainer.training.callbacks | INFO | Epoch 29: train_accuracy=0.5624, train_loss=0.3121, val_accuracy=0.5395, val_decisive_prediction_rate=0.6114, val_loss=0.3995, val_macro_f1=0.5039, val_predicted_trade_win_rate=0.2193, val_profittarget_precision=0.2711, val_signal_rate=0.6114, val_stoploss_precision=0.4760, val_timeout_precision=0.8178, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:41:50,122 | lobtrainer.training.monitoring | WARNING | Epoch 29: Accuracy stagnation: no improvement for 28 epochs (best: 0.5846)
+2026-05-19 01:44:23,036 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.410904, no improvement for 14/15 epochs
+2026-05-19 01:44:23,038 | lobtrainer.training.callbacks | INFO | Epoch 30: train_accuracy=0.5639, train_loss=0.3105, val_accuracy=0.5349, val_decisive_prediction_rate=0.6012, val_loss=0.4109, val_macro_f1=0.4956, val_predicted_trade_win_rate=0.2202, val_profittarget_precision=0.2576, val_signal_rate=0.6012, val_stoploss_precision=0.4826, val_timeout_precision=0.8130, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:44:23,038 | lobtrainer.training.monitoring | WARNING | Epoch 30: Accuracy stagnation: no improvement for 29 epochs (best: 0.5846)
+2026-05-19 01:46:56,535 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=0.413867, no improvement for 15/15 epochs
+2026-05-19 01:46:56,536 | lobtrainer.training.callbacks | INFO | EarlyStopping: stopped at epoch 30. Best val_loss=0.364790 at epoch 15
+2026-05-19 01:46:56,536 | lobtrainer.training.callbacks | INFO | Epoch 31: train_accuracy=0.5643, train_loss=0.3090, val_accuracy=0.5239, val_decisive_prediction_rate=0.5911, val_loss=0.4139, val_macro_f1=0.4804, val_predicted_trade_win_rate=0.2246, val_profittarget_precision=0.2498, val_signal_rate=0.5911, val_stoploss_precision=0.4865, val_timeout_precision=0.8064, val_true_decisive_rate=0.5205, val_true_signal_rate=0.5205, val_true_win_rate=0.2892
+2026-05-19 01:46:56,536 | lobtrainer.training.monitoring | WARNING | Epoch 31: Accuracy stagnation: no improvement for 30 epochs (best: 0.5846)
+2026-05-19 01:46:56,536 | lobtrainer.training.monitoring | WARNING | Epoch 31: Potential overfitting: train loss decreasing while val loss increasing
+2026-05-19 01:46:56,536 | lobtrainer.training.trainer | INFO | Early stopping at epoch 30
+2026-05-19 01:46:56,536 | lobtrainer.training.callbacks | INFO | EarlyStopping: restoring best weights from epoch 15
+2026-05-19 01:46:56,576 | lobtrainer.training.callbacks | INFO | MetricLogger: saved history to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/training_history.json
+2026-05-19 01:46:56,576 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics summary: 0 issues, 30 warnings across 31 epochs
+2026-05-19 01:46:56,576 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics: saved report to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/training_diagnostics.json
+2026-05-19 01:46:56,576 | lobtrainer.training.trainer | INFO | Training completed in 4898.2s. Best val_loss=0.364790 at epoch 15
+2026-05-19 01:46:56,576 | __main__ | INFO | Training completed: 31 epochs, best val_loss=0.364790 at epoch 15
+2026-05-19 01:46:56,576 | __main__ | INFO | 
+============================================================
+2026-05-19 01:46:56,576 | __main__ | INFO | FINAL EVALUATION
+2026-05-19 01:46:56,576 | __main__ | INFO | ============================================================
+2026-05-19 01:47:05,992 | lobtrainer.training.strategies.classification | INFO | Evaluation [val]: accuracy=0.5096, macro_f1=0.4695
+2026-05-19 01:47:05,993 | lobtrainer.training.strategies.classification | INFO |   Strategy metrics: decisive_prediction_rate=0.6155, signal_rate=0.6155, true_decisive_rate=0.5205, true_signal_rate=0.5205, true_win_rate=0.2892
+2026-05-19 01:47:05,994 | __main__ | INFO | 
+VAL Results:
+Accuracy: 0.5096
+Macro F1: 0.4695
+  StopLoss: P=0.453 R=0.219 F1=0.295 (n=7311, pred=3531)
+  Timeout: P=0.826 R=0.663 F1=0.736 (n=9474, pred=7597)
+  ProfitTarget: P=0.254 R=0.737 F1=0.378 (n=2974, pred=8631)
+Strategy metrics:
+  decisive_prediction_rate: 0.6155
+  signal_rate: 0.6155
+  true_decisive_rate: 0.5205
+  true_signal_rate: 0.5205
+  true_win_rate: 0.2892
+  predicted_trade_win_rate: 0.2204
+2026-05-19 01:47:15,681 | lobtrainer.training.strategies.classification | INFO | Evaluation [test]: accuracy=0.4691, macro_f1=0.4429
+2026-05-19 01:47:15,681 | lobtrainer.training.strategies.classification | INFO |   Strategy metrics: decisive_prediction_rate=0.6512, signal_rate=0.6512, true_decisive_rate=0.5490, true_signal_rate=0.5490, true_win_rate=0.2772
+2026-05-19 01:47:15,682 | __main__ | INFO | Saved test metrics to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/test_metrics.json
+2026-05-19 01:47:15,682 | __main__ | INFO | 
+TEST Results:
+Accuracy: 0.4691
+Macro F1: 0.4429
+  StopLoss: P=0.438 R=0.195 F1=0.270 (n=6936, pred=3091)
+  Timeout: P=0.793 R=0.613 F1=0.692 (n=7884, pred=6097)
+  ProfitTarget: P=0.242 R=0.756 F1=0.367 (n=2660, pred=8292)
+Strategy metrics:
+  decisive_prediction_rate: 0.6512
+  signal_rate: 0.6512
+  true_decisive_rate: 0.5490
+  true_signal_rate: 0.5490
+  true_win_rate: 0.2772
+  predicted_trade_win_rate: 0.2130
+2026-05-19 01:47:15,863 | lobtrainer.training.trainer | INFO | Saved checkpoint to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/final.pt
+2026-05-19 01:47:15,864 | __main__ | INFO | Saved final model to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513/checkpoints/final.pt
+2026-05-19 01:47:15,864 | __main__ | INFO | 
+Experiment completed. Outputs saved to: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513

@@ -1,0 +1,69 @@
+name: cycle5_multi_arm_base
+description: Cycle 5 multi-arm base; axes override model_type, data.labels.return_type,
+  and training.horizon_value.
+data:
+  data_dir: ../data/exports/e5_timebased_60s_v3p0
+  feature_count: 98
+  feature_set: nvda_short_term_98_src98_v1
+  labeling_strategy: regression
+  num_classes: 3
+  horizon_idx: 0
+  labels:
+    source: forward_prices
+    return_type: point_return
+    task: regression
+    horizons:
+    - 10
+    - 60
+    - 300
+    primary_horizon_idx: 0
+    sample_weights: none
+  sequence:
+    window_size: 20
+    stride: 1
+  normalization:
+    strategy: hybrid
+    eps: 1.0e-08
+    clip_value: 10.0
+    exclude_features:
+    - 93
+model:
+  model_type: tlob
+  input_size: 98
+  num_classes: 3
+  dropout: 0.1
+  task_type: regression
+  regression_loss_type: huber
+  regression_loss_delta: 12.6
+  tlob_hidden_dim: 32
+  tlob_num_layers: 2
+  tlob_num_heads: 2
+  tlob_mlp_expansion: 4.0
+  tlob_use_sinusoidal_pe: true
+  tlob_use_bin: true
+  tlob_dataset_type: nvda
+  tlob_use_cvml: false
+train:
+  task_type: regression
+  loss_type: huber
+  use_class_weights: false
+  batch_size: 128
+  learning_rate: 0.0005
+  weight_decay: 0.01
+  epochs: 30
+  early_stopping_patience: 5
+  gradient_clip_norm: 1.0
+  scheduler: cosine
+  num_workers: 0
+  pin_memory: false
+  seed: 42
+  mixed_precision: false
+output_dir: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle5_multi_arm_20260510T003111
+log_level: INFO
+tags:
+- cycle5
+- nvda
+- regression
+- multi-arm
+- v3p0
+- sweep

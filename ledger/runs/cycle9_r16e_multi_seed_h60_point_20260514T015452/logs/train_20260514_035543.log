@@ -1,0 +1,42 @@
+2026-05-14 03:55:43,887 | root | INFO | Logging to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/logs/train_20260514_035543.log
+2026-05-14 03:55:43,887 | __main__ | INFO | Starting experiment: cycle9_r16e_base
+2026-05-14 03:55:43,887 | __main__ | INFO | Output directory: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452
+2026-05-14 03:55:43,890 | __main__ | INFO | Saved config to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/config.yaml
+2026-05-14 03:55:44,255 | lobtrainer.utils.reproducibility | DEBUG | Set seed=49, deterministic_cudnn=True, strict_determinism=False, cuda_available=False
+2026-05-14 03:55:44,255 | __main__ | INFO | Set random seed: 49
+2026-05-14 03:55:44,255 | lobtrainer.training.trainer | INFO | Dropping 4 callback(s) for sklearn trainer (framework=sklearn, model=temporal_ridge)
+2026-05-14 03:55:44,255 | __main__ | INFO | Starting training...
+2026-05-14 03:55:44,256 | lobtrainer.training.simple_trainer | INFO | FeatureSet resolved (sklearn): 'nvda_short_term_98_src98_v1' → 98 indices (content_hash=122fe5cbfb657bf9...). Sklearn does NOT subset features by index; resolution is for Phase Y experiment_provenance_hash composability.
+2026-05-14 03:55:44,256 | lobtrainer.training.simple_trainer | INFO | Loading data...
+2026-05-14 03:55:44,476 | lobtrainer.training.simple_trainer | INFO | Train: 47,963, Val: 10,134, Test: 8,085
+2026-05-14 03:55:44,476 | lobtrainer.training.simple_trainer | INFO | Engineering 53 temporal features...
+2026-05-14 03:55:44,673 | lobtrainer.training.simple_trainer | INFO | Model: TemporalRidge(alpha=1.0, features=53)
+2026-05-14 03:55:44,699 | lobtrainer.training.simple_trainer | INFO | Train: R²=0.0126, IC=0.0596 | Val: R²=-0.0191, IC=0.0180 | Fit: 0.0s
+2026-05-14 03:55:44,699 | __main__ | INFO | Training completed: 1 epochs, best val_loss=0.019057 at epoch 0
+2026-05-14 03:55:44,699 | __main__ | INFO | 
+============================================================
+2026-05-14 03:55:44,699 | __main__ | INFO | FINAL EVALUATION
+2026-05-14 03:55:44,699 | __main__ | INFO | ============================================================
+2026-05-14 03:55:44,699 | __main__ | INFO | 
+VAL Results:
+  directional_accuracy: 0.499156
+  ic: 0.018005
+  mae: 45.242117
+  pearson: -0.014694
+  profitable_accuracy: 0.497322
+  r2: -0.019057
+  rmse: 63.460164
+2026-05-14 03:55:44,701 | __main__ | INFO | Saved test metrics to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/test_metrics.json
+2026-05-14 03:55:44,702 | __main__ | INFO | 
+TEST Results:
+  directional_accuracy: 0.542868
+  ic: 0.147286
+  mae: 50.256242
+  pearson: 0.054355
+  profitable_accuracy: 0.548329
+  r2: -0.001498
+  rmse: 75.841193
+2026-05-14 03:55:44,703 | lobtrainer.training.simple_trainer | INFO | Saved Phase X.1 v2 sidecar to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/final.pt.config.json
+2026-05-14 03:55:44,703 | __main__ | INFO | Saved final model to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/final.pt
+2026-05-14 03:55:44,703 | __main__ | INFO | 
+Experiment completed. Outputs saved to: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452

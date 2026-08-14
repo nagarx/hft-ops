@@ -1,0 +1,74 @@
+name: cycle12_r20_hmhp_r_multi_seed_base
+description: "R-20-HMHP-R multi-seed base trainer config. Inline-merged from r20_hmhp_r_v3p0_h10_primary.yaml\
+  \ _base composition: hmhp_cascade_regression.yaml + nvda_e5_60s.yaml + regression_huber.yaml\
+  \ + regression_default.yaml. Production-scale overrides (epochs=100, patience=15,\
+  \ hmhp_horizons=[10,60,300], hmhp_loss_weights H10-primary, hmhp_primary_horizon_idx=0\
+  \ EXPLICIT per #PY-43/#PY-57/N4 dormant-bug displacement). \u03B4=12.6 THIS cycle's\
+  \ baseline. Single sweep axis: train.seed.\n"
+data:
+  data_dir: ../data/exports/e5_timebased_60s_v3p0
+  feature_count: 98
+  feature_set: nvda_short_term_98_src98_v1
+  sequence:
+    window_size: 20
+    stride: 1
+  normalization:
+    strategy: hybrid
+    eps: 1.0e-08
+    clip_value: 10.0
+    exclude_features:
+    - 93
+  labels:
+    source: forward_prices
+    task: regression
+    return_type: smoothed_return
+    horizons:
+    - 10
+    - 60
+    - 300
+    primary_horizon_idx: 0
+  cache_in_memory: true
+model:
+  model_type: hmhp_regression
+  input_size: 98
+  hmhp_horizons:
+  - 10
+  - 60
+  - 300
+  hmhp_primary_horizon_idx: 0
+  hmhp_loss_weights:
+    H10: 0.5
+    H60: 0.25
+    H300: 0.15
+    consistency: 0.1
+  hmhp_pool_mode: mean
+  hmhp_use_confirmation: true
+  hmhp_encoder_hidden_dim: 64
+  hmhp_num_encoder_layers: 2
+  regression_loss_delta: 12.6
+  dropout: 0.1
+train:
+  task_type: regression
+  loss_type: huber
+  batch_size: 64
+  learning_rate: 0.0001
+  weight_decay: 1.0e-05
+  epochs: 100
+  early_stopping_patience: 15
+  gradient_clip_norm: 1.0
+  scheduler: cosine
+  num_workers: 0
+  pin_memory: true
+  mixed_precision: false
+  seed: 44
+output_dir: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle12_r20_hmhp_r_multi_seed_20260519T194439
+log_level: INFO
+tags:
+- cycle12
+- r20_multi_seed
+- hmhp_r
+- cascading-decoder
+- regression
+- h10
+- v3p0
+- tlob-comparison

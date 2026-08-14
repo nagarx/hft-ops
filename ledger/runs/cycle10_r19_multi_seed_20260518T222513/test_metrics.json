@@ -1,0 +1,22 @@
+{
+  "test_accuracy": 0.4723684210526316,
+  "test_decisive_prediction_rate": 0.5826086956521739,
+  "test_loss": 0.0,
+  "test_macro_f1": 0.42138826755449627,
+  "test_macro_precision": 0.4769610248249086,
+  "test_macro_recall": 0.5219663256776291,
+  "test_predicted_trade_win_rate": 0.22564807541241164,
+  "test_profittarget_f1": 0.36624808022404914,
+  "test_profittarget_precision": 0.24105125460815793,
+  "test_profittarget_recall": 0.76203007518797,
+  "test_signal_rate": 0.5826086956521739,
+  "test_stoploss_f1": 0.1809206750086098,
+  "test_stoploss_precision": 0.443943661971831,
+  "test_stoploss_recall": 0.11361014994232987,
+  "test_timeout_f1": 0.7169960474308299,
+  "test_timeout_precision": 0.7458881578947368,
+  "test_timeout_recall": 0.6902587519025876,
+  "test_true_decisive_rate": 0.5489702517162471,
+  "test_true_signal_rate": 0.5489702517162471,
+  "test_true_win_rate": 0.27719883284701957
+}

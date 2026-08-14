@@ -1,0 +1,9 @@
+{
+  "total_epochs": 0,
+  "total_issues": 0,
+  "total_warnings": 0,
+  "final_best_accuracy": 0.0,
+  "loss_history": [],
+  "val_loss_history": [],
+  "accuracy_history": []
+}

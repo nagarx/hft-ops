@@ -1,0 +1,23 @@
+2026-05-08 04:42:55,530 | root | INFO | Logging to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T024250/logs/train_20260508_044255.log
+2026-05-08 04:42:55,530 | __main__ | INFO | Starting experiment: E5_60s_Importance_Audit
+2026-05-08 04:42:55,530 | __main__ | INFO | Output directory: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T024250
+2026-05-08 04:42:55,533 | __main__ | INFO | Saved config to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T024250/config.yaml
+2026-05-08 04:42:55,534 | lobtrainer.utils.reproducibility | DEBUG | Set seed=42, deterministic_cudnn=True, cuda_available=False
+2026-05-08 04:42:55,534 | __main__ | INFO | Set random seed: 42
+2026-05-08 04:42:55,574 | lobtrainer.training.trainer | INFO | Trainer initialized: device=mps, output_dir=/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T024250
+2026-05-08 04:42:55,574 | __main__ | INFO | Starting training...
+2026-05-08 04:42:55,574 | lobtrainer.utils.reproducibility | DEBUG | Set seed=42, deterministic_cudnn=True, cuda_available=False
+2026-05-08 04:42:55,575 | lobtrainer.training.trainer | DEBUG | Horizons auto-resolution skipped: Cannot resolve horizons: split directory does not exist: data/exports/e5_timebased_60s_v3p0/train. If running classification, set data.labels.horizons explicitly OR ensure CompatibilityContract.horizons is provided by some other path.
+2026-05-08 04:42:55,590 | lobtrainer.models | INFO | Created tlob via registry (92,690 params)
+2026-05-08 04:42:55,618 | lobtrainer.training.trainer | INFO | Created model: tlob, 92,690 params (92,690 trainable)
+2026-05-08 04:42:56,205 | lobtrainer.training.trainer | DEBUG | Created optimizer: adamw(lr=0.0005, wd=0.01)
+2026-05-08 04:42:56,205 | lobtrainer.training.trainer | DEBUG | Created scheduler: cosine
+2026-05-08 04:42:56,207 | lobtrainer.training.trainer | INFO | FeatureSet resolved: 'nvda_short_term_98_src98_v1' → 98 / 98 features (contract_version=3.0, content_hash=122fe5cbfb657bf9...)
+2026-05-08 04:42:56,207 | lobtrainer.data.feature_selector | INFO | Created FeatureSelector from custom indices: 98 features from 98
+2026-05-08 04:42:56,207 | lobtrainer.training.trainer | INFO | Feature selection from config: custom (98 features from 98)
+2026-05-08 04:42:56,207 | lobtrainer.training.trainer | INFO | Computing HybridNormalizer stats for 98 features...
+2026-05-08 04:42:56,207 | lobtrainer.training.trainer | INFO |   (This may take a few minutes on first run, cached for future runs)
+2026-05-08 04:42:56,207 | lobtrainer.training.callbacks | INFO | MetricLogger: saved history to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T024250/training_history.json
+2026-05-08 04:42:56,207 | lobtrainer.training.importance.callback | WARNING | PermutationImportanceCallback: eval_split='test' loader is None on trainer. Skipping importance computation. (Configure `data.test_days` / `data.val_days` or switch eval_split.)
+2026-05-08 04:42:56,207 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics summary: 0 issues, 0 warnings across 0 epochs
+2026-05-08 04:42:56,208 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics: saved report to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/e5_60s_importance_audit_20260508T024250/training_diagnostics.json

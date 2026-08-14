@@ -1,0 +1,9 @@
+{
+  "test_directional_accuracy": 0.514904143475572,
+  "test_ic": 0.01712723387266339,
+  "test_mae": 75.2313893368842,
+  "test_pearson": 0.06588245964324423,
+  "test_profitable_accuracy": 0.514904143475572,
+  "test_r2": -0.005917256520989289,
+  "test_rmse": 96.75640135328801
+}

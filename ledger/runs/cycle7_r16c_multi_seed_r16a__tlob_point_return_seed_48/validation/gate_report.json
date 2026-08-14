@@ -1,0 +1,174 @@
+{
+  "allow_zero_ic_names": [],
+  "best_feature_ic": 0.08815161800263363,
+  "best_feature_idx": 84,
+  "best_feature_name": "true_ofi",
+  "contract_version": "3.0",
+  "data_dir": "/Users/knight/code_local/HFT-pipeline-v2/data/exports/e5_timebased_60s_v3p0",
+  "duration_seconds": 1.2124096660409123,
+  "gate_g_ic_count_passed": true,
+  "gate_g_ic_passed": true,
+  "gate_g_return_std_passed": true,
+  "gate_g_stability_passed": true,
+  "horizon_idx": 1,
+  "horizon_value": 60,
+  "ic_count": 5,
+  "n_days_used": 162,
+  "n_folds_used": 20,
+  "n_sequences_sampled": 47963,
+  "per_feature_ic": [
+    {
+      "bypassed": false,
+      "feature_idx": 84,
+      "feature_name": "true_ofi",
+      "ic": 0.08815161800263363,
+      "p_value": 2.3454998847888537e-83
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 85,
+      "feature_name": "depth_norm_ofi",
+      "ic": 0.08701039356732694,
+      "p_value": 2.977328939635543e-81
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 45,
+      "feature_name": "volume_imbalance",
+      "ic": -0.05757603559662236,
+      "p_value": 1.6475028007768715e-36
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 78,
+      "feature_name": "avg_order_age",
+      "ic": -0.05590406352033994,
+      "p_value": 1.6287976881745283e-34
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 43,
+      "feature_name": "total_bid_volume",
+      "ic": -0.05520379240855939,
+      "p_value": 1.0717488176026548e-33
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 22,
+      "feature_name": "bid_price_l2",
+      "ic": -0.049011979312804065,
+      "p_value": 6.602871714422115e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 23,
+      "feature_name": "bid_price_l3",
+      "ic": -0.049011935532856175,
+      "p_value": 6.603558700152318e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 21,
+      "feature_name": "bid_price_l1",
+      "ic": -0.049011904606271355,
+      "p_value": 6.604044036327771e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 20,
+      "feature_name": "bid_price_l0",
+      "ic": -0.04901185969667972,
+      "p_value": 6.604748873186145e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 25,
+      "feature_name": "bid_price_l5",
+      "ic": -0.04901184877026444,
+      "p_value": 6.6049203698877e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 24,
+      "feature_name": "bid_price_l4",
+      "ic": -0.04901183559345096,
+      "p_value": 6.605127193824098e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 26,
+      "feature_name": "bid_price_l6",
+      "ic": -0.04901164360741324,
+      "p_value": 6.608141344933765e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 27,
+      "feature_name": "bid_price_l7",
+      "ic": -0.0490115719393221,
+      "p_value": 6.609266872424231e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 29,
+      "feature_name": "bid_price_l9",
+      "ic": -0.04901153509593166,
+      "p_value": 6.609845561623819e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 28,
+      "feature_name": "bid_price_l8",
+      "ic": -0.04901144422018478,
+      "p_value": 6.611273137265167e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 46,
+      "feature_name": "weighted_mid_price",
+      "ic": -0.049011162936959465,
+      "p_value": 6.615693779698983e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 40,
+      "feature_name": "mid_price",
+      "ic": -0.04901107850537716,
+      "p_value": 6.61702127682761e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 9,
+      "feature_name": "ask_price_l9",
+      "ic": -0.049010285071796625,
+      "p_value": 6.629509149131037e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 8,
+      "feature_name": "ask_price_l8",
+      "ic": -0.04901021053001753,
+      "p_value": 6.63068356428823e-27
+    },
+    {
+      "bypassed": false,
+      "feature_idx": 7,
+      "feature_name": "ask_price_l7",
+      "ic": -0.049010051572622344,
+      "p_value": 6.633188647163464e-27
+    }
+  ],
+  "profile_ref_hash": "",
+  "reason": "all gates passed",
+  "return_std_bps": 79.2909122873651,
+  "schema_version": "3.0",
+  "split": "train",
+  "stability": 4.4024457930455725,
+  "thresholds": {
+    "min_ic": 0.05,
+    "min_ic_count": 2.0,
+    "min_return_std_bps": 5.0,
+    "min_stability": 2.0
+  },
+  "verdict": "PASS"
+}

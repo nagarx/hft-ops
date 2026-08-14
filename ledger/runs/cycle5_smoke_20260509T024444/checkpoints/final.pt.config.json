@@ -1,0 +1,180 @@
+{
+  "compatibility": {
+    "calibration_method": null,
+    "contract_version": "3.0",
+    "data_source": "mbo_lob",
+    "feature_count": 98,
+    "feature_layout": "default",
+    "horizons": [
+      10,
+      60,
+      300
+    ],
+    "label_strategy_hash": "7a7146aab9c2c20bab74f324aeffdd8fee3fe87bed9181c81d5506ecaa527274",
+    "normalization_strategy": "NormalizationStrategy.HYBRID",
+    "primary_horizon_idx": 0,
+    "schema_version": "3.0",
+    "window_size": 20
+  },
+  "compatibility_fingerprint": "110c4182bdc56fea28f343cc56e54fc92222558f44953486fd464ea04fd92f9e",
+  "config": {
+    "cv": null,
+    "data": {
+      "cache_in_memory": true,
+      "data_dir": "../data/exports/e5_timebased_60s_v3p0",
+      "feature_count": 98,
+      "feature_indices": null,
+      "feature_preset": null,
+      "feature_set": "nvda_short_term_98_src98_v1",
+      "feature_sets_dir": null,
+      "horizon_idx": 0,
+      "label_encoding": "categorical",
+      "labeling_strategy": "regression",
+      "labels": {
+        "horizons": [
+          10,
+          60,
+          300
+        ],
+        "primary_horizon_idx": 0,
+        "return_type": "smoothed_return",
+        "sample_weights": "none",
+        "source": "forward_prices",
+        "task": "regression",
+        "threshold_bps": 8.0
+      },
+      "normalization": {
+        "clip_value": 10.0,
+        "eps": 1e-08,
+        "exclude_features": [
+          93
+        ],
+        "strategy": "hybrid"
+      },
+      "num_classes": 3,
+      "sequence": {
+        "stride": 1,
+        "window_size": 20
+      },
+      "sources": null
+    },
+    "description": "Cycle 5 multi-arm base; axes override model_type, data.labels.return_type, and training.horizon_value.",
+    "importance": null,
+    "log_level": "INFO",
+    "model": {
+      "deeplob_conv_filters": 32,
+      "deeplob_inception_filters": 64,
+      "deeplob_lstm_hidden": 64,
+      "deeplob_mode": "benchmark",
+      "deeplob_num_levels": 10,
+      "dropout": 0.1,
+      "gmadl_a": 10.0,
+      "gmadl_b": 1.5,
+      "hidden_size": 64,
+      "hmhp_cascade_connections": null,
+      "hmhp_cascade_mode": "full",
+      "hmhp_decoder_hidden_dim": 32,
+      "hmhp_encoder_hidden_dim": 64,
+      "hmhp_encoder_type": "tlob",
+      "hmhp_horizons": [
+        10,
+        20,
+        50,
+        100,
+        200
+      ],
+      "hmhp_loss_weights": null,
+      "hmhp_num_encoder_layers": 2,
+      "hmhp_optimal_features_by_horizon": null,
+      "hmhp_pool_mode": "last",
+      "hmhp_primary_horizon_idx": 0,
+      "hmhp_regression_loss_type": "huber",
+      "hmhp_state_dim": 32,
+      "hmhp_state_fusion": "gate",
+      "hmhp_use_confirmation": true,
+      "hmhp_use_regression": false,
+      "input_size": 98,
+      "logistic_feature_indices": null,
+      "logistic_pooling": "last",
+      "lstm_attention": false,
+      "lstm_bidirectional": false,
+      "mlplob_bin_eps": 0.0001,
+      "mlplob_bin_init_gamma": 0.5,
+      "mlplob_dataset_type": "nvda",
+      "mlplob_hidden_dim": 40,
+      "mlplob_mlp_expansion": 4.0,
+      "mlplob_num_layers": 3,
+      "mlplob_use_bin": true,
+      "model_type": "temporal_ridge",
+      "num_classes": 3,
+      "num_layers": 2,
+      "params": {
+        "alpha": 1.0,
+        "features": {
+          "include_momentum": true,
+          "include_volatility": true,
+          "rolling_windows": [
+            3,
+            5,
+            10
+          ],
+          "signal_indices": [
+            85,
+            84,
+            86,
+            56,
+            45
+          ],
+          "top_k_signals": 3
+        }
+      },
+      "regression_loss_delta": 12.6,
+      "regression_loss_type": "huber",
+      "task_type": "regression",
+      "tlob_cvml_out_channels": 0,
+      "tlob_dataset_type": "nvda",
+      "tlob_hidden_dim": 32,
+      "tlob_mlp_expansion": 4.0,
+      "tlob_num_heads": 2,
+      "tlob_num_layers": 2,
+      "tlob_use_bin": true,
+      "tlob_use_cvml": false,
+      "tlob_use_sinusoidal_pe": true,
+      "transformer_dim_feedforward": 256,
+      "transformer_num_heads": 4
+    },
+    "name": "cycle5_smoke_base",
+    "output_dir": "/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle5_smoke_20260509T024444",
+    "tags": [
+      "cycle5",
+      "nvda",
+      "regression",
+      "multi-arm",
+      "v3p0",
+      "sweep"
+    ],
+    "train": {
+      "batch_size": 128,
+      "early_stopping_patience": 5,
+      "epochs": 30,
+      "focal_alpha": null,
+      "focal_gamma": 2.0,
+      "gradient_clip_norm": 1.0,
+      "learning_rate": 0.0005,
+      "loss_type": "huber",
+      "mixed_precision": false,
+      "num_workers": 0,
+      "optimizer": "adamw",
+      "pin_memory": false,
+      "scheduler": "cosine",
+      "scheduler_gamma": 0.1,
+      "scheduler_step_size": 30,
+      "seed": 42,
+      "task_type": "regression",
+      "use_class_weights": false,
+      "weight_decay": 0.01
+    }
+  },
+  "model_config_hash": "be40f8f0c79bb207eddc766989c90b6cdf4ae31dde589e28d7ecea54e81022ff",
+  "schema_version": "1.0"
+}

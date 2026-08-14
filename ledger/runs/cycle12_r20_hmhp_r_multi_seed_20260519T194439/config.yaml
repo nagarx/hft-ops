@@ -1,0 +1,160 @@
+name: cycle12_r20_hmhp_r_multi_seed_base
+description: "R-20-HMHP-R multi-seed base trainer config. Inline-merged from r20_hmhp_r_v3p0_h10_primary.yaml\
+  \ _base composition: hmhp_cascade_regression.yaml + nvda_e5_60s.yaml + regression_huber.yaml\
+  \ + regression_default.yaml. Production-scale overrides (epochs=100, patience=15,\
+  \ hmhp_horizons=[10,60,300], hmhp_loss_weights H10-primary, hmhp_primary_horizon_idx=0\
+  \ EXPLICIT per #PY-43/#PY-57/N4 dormant-bug displacement). \u03B4=12.6 THIS cycle's\
+  \ baseline. Single sweep axis: train.seed.\n"
+data:
+  data_dir: ../data/exports/e5_timebased_60s_v3p0
+  feature_count: 98
+  sequence:
+    window_size: 20
+    stride: 1
+  normalization:
+    strategy: hybrid
+    eps: 1.0e-08
+    clip_value: 10.0
+    exclude_features:
+    - 93
+  label_encoding: categorical
+  labeling_strategy: tlob
+  num_classes: 3
+  cache_in_memory: true
+  labels:
+    source: forward_prices
+    return_type: smoothed_return
+    task: regression
+    threshold_bps: 8.0
+    horizons:
+    - 10
+    - 60
+    - 300
+    primary_horizon_idx: 0
+    sample_weights: none
+  horizon_idx: 0
+  feature_preset: null
+  feature_indices: null
+  feature_set: nvda_short_term_98_src98_v1
+  feature_sets_dir: null
+  sources: null
+model:
+  model_type: hmhp_regression
+  input_size: 98
+  num_classes: 3
+  params:
+    num_features: 98
+    horizons:
+    - 10
+    - 60
+    - 300
+    encoder_type: tlob
+    hidden_dim: 64
+    num_encoder_layers: 2
+    decoder_hidden_dim: 32
+    state_dim: 32
+    state_fusion: gate
+    cascade_mode: full
+    dropout: 0.1
+    pool_mode: mean
+    loss_weights:
+      H10: 0.5
+      H60: 0.25
+      H300: 0.15
+      consistency: 0.1
+    cascade_connections: null
+    optimal_features_by_horizon: null
+    use_confirmation: true
+    primary_horizon_idx: 0
+    loss_type: huber
+  hmhp_horizons:
+  - 10
+  - 60
+  - 300
+  hmhp_use_regression: false
+  deeplob_mode: benchmark
+  hidden_size: 64
+  num_layers: 2
+  dropout: 0.1
+  task_type: classification
+  regression_loss_type: huber
+  regression_loss_delta: 12.6
+  lstm_bidirectional: false
+  lstm_attention: false
+  transformer_num_heads: 4
+  transformer_dim_feedforward: 256
+  deeplob_conv_filters: 32
+  deeplob_inception_filters: 64
+  deeplob_lstm_hidden: 64
+  deeplob_num_levels: 10
+  tlob_hidden_dim: 64
+  tlob_num_layers: 4
+  tlob_num_heads: 1
+  tlob_mlp_expansion: 4.0
+  tlob_use_sinusoidal_pe: true
+  tlob_use_bin: true
+  tlob_dataset_type: nvda
+  tlob_use_cvml: false
+  tlob_cvml_out_channels: 0
+  mlplob_hidden_dim: 40
+  mlplob_num_layers: 3
+  mlplob_mlp_expansion: 4.0
+  mlplob_use_bin: true
+  mlplob_bin_eps: 0.0001
+  mlplob_bin_init_gamma: 0.5
+  mlplob_dataset_type: nvda
+  gmadl_a: 10.0
+  gmadl_b: 1.5
+  logistic_pooling: last
+  logistic_feature_indices: null
+  hmhp_cascade_mode: full
+  hmhp_state_fusion: gate
+  hmhp_cascade_connections: null
+  hmhp_encoder_type: tlob
+  hmhp_encoder_hidden_dim: 64
+  hmhp_num_encoder_layers: 2
+  hmhp_decoder_hidden_dim: 32
+  hmhp_state_dim: 32
+  hmhp_use_confirmation: true
+  hmhp_regression_loss_type: huber
+  hmhp_optimal_features_by_horizon: null
+  hmhp_loss_weights:
+    H10: 0.5
+    H60: 0.25
+    H300: 0.15
+    consistency: 0.1
+  hmhp_pool_mode: mean
+  hmhp_primary_horizon_idx: 0
+train:
+  batch_size: 64
+  learning_rate: 0.0001
+  weight_decay: 1.0e-05
+  epochs: 100
+  early_stopping_patience: 15
+  gradient_clip_norm: 1.0
+  optimizer: adamw
+  scheduler: cosine
+  scheduler_step_size: 30
+  scheduler_gamma: 0.1
+  num_workers: 0
+  pin_memory: true
+  seed: 47
+  mixed_precision: false
+  use_class_weights: true
+  task_type: regression
+  loss_type: huber
+  focal_gamma: 2.0
+  focal_alpha: null
+cv: null
+importance: null
+output_dir: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle12_r20_hmhp_r_multi_seed_20260519T194439
+log_level: INFO
+tags:
+- cycle12
+- r20_multi_seed
+- hmhp_r
+- cascading-decoder
+- regression
+- h10
+- v3p0
+- tlob-comparison

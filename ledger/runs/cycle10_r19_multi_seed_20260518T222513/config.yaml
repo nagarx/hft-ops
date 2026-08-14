@@ -1,0 +1,146 @@
+name: cycle10_r19_multi_seed_base
+description: 'R-19 multi-seed base. Inline-merged from r19_tlob_tb_v3p0_h30.yaml _base
+  composition: nvda_98feat_triple_barrier.yaml + triple_barrier_volscaled.yaml + classification_triple_barrier.yaml
+  + r19 overrides. Single axis: train.seed.
+
+  '
+data:
+  data_dir: ../data/exports/nvda_v3p0_tb_pt40_sl20_h30
+  feature_count: 98
+  sequence:
+    window_size: 20
+    stride: 1
+  normalization:
+    strategy: hybrid
+    eps: 1.0e-08
+    clip_value: 10.0
+    exclude_features:
+    - 93
+  label_encoding: categorical
+  labeling_strategy: triple_barrier
+  num_classes: 3
+  cache_in_memory: true
+  labels:
+    source: precomputed
+    return_type: smoothed_return
+    task: classification
+    threshold_bps: 8.0
+    horizons: []
+    primary_horizon_idx: 0
+    sample_weights: none
+  horizon_idx: 0
+  feature_preset: null
+  feature_indices: null
+  feature_set: nvda_r19_tb_v3p0_98feat_v1
+  feature_sets_dir: null
+  sources: null
+model:
+  model_type: tlob
+  input_size: 98
+  num_classes: 3
+  params:
+    num_features: 98
+    num_classes: 3
+    hidden_dim: 40
+    num_layers: 4
+    num_heads: 1
+    mlp_expansion: 4.0
+    use_sinusoidal_pe: true
+    use_bin: true
+    dropout: 0.1
+    dataset_type: nvda
+    task_type: classification
+    regression_loss_type: huber
+    regression_loss_delta: 10.0
+    use_cvml: false
+    cvml_out_channels: 0
+    gmadl_a: 10.0
+    gmadl_b: 1.5
+  hmhp_horizons:
+  - 10
+  - 20
+  - 50
+  - 100
+  - 200
+  hmhp_use_regression: false
+  deeplob_mode: benchmark
+  hidden_size: 64
+  num_layers: 2
+  dropout: 0.1
+  task_type: classification
+  regression_loss_type: huber
+  regression_loss_delta: 10.0
+  lstm_bidirectional: false
+  lstm_attention: false
+  transformer_num_heads: 4
+  transformer_dim_feedforward: 256
+  deeplob_conv_filters: 32
+  deeplob_inception_filters: 64
+  deeplob_lstm_hidden: 64
+  deeplob_num_levels: 10
+  tlob_hidden_dim: 40
+  tlob_num_layers: 4
+  tlob_num_heads: 1
+  tlob_mlp_expansion: 4.0
+  tlob_use_sinusoidal_pe: true
+  tlob_use_bin: true
+  tlob_dataset_type: nvda
+  tlob_use_cvml: false
+  tlob_cvml_out_channels: 0
+  mlplob_hidden_dim: 40
+  mlplob_num_layers: 3
+  mlplob_mlp_expansion: 4.0
+  mlplob_use_bin: true
+  mlplob_bin_eps: 0.0001
+  mlplob_bin_init_gamma: 0.5
+  mlplob_dataset_type: nvda
+  gmadl_a: 10.0
+  gmadl_b: 1.5
+  logistic_pooling: last
+  logistic_feature_indices: null
+  hmhp_cascade_mode: full
+  hmhp_state_fusion: gate
+  hmhp_cascade_connections: null
+  hmhp_encoder_type: tlob
+  hmhp_encoder_hidden_dim: 64
+  hmhp_num_encoder_layers: 2
+  hmhp_decoder_hidden_dim: 32
+  hmhp_state_dim: 32
+  hmhp_use_confirmation: true
+  hmhp_regression_loss_type: huber
+  hmhp_optimal_features_by_horizon: null
+  hmhp_loss_weights: null
+  hmhp_pool_mode: last
+  hmhp_primary_horizon_idx: 0
+train:
+  batch_size: 64
+  learning_rate: 0.0001
+  weight_decay: 1.0e-05
+  epochs: 100
+  early_stopping_patience: 15
+  gradient_clip_norm: 1.0
+  optimizer: adamw
+  scheduler: cosine
+  scheduler_step_size: 30
+  scheduler_gamma: 0.1
+  num_workers: 0
+  pin_memory: true
+  seed: 47
+  mixed_precision: false
+  use_class_weights: true
+  task_type: multiclass
+  loss_type: focal
+  focal_gamma: 2.0
+  focal_alpha: null
+cv: null
+importance: null
+output_dir: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle10_r19_multi_seed_20260518T222513
+log_level: INFO
+tags:
+- cycle10
+- r19
+- py243
+- multi_seed
+- tlob
+- tb_v3p0
+- classification

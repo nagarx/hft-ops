@@ -1,0 +1,110 @@
+2026-05-14 05:18:26,748 | root | INFO | Logging to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/logs/train_20260514_051826.log
+2026-05-14 05:18:26,748 | __main__ | INFO | Starting experiment: cycle9_r16e_base
+2026-05-14 05:18:26,748 | __main__ | INFO | Output directory: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452
+2026-05-14 05:18:26,750 | __main__ | INFO | Saved config to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/config.yaml
+2026-05-14 05:18:27,127 | lobtrainer.utils.reproducibility | DEBUG | Set seed=47, deterministic_cudnn=True, strict_determinism=False, cuda_available=False
+2026-05-14 05:18:27,127 | __main__ | INFO | Set random seed: 47
+2026-05-14 05:18:27,143 | lobtrainer.training.trainer | INFO | Trainer initialized: device=mps, output_dir=/Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452
+2026-05-14 05:18:27,143 | __main__ | INFO | Starting training...
+2026-05-14 05:18:27,145 | lobtrainer.utils.reproducibility | DEBUG | Set seed=47, deterministic_cudnn=True, strict_determinism=False, cuda_available=False
+2026-05-14 05:18:27,147 | lobtrainer.models | INFO | Created tlob via registry (92,690 params)
+2026-05-14 05:18:27,173 | lobtrainer.training.trainer | INFO | Created model: tlob, 92,690 params (92,690 trainable)
+2026-05-14 05:18:27,173 | lobtrainer.training.trainer | DEBUG | Created optimizer: adamw(lr=0.0005, wd=0.01)
+2026-05-14 05:18:27,173 | lobtrainer.training.trainer | DEBUG | Created scheduler: cosine
+2026-05-14 05:18:27,174 | lobtrainer.training.trainer | INFO | FeatureSet resolved: 'nvda_short_term_98_src98_v1' → 98 / 98 features (contract_version=3.0, content_hash=122fe5cbfb657bf9...)
+2026-05-14 05:18:27,174 | lobtrainer.data.feature_selector | INFO | Created FeatureSelector from custom indices: 98 features from 98
+2026-05-14 05:18:27,174 | lobtrainer.training.trainer | INFO | Feature selection from config: custom (98 features from 98)
+2026-05-14 05:18:27,174 | lobtrainer.training.trainer | INFO | Loading cached hybrid normalization stats from ../data/exports/e5_timebased_60s_v3p0/hybrid_normalization_stats.json
+2026-05-14 05:18:27,174 | lobtrainer.data.normalization | DEBUG | HybridNormalizer initialized: LOB=40 features (prices=20, sizes=20), per-feature=52 features, excluded=6 features
+2026-05-14 05:18:27,174 | lobtrainer.training.trainer | INFO | Loading training data...
+2026-05-14 05:18:27,455 | lobtrainer.data.dataset | INFO | Loaded 162 days from train (aligned format)
+2026-05-14 05:18:27,511 | lobtrainer.data.dataset | INFO | Loaded 35 days from val (aligned format)
+2026-05-14 05:18:27,556 | lobtrainer.data.dataset | INFO | Loaded 33 days from test (aligned format)
+2026-05-14 05:18:27,556 | lobtrainer.training.trainer | INFO | Using precomputed regression labels from regression_labels.npy
+2026-05-14 05:18:27,556 | lobtrainer.data.dataset | INFO | regression labeling (contract): shift_for_crossentropy=False
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | Multi-horizon labels detected: 3 horizons
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | Using horizon index 1
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | Regression targets enabled: mid_price_idx=40, stride=10
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | regression labeling (contract): shift_for_crossentropy=False
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | Multi-horizon labels detected: 3 horizons
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | Using horizon index 1
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | Regression targets enabled: mid_price_idx=40, stride=10
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | regression labeling (contract): shift_for_crossentropy=False
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | Multi-horizon labels detected: 3 horizons
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | Using horizon index 1
+2026-05-14 05:18:27,558 | lobtrainer.data.dataset | INFO | Regression targets enabled: mid_price_idx=40, stride=10
+2026-05-14 05:18:27,559 | lobtrainer.training.trainer | INFO | Setup complete: strategy=RegressionStrategy, train=374 batches, val=80 batches
+2026-05-14 05:18:27,578 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics: monitoring enabled
+2026-05-14 05:18:27,579 | lobtrainer.training.trainer | INFO | Starting training: epochs 0..29 (30 remaining of 30 total)
+2026-05-14 05:19:03,501 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 484.147864
+2026-05-14 05:19:03,571 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/checkpoint_epoch000_484.1479.pt
+2026-05-14 05:19:03,574 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=484.147864)
+2026-05-14 05:19:03,574 | lobtrainer.training.callbacks | INFO | Epoch 1: train_loss=554.8140, val_directional_accuracy=0.4910, val_ic=0.1250, val_loss=484.1479, val_mae=44.1872, val_pearson=0.1084, val_profitable_accuracy=0.4929, val_r2=-0.0043, val_rmse=62.2243
+2026-05-14 05:19:38,189 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 482.070404
+2026-05-14 05:19:38,254 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/checkpoint_epoch001_482.0704.pt
+2026-05-14 05:19:38,256 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=482.070404)
+2026-05-14 05:19:38,256 | lobtrainer.training.callbacks | INFO | Epoch 2: train_loss=552.8415, val_directional_accuracy=0.5477, val_ic=0.1223, val_loss=482.0704, val_mae=44.0125, val_pearson=0.1063, val_profitable_accuracy=0.5507, val_r2=0.0018, val_rmse=62.0336
+2026-05-14 05:20:13,217 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 481.412976
+2026-05-14 05:20:13,292 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/checkpoint_epoch002_481.4130.pt
+2026-05-14 05:20:13,294 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=481.412976)
+2026-05-14 05:20:13,294 | lobtrainer.training.callbacks | INFO | Epoch 3: train_loss=551.7712, val_directional_accuracy=0.5456, val_ic=0.1303, val_loss=481.4130, val_mae=43.9641, val_pearson=0.1066, val_profitable_accuracy=0.5487, val_r2=0.0041, val_rmse=61.9608
+2026-05-14 05:20:48,291 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 480.675072
+2026-05-14 05:20:48,369 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/checkpoint_epoch003_480.6751.pt
+2026-05-14 05:20:48,370 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=480.675072)
+2026-05-14 05:20:48,371 | lobtrainer.training.callbacks | DEBUG | ModelCheckpoint: removed old checkpoint /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/checkpoint_epoch000_484.1479.pt
+2026-05-14 05:20:48,371 | lobtrainer.training.callbacks | INFO | Epoch 4: train_loss=550.4870, val_directional_accuracy=0.5504, val_ic=0.1275, val_loss=480.6751, val_mae=43.9068, val_pearson=0.1128, val_profitable_accuracy=0.5529, val_r2=0.0061, val_rmse=61.8993
+2026-05-14 05:21:23,238 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss improved to 479.919439
+2026-05-14 05:21:23,312 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: saved /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/checkpoint_epoch004_479.9194.pt
+2026-05-14 05:21:23,313 | lobtrainer.training.callbacks | INFO | ModelCheckpoint: updated best.pt (val_loss=479.919439)
+2026-05-14 05:21:23,313 | lobtrainer.training.callbacks | DEBUG | ModelCheckpoint: removed old checkpoint /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/checkpoint_epoch001_482.0704.pt
+2026-05-14 05:21:23,313 | lobtrainer.training.callbacks | INFO | Epoch 5: train_loss=549.5792, val_directional_accuracy=0.5541, val_ic=0.1291, val_loss=479.9194, val_mae=43.8452, val_pearson=0.1185, val_profitable_accuracy=0.5564, val_r2=0.0091, val_rmse=61.8078
+2026-05-14 05:21:58,119 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=481.964270, no improvement for 1/5 epochs
+2026-05-14 05:21:58,119 | lobtrainer.training.callbacks | INFO | Epoch 6: train_loss=549.0371, val_directional_accuracy=0.5412, val_ic=0.1191, val_loss=481.9643, val_mae=44.0075, val_pearson=0.1087, val_profitable_accuracy=0.5438, val_r2=0.0019, val_rmse=62.0305
+2026-05-14 05:22:32,990 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=481.037085, no improvement for 2/5 epochs
+2026-05-14 05:22:32,992 | lobtrainer.training.callbacks | INFO | Epoch 7: train_loss=548.1675, val_directional_accuracy=0.5441, val_ic=0.1057, val_loss=481.0371, val_mae=43.9334, val_pearson=0.0899, val_profitable_accuracy=0.5458, val_r2=0.0060, val_rmse=61.9016
+2026-05-14 05:23:08,578 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=484.443157, no improvement for 3/5 epochs
+2026-05-14 05:23:08,578 | lobtrainer.training.callbacks | INFO | Epoch 8: train_loss=547.4268, val_directional_accuracy=0.5308, val_ic=0.0931, val_loss=484.4432, val_mae=44.2094, val_pearson=0.0802, val_profitable_accuracy=0.5318, val_r2=-0.0076, val_rmse=62.3252
+2026-05-14 05:23:44,187 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=484.766912, no improvement for 4/5 epochs
+2026-05-14 05:23:44,188 | lobtrainer.training.callbacks | INFO | Epoch 9: train_loss=546.4744, val_directional_accuracy=0.5306, val_ic=0.0694, val_loss=484.7669, val_mae=44.2275, val_pearson=0.0580, val_profitable_accuracy=0.5309, val_r2=-0.0091, val_rmse=62.3719
+2026-05-14 05:23:44,188 | lobtrainer.training.monitoring | WARNING | Epoch 9: Potential overfitting: train loss decreasing while val loss increasing
+2026-05-14 05:24:18,955 | lobtrainer.training.callbacks | DEBUG | EarlyStopping: val_loss=487.468039, no improvement for 5/5 epochs
+2026-05-14 05:24:18,956 | lobtrainer.training.callbacks | INFO | EarlyStopping: stopped at epoch 9. Best val_loss=479.919439 at epoch 4
+2026-05-14 05:24:18,956 | lobtrainer.training.callbacks | INFO | Epoch 10: train_loss=545.7444, val_directional_accuracy=0.5184, val_ic=0.0409, val_loss=487.4680, val_mae=44.4526, val_pearson=0.0299, val_profitable_accuracy=0.5164, val_r2=-0.0176, val_rmse=62.6337
+2026-05-14 05:24:18,957 | lobtrainer.training.monitoring | WARNING | Epoch 10: Accuracy stagnation: no improvement for 5 epochs (best: 0.0000)
+2026-05-14 05:24:18,957 | lobtrainer.training.monitoring | WARNING | Epoch 10: Potential overfitting: train loss decreasing while val loss increasing
+2026-05-14 05:24:18,957 | lobtrainer.training.trainer | INFO | Early stopping at epoch 9
+2026-05-14 05:24:18,957 | lobtrainer.training.callbacks | INFO | EarlyStopping: restoring best weights from epoch 4
+2026-05-14 05:24:18,979 | lobtrainer.training.callbacks | INFO | MetricLogger: saved history to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/training_history.json
+2026-05-14 05:24:18,979 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics summary: 0 issues, 3 warnings across 10 epochs
+2026-05-14 05:24:18,979 | lobtrainer.training.monitoring | INFO | TrainingDiagnostics: saved report to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/training_diagnostics.json
+2026-05-14 05:24:18,979 | lobtrainer.training.trainer | INFO | Training completed in 351.8s. Best val_loss=479.919439 at epoch 4
+2026-05-14 05:24:18,979 | __main__ | INFO | Training completed: 10 epochs, best val_loss=479.919439 at epoch 4
+2026-05-14 05:24:18,979 | __main__ | INFO | 
+============================================================
+2026-05-14 05:24:18,979 | __main__ | INFO | FINAL EVALUATION
+2026-05-14 05:24:18,979 | __main__ | INFO | ============================================================
+2026-05-14 05:24:22,503 | lobtrainer.training.strategies.regression | INFO | Evaluation [val]: R²=0.0091, IC=0.1291, MAE=43.8452, DA=0.5541
+2026-05-14 05:24:22,503 | __main__ | INFO | 
+VAL Results:
+  directional_accuracy: 0.554130
+  ic: 0.129121
+  mae: 43.845214
+  pearson: 0.118500
+  profitable_accuracy: 0.556449
+  r2: 0.009057
+  rmse: 61.807781
+2026-05-14 05:24:25,601 | lobtrainer.training.strategies.regression | INFO | Evaluation [test]: R²=0.0117, IC=0.1437, MAE=49.3666, DA=0.5476
+2026-05-14 05:24:25,602 | __main__ | INFO | Saved test metrics to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/test_metrics.json
+2026-05-14 05:24:25,602 | __main__ | INFO | 
+TEST Results:
+  directional_accuracy: 0.547593
+  ic: 0.143740
+  mae: 49.366615
+  pearson: 0.126197
+  profitable_accuracy: 0.553891
+  r2: 0.011665
+  rmse: 74.307156
+2026-05-14 05:24:25,685 | lobtrainer.training.trainer | INFO | Saved checkpoint to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/final.pt
+2026-05-14 05:24:25,685 | __main__ | INFO | Saved final model to /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452/checkpoints/final.pt
+2026-05-14 05:24:25,685 | __main__ | INFO | 
+Experiment completed. Outputs saved to: /Users/knight/code_local/HFT-pipeline-v2/hft-ops/ledger/runs/cycle9_r16e_multi_seed_h60_point_20260514T015452
