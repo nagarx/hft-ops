@@ -1,0 +1,18 @@
+{
+  "test_directional_accuracy": 0.5031868566904196,
+  "test_excess_r2": -0.0002358259425617737,
+  "test_ic": -0.002075237408934662,
+  "test_mae": 2.610954863061627,
+  "test_pearson": -0.0008170517254654955,
+  "test_point_return_da": 0.5008186990871505,
+  "test_point_return_n": 48858.0,
+  "test_point_return_rho1": -0.005303813465436023,
+  "test_profitable_accuracy": 0.5004757373929591,
+  "test_r2": -3.2899701227773193e-06,
+  "test_rmse": 3.6038410690623195,
+  "test_zero_skill_beta": 0.01670710283859842,
+  "test_zero_skill_da": 0.5003771038424897,
+  "test_zero_skill_ic": 0.004091273143918084,
+  "test_zero_skill_n": 50724.0,
+  "test_zero_skill_r2": 0.00023253597243899637
+}
