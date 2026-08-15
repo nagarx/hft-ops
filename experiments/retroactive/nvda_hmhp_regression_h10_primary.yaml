@@ -32,6 +32,13 @@ experiment:
   - huber-loss
 pipeline_root: ..
 stages:
+  validation:
+    # 2026-08-15: this manifest is METADATA-ONLY -- every other stage is
+    # already disabled. `validation` was the one stage nobody wrote down, so
+    # it defaulted to enabled=true and contradicted the header above. Stating
+    # it makes the "all stages disabled" claim true.
+    enabled: false
+
   extraction:
     enabled: false
   raw_analysis:

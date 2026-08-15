@@ -12,7 +12,129 @@ Schema version: 1.0
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+# =============================================================================
+# §13 gate policy — no silent defaults (2026-08-15, operator ruling R2)
+# =============================================================================
+#
+# WHY THIS EXISTS. The pre-training IC gate is the ONE mandatory gate in
+# hft-rules §13, and until 2026-08-15 no manifest had ever stated its policy.
+# Measured over the whole manifest tree before the fix:
+#
+#     $ for k in on_fail min_ic min_ic_count min_return_std_bps \
+#           min_stability primary_metric; do
+#           grep -rn --no-ignore-files "$k" experiments/ | wc -l; done
+#       0  0  0  0  0  0            # 58 manifests, six keys, zero declarations
+#
+# So all 189 ledger records ran the gate on hard-coded fallbacks that no
+# researcher chose and no reviewer could see. ``on_fail`` fell back to
+# ``"warn"``, which is why four GATE:FAIL runs trained anyway.
+#
+# The fix is not a better default — a better default has the same defect. The
+# fix is to DELETE the fallback at the manifest boundary so a gate policy must
+# be written down. A silently-defaulted policy is indistinguishable in the
+# ledger from a deliberate one; a declared policy is a treatment, reviewable
+# and diffable like any other.
+#
+# SCOPE: required only when the stage is ENABLED. A stage that is off applies
+# no policy, so demanding one would be noise — and the metadata-only
+# retroactive manifests are exactly that case.
+
+
+class MissingGatePolicyError(ValueError):
+    """A manifest enabled a gate stage without declaring its policy.
+
+    Raised at manifest LOAD time (fail-fast, hft-rules §5) so the failure
+    lands before any compute is spent, and names both the manifest and the
+    keys it must add.
+    """
+
+
+# stage name -> {key: (example value rendered in YAML, one-line rationale)}.
+# This table is the SSoT for both the requirement and the error text — adding
+# a key here makes it required and self-documenting in one edit.
+GATE_POLICY_REQUIRED_KEYS: Mapping[str, Mapping[str, Tuple[str, str]]] = {
+    "validation": {
+        "on_fail": (
+            "warn",
+            "warn | abort | record_only — `warn` TRAINS ANYWAY on FAIL",
+        ),
+        "min_ic": ("0.05", "hft-rules §13 floor on the best |feature IC|"),
+        "min_ic_count": ("2", "how many features must clear min_ic"),
+        "min_return_std_bps": ("5.0", "label std floor, basis points"),
+        "min_stability": (
+            "2.0",
+            "walk-forward mean(fold_IC)/std(fold_IC)",
+        ),
+    },
+    "post_training_gate": {
+        "primary_metric": (
+            "test_ic",
+            "which captured metric the gate judges; NEVER test_excess_r2",
+        ),
+    },
+}
+
+
+def require_gate_policy(
+    stage_name: str,
+    raw: Mapping[str, Any],
+    *,
+    enabled: bool,
+    manifest_path: str = "",
+) -> None:
+    """Fail loud unless an enabled gate stage declares its own policy.
+
+    Args:
+        stage_name: Key under ``stages:`` — ``"validation"`` or
+            ``"post_training_gate"``. Unknown names are a no-op so this can be
+            called defensively from any stage builder.
+        raw: The stage's raw YAML sub-dict, BEFORE any defaults are applied.
+            Presence in this mapping is the whole test: a key that is absent
+            was never declared, whatever value the dataclass would supply.
+        enabled: Resolved ``enabled`` for the stage. A disabled stage applies
+            no policy and is exempt.
+        manifest_path: Source YAML path, for the error message.
+
+    Raises:
+        MissingGatePolicyError: one or more required keys are undeclared. The
+            message names every missing key at once (not one per re-run) and
+            carries a paste-ready YAML block.
+    """
+    required = GATE_POLICY_REQUIRED_KEYS.get(stage_name)
+    if not required or not enabled:
+        return
+
+    # ``stages: {validation:}`` (key present, empty value) parses to None.
+    # Treat it as "declared nothing", which is exactly what it is.
+    declared: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    missing = [key for key in required if key not in declared]
+    if not missing:
+        return
+
+    where = f" in {manifest_path}" if manifest_path else ""
+    widest = max(len(k) for k in required)
+    block = "\n".join(
+        f"    {key + ':':<{widest + 2}} {example:<8}# {why}"
+        for key, (example, why) in required.items()
+    )
+    raise MissingGatePolicyError(
+        f"stages.{stage_name} is ENABLED{where} but declares no gate policy. "
+        f"Undeclared key(s): {', '.join(missing)}.\n"
+        f"\n"
+        f"Until 2026-08-15 these fell back to hard-coded values, so every "
+        f"experiment ran a gate policy no manifest ever stated. Declare it:\n"
+        f"\n"
+        f"stages:\n"
+        f"  {stage_name}:\n"
+        f"    enabled: true\n"
+        f"{block}\n"
+        f"\n"
+        f"To opt OUT instead, set `enabled: false` — a disabled gate needs no "
+        f"policy. Do NOT delete the stage block: an absent block leaves "
+        f"`enabled` at its dataclass default."
+    )
 
 
 @dataclass
@@ -308,7 +430,7 @@ class ValidationStage:
     and emits a ``gate_report.json`` artifact. On failure, behavior is
     controlled by ``on_fail``:
 
-    - ``warn`` (DEFAULT): log the failure, record it in the ledger, but
+    - ``warn``: log the failure, record it in the ledger, but
       proceed to training. Rationale: the evaluator CLAUDE.md explicitly
       warns against using DISCARD as a hard gate — individual-feature IC
       misses interaction / temporal / context-feature value. We want the
@@ -319,15 +441,29 @@ class ValidationStage:
     - ``record_only``: record the gate outcome but never fail. For archival /
       post-hoc exploration where the gate's verdict is informational only.
 
+    ⚠️ **The five gate-policy fields below are REQUIRED IN A MANIFEST whenever
+    ``enabled`` is true** (2026-08-15, operator ruling R2 — see
+    ``require_gate_policy`` for the mechanism and the measurement that forced
+    it). The Python defaults are retained ONLY so the dataclass stays
+    constructible in tests and so ``Stages`` can carry a ``default_factory``;
+    they are NOT reachable from a manifest, because the loader refuses a
+    manifest that enables the gate without stating its own policy. Read a
+    default here as "what the historical silent fallback was", never as "what
+    an experiment ran on" — the ledger record is the only authority for that.
+
     Attributes:
         enabled: Whether to run the gate.
-        on_fail: Action on gate failure. See above.
+        on_fail: Action on gate failure. See above. REQUIRED when enabled.
         target_horizon: Horizon label (e.g., ``"H10"``, ``"10"``). Empty →
             auto-infer from ``training.horizon_value``.
-        min_ic: G_IC threshold (best absolute feature IC).
+        min_ic: G_IC threshold (best absolute feature IC). REQUIRED when
+            enabled.
         min_ic_count: G_IC_COUNT threshold (#features with |IC| > min_ic).
+            REQUIRED when enabled.
         min_return_std_bps: G_RETURN_STD threshold (label std in bps).
+            REQUIRED when enabled.
         min_stability: G_STABILITY threshold (walk-forward mean/std ratio).
+            REQUIRED when enabled.
         sample_size: Max sequences sampled from train for IC estimation.
         n_folds: Walk-forward fold count; adaptively clipped at runtime
             (``max(5, min(n_folds, train_days // 8))``).
@@ -394,9 +530,15 @@ class PostTrainingGateStage:
             validation).
         on_regression: Disposition on regression detection.
         primary_metric: Which captured_metric to use for comparisons.
-            Common values: ``"test_ic"`` (regression), ``"best_val_macro_f1"``
-            (classification), ``"test_directional_accuracy"``. Empty →
-            auto-infer (test_ic > test_directional_accuracy > best_val_macro_f1).
+            **REQUIRED when enabled** (2026-08-15, ruling R2) — auto-inference
+            silently decided what a gate measured, which is the same class of
+            defect as the §13 thresholds below. Common values: ``"test_ic"``
+            (regression), ``"best_val_macro_f1"`` (classification),
+            ``"test_directional_accuracy"``. ⚠️ Do NOT set this to
+            ``"test_excess_r2"``: hft-rules §13 records that ``excess_r2`` is
+            not an identified estimand (its sign flips with fit protocol; the
+            comparator supplies 98.8–242.9% of the difference's variance), and
+            gating on it would fail PC1, the standing positive control.
         min_metric_floor: Floor value for the primary metric. Default
             0.05 matches the pre-training IC floor (Rule 13).
         min_ratio_vs_prior_best: New metric must be >= this ratio of the
@@ -501,9 +643,7 @@ class Stages:
 
     extraction: ExtractionStage = field(default_factory=ExtractionStage)
     raw_analysis: RawAnalysisStage = field(default_factory=RawAnalysisStage)
-    dataset_analysis: DatasetAnalysisStage = field(
-        default_factory=DatasetAnalysisStage
-    )
+    dataset_analysis: DatasetAnalysisStage = field(default_factory=DatasetAnalysisStage)
     validation: ValidationStage = field(default_factory=ValidationStage)
     training: TrainingStage = field(default_factory=TrainingStage)
     # Phase 7 Stage 7.4 (2026-04-19): post-training regression-detection gate.

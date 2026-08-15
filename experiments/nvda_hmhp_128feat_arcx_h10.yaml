@@ -35,6 +35,17 @@ experiment:
 pipeline_root: ".."
 
 stages:
+  validation:
+    # Declared explicitly 2026-08-15 (ruling R2). These five values are the
+    # hard-coded fallbacks this manifest ran on before the fallbacks were
+    # deleted -- written down here so the policy is reviewable, NOT changed.
+    enabled: true
+    on_fail: warn                # warn | abort | record_only -- `warn` TRAINS ANYWAY on FAIL
+    min_ic: 0.05                 # hft-rules §13 floor on the best |feature IC|
+    min_ic_count: 2              # how many features must clear min_ic
+    min_return_std_bps: 5.0      # label std floor, basis points
+    min_stability: 2.0           # walk-forward mean(fold_IC)/std(fold_IC)
+
   extraction:
     enabled: true
     skip_if_exists: true

@@ -33,6 +33,13 @@ experiment:
   contract_version: "2.2"
 pipeline_root: "."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   extraction:
     enabled: true
     output_dir: data/exports/e5_60s

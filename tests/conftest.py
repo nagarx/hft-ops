@@ -70,15 +70,9 @@ def tmp_pipeline(tmp_path: Path) -> Path:
     (root / "lob-dataset-analyzer" / "scripts" / "run_analysis.py").write_text(
         "# stub\n"
     )
-    (root / "MBO-LOB-analyzer" / "scripts" / "run_analysis.py").write_text(
-        "# stub\n"
-    )
-    (root / "lob-model-trainer" / "scripts" / "train.py").write_text(
-        "# stub\n"
-    )
-    (root / "lob-backtester" / "scripts" / "backtest_deeplob.py").write_text(
-        "# stub\n"
-    )
+    (root / "MBO-LOB-analyzer" / "scripts" / "run_analysis.py").write_text("# stub\n")
+    (root / "lob-model-trainer" / "scripts" / "train.py").write_text("# stub\n")
+    (root / "lob-backtester" / "scripts" / "backtest_deeplob.py").write_text("# stub\n")
 
     hft_ops = root / "hft-ops"
     hft_ops.mkdir()
@@ -134,9 +128,7 @@ train_ratio = 0.7
 val_ratio = 0.15
 test_ratio = 0.15
 """
-    config_path = (
-        tmp_pipeline / "feature-extractor-MBO-LOB" / "configs" / "test.toml"
-    )
+    config_path = tmp_pipeline / "feature-extractor-MBO-LOB" / "configs" / "test.toml"
     config_path.write_text(content)
     return config_path
 
@@ -178,11 +170,7 @@ def sample_trainer_yaml(tmp_pipeline: Path) -> Path:
         "tags": ["test"],
     }
     config_path = (
-        tmp_pipeline
-        / "lob-model-trainer"
-        / "configs"
-        / "experiments"
-        / "test.yaml"
+        tmp_pipeline / "lob-model-trainer" / "configs" / "experiments" / "test.yaml"
     )
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
@@ -225,6 +213,21 @@ def sample_manifest_yaml(
                 "enabled": True,
                 "profile": "quick",
                 "split": "train",
+            },
+            # 2026-08-15 (ruling R2): an ENABLED §13 gate must declare its own
+            # policy — `schema.require_gate_policy` refuses a manifest that
+            # leaves it to a hard-coded fallback. This fixture omitted the
+            # block entirely, which is precisely the defect the ruling
+            # removes: `enabled` defaulted to True and the five thresholds
+            # came from nowhere the manifest could show. Values below are the
+            # historical fallbacks, so no test's behaviour changes.
+            "validation": {
+                "enabled": True,
+                "on_fail": "warn",
+                "min_ic": 0.05,
+                "min_ic_count": 2,
+                "min_return_std_bps": 5.0,
+                "min_stability": 2.0,
             },
             "training": {
                 "enabled": True,

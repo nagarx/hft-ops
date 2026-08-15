@@ -56,9 +56,7 @@ class TestBacktestParams:
 
 class TestExperimentManifest:
     def test_defaults(self):
-        m = ExperimentManifest(
-            experiment=ExperimentHeader(name="test")
-        )
+        m = ExperimentManifest(experiment=ExperimentHeader(name="test"))
         assert m.pipeline_root == ".."
         assert m.stages.extraction.enabled is True
         assert m.stages.raw_analysis.enabled is False
@@ -194,11 +192,13 @@ class TestBacktestingStageScript:
         # validate-time (the former scripts/backtest_deeplob.py default never
         # resolved + its argparse rejected the runner's flags).
         from hft_ops.manifest.schema import BacktestingStage
+
         stage = BacktestingStage()
         assert stage.script == ""
 
     def test_custom_script(self):
         from hft_ops.manifest.schema import BacktestingStage
+
         stage = BacktestingStage(script="scripts/run_regression_backtest.py")
         assert stage.script == "scripts/run_regression_backtest.py"
 
@@ -208,6 +208,13 @@ experiment:
   name: test_bt_script
 pipeline_root: ".."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   backtesting:
     enabled: true
     script: "scripts/run_readability_backtest.py"
@@ -225,6 +232,13 @@ experiment:
   name: test_pf
 pipeline_root: ".."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   backtesting:
     params_file: "configs/bt_params.yaml"
 """
@@ -239,6 +253,7 @@ class TestSignalExportStage:
 
     def test_defaults(self):
         from hft_ops.manifest.schema import SignalExportStage
+
         stage = SignalExportStage()
         assert stage.enabled is False
         assert stage.script == "scripts/export_signals.py"
@@ -249,6 +264,7 @@ class TestSignalExportStage:
 
     def test_full_construction(self):
         from hft_ops.manifest.schema import SignalExportStage
+
         stage = SignalExportStage(
             enabled=True,
             script="scripts/export_hmhp_signals.py",
@@ -273,6 +289,13 @@ experiment:
   name: test_se
 pipeline_root: ".."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   training:
     enabled: true
     config: "configs/test.yaml"
@@ -293,11 +316,14 @@ stages:
         # F-1 (audit §4.1, 2026-05-19): post-F-1 cross-stage refs RESOLVE at
         # load time (not preserved as ${...} literals). Pre-F-1 asserted
         # `"${" in checkpoint`; post-F-1 the ref resolves to concrete path.
-        assert m.stages.signal_export.checkpoint == "outputs/test_se/checkpoints/best.pt"
+        assert (
+            m.stages.signal_export.checkpoint == "outputs/test_se/checkpoints/best.pt"
+        )
         assert m.stages.signal_export.output_dir == "outputs/test_se/signals/test"
 
     def test_signal_export_present_in_stages(self):
         from hft_ops.manifest.schema import Stages, SignalExportStage
+
         s = Stages()
         assert isinstance(s.signal_export, SignalExportStage)
         assert s.signal_export.enabled is False
@@ -308,6 +334,7 @@ class TestTrainingStageInlineConfig:
 
     def test_default_trainer_config_is_none(self):
         from hft_ops.manifest.schema import TrainingStage
+
         stage = TrainingStage()
         assert stage.trainer_config is None
 
@@ -317,6 +344,13 @@ experiment:
   name: test_legacy
 pipeline_root: ".."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   training:
     enabled: true
     config: "lob-model-trainer/configs/experiments/test.yaml"
@@ -326,7 +360,10 @@ stages:
         manifest_path = tmp_path / "m.yaml"
         manifest_path.write_text(yaml_text)
         m = load_manifest(manifest_path)
-        assert m.stages.training.config == "lob-model-trainer/configs/experiments/test.yaml"
+        assert (
+            m.stages.training.config
+            == "lob-model-trainer/configs/experiments/test.yaml"
+        )
         assert m.stages.training.trainer_config is None
 
     def test_inline_trainer_config_loaded(self, tmp_path: Path):
@@ -335,6 +372,13 @@ experiment:
   name: test_inline
 pipeline_root: ".."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   training:
     enabled: true
     trainer_config:
@@ -363,6 +407,13 @@ experiment:
   name: test_both
 pipeline_root: ".."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   training:
     enabled: true
     config: "some/path.yaml"
@@ -380,6 +431,13 @@ experiment:
   name: test_wrong_type
 pipeline_root: ".."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   training:
     enabled: true
     trainer_config: "this is not a dict"
@@ -396,6 +454,13 @@ experiment:
   name: test_empty
 pipeline_root: ".."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   training:
     enabled: true
     trainer_config: {}
@@ -411,9 +476,10 @@ class TestValidationStage:
 
     def test_defaults(self):
         from hft_ops.manifest.schema import ValidationStage
+
         v = ValidationStage()
         assert v.enabled is True
-        assert v.on_fail == "warn"   # CRITICAL: default is warn, not abort
+        assert v.on_fail == "warn"  # CRITICAL: default is warn, not abort
         assert v.target_horizon == ""
         assert v.min_ic == 0.05
         assert v.min_ic_count == 2
@@ -427,6 +493,7 @@ class TestValidationStage:
 
     def test_validation_in_stages_container(self):
         from hft_ops.manifest.schema import Stages, ValidationStage
+
         s = Stages()
         assert isinstance(s.validation, ValidationStage)
 
@@ -437,6 +504,8 @@ experiment:
 pipeline_root: ".."
 stages:
   validation:
+    min_return_std_bps: 5.0
+    min_stability: 2.0
     enabled: true
     on_fail: abort
     target_horizon: H10
@@ -469,6 +538,10 @@ experiment:
 pipeline_root: ".."
 stages:
   validation:
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
     on_fail: fail
 """
         manifest_path = tmp_path / "m.yaml"
@@ -483,6 +556,11 @@ experiment:
 pipeline_root: ".."
 stages:
   validation:
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
     allow_zero_ic_names: "time_regime"
 """
         manifest_path = tmp_path / "m.yaml"
@@ -504,6 +582,11 @@ experiment:
 pipeline_root: ".."
 stages:
   validation:
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
     enabled: true
 """
         manifest_path = tmp_path / "m.yaml"
@@ -520,13 +603,17 @@ class TestFingerprintStability:
     dedup for the SAME underlying experiment. These tests pin the contract.
     """
 
-    def _make_manifest_with_validation(self, tmp_path: Path, name: str, on_fail: str, min_ic: float) -> str:
+    def _make_manifest_with_validation(
+        self, tmp_path: Path, name: str, on_fail: str, min_ic: float
+    ) -> str:
         """Write a minimal manifest with the specified validation config.
         Both variants reference the same trainer YAML so the training-side
         fingerprint content is identical.
         """
         trainer_yaml = tmp_path / "trainer.yaml"
-        trainer_yaml.write_text("data:\n  feature_count: 98\nmodel:\n  model_type: tlob\n")
+        trainer_yaml.write_text(
+            "data:\n  feature_count: 98\nmodel:\n  model_type: tlob\n"
+        )
         manifest_path = tmp_path / f"{name}.yaml"
         manifest_path.write_text(f"""
 experiment:
@@ -535,6 +622,9 @@ experiment:
 pipeline_root: "."
 stages:
   validation:
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
     enabled: true
     on_fail: {on_fail}
     min_ic: {min_ic}
@@ -568,7 +658,9 @@ stages:
             "same underlying experiment."
         )
 
-    def test_inline_vs_path_trainer_configs_with_identical_content_same_fingerprint(self, tmp_path: Path):
+    def test_inline_vs_path_trainer_configs_with_identical_content_same_fingerprint(
+        self, tmp_path: Path
+    ):
         """Legacy `training.config` path and inline `training.trainer_config` → SAME fingerprint
         when the trainer content is identical.
         """
@@ -580,7 +672,9 @@ stages:
 
         # Legacy-path manifest
         trainer_yaml = tmp_path / "trainer.yaml"
-        trainer_yaml.write_text("data:\n  feature_count: 98\nmodel:\n  model_type: tlob\n")
+        trainer_yaml.write_text(
+            "data:\n  feature_count: 98\nmodel:\n  model_type: tlob\n"
+        )
         legacy = tmp_path / "legacy.yaml"
         legacy.write_text("""
 experiment:
@@ -588,6 +682,13 @@ experiment:
   contract_version: "2.2"
 pipeline_root: "."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   training:
     enabled: true
     config: "trainer.yaml"
@@ -601,6 +702,13 @@ experiment:
   contract_version: "2.2"
 pipeline_root: "."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   training:
     enabled: true
     trainer_config:
@@ -636,6 +744,13 @@ experiment:
   contract_version: "2.2"
 pipeline_root: "."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   post_training_gate:
     enabled: true
     on_regression: abort
@@ -655,17 +770,26 @@ stages:
         assert m.stages.post_training_gate.primary_metric == "test_ic"
         assert m.stages.post_training_gate.cost_breakeven_bps == 2.0
         assert m.stages.post_training_gate.match_on_signature == [
-            "model_type", "horizon_value",
+            "model_type",
+            "horizon_value",
         ]
 
     def test_yaml_absent_uses_defaults(self, tmp_path: Path):
-        """No `post_training_gate:` section → defaults (enabled=False)."""
+        """No `post_training_gate:` section → defaults (enabled=False).
+
+        This stage's ``enabled`` default is False, so an absent block is a
+        real opt-out and no policy is owed — unlike ``validation``, whose
+        default is True and which must therefore be declared (ruling R2).
+        """
         manifest_path = tmp_path / "m.yaml"
         manifest_path.write_text("""
 experiment:
   name: no_gate
   contract_version: "2.2"
 pipeline_root: "."
+stages:
+  validation:
+    enabled: false
 """)
         m = load_manifest(manifest_path)
         assert m.stages.post_training_gate.enabled is False
@@ -680,6 +804,13 @@ experiment:
   contract_version: "2.2"
 pipeline_root: "."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   post_training_gate:
     enabled: true
     on_regression: silently_ignore
@@ -696,6 +827,13 @@ experiment:
   contract_version: "2.2"
 pipeline_root: "."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   post_training_gate:
     enabled: true
     match_on_signature: not-a-list
@@ -736,7 +874,27 @@ class TestStagesLoaderParity:
         # default-factory ``False`` for the False-default stages).
         names = sorted(stage_names())
         assert names, "stage_names() returned empty — introspection SSoT broken"
+        # 2026-08-15 (ruling R2): the two GATE stages refuse to load enabled
+        # without their own declared policy, so the `enabled: true` probe must
+        # carry it. Emitted inside the stage under test — a duplicate
+        # `validation:` key would silently override it.
+        gate_policy = {
+            "validation": (
+                "    on_fail: warn\n"
+                "    min_ic: 0.05\n"
+                "    min_ic_count: 2\n"
+                "    min_return_std_bps: 5.0\n"
+                "    min_stability: 2.0\n"
+            ),
+            "post_training_gate": "    primary_metric: test_ic\n",
+        }
         for stage_name in names:
+            own = gate_policy.get(stage_name, "")
+            sibling = (
+                ""
+                if stage_name == "validation"
+                else f"  validation:\n    enabled: true\n{gate_policy['validation']}"
+            )
             m_path = tmp_path / f"m_{stage_name}.yaml"
             m_path.write_text(f"""
 experiment:
@@ -744,9 +902,9 @@ experiment:
   contract_version: "2.2"
 pipeline_root: "."
 stages:
-  {stage_name}:
+{sibling}  {stage_name}:
     enabled: true
-""")
+{own}""")
             manifest = load_manifest(m_path)
             stage_instance = getattr(manifest.stages, stage_name)
             assert getattr(stage_instance, "enabled") is True, (

@@ -51,24 +51,35 @@ class TestStageKeyWarnings:
     def test_known_keys_only_no_warn(self):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            _build_training(
-                {"enabled": True, "config": "x.yaml", "horizon_value": 10}
-            )
+            _build_training({"enabled": True, "config": "x.yaml", "horizon_value": 10})
         assert _runtime_warns(caught) == []
 
     def test_every_stage_warns_on_unknown_key(self, tmp_path: Path):
         """EVERY stage block warns on an unknown key (proves the guard reaches
         all 8 stages, not just backtesting)."""
+        # 2026-08-15 (ruling R2): an ENABLED `validation` stage must declare
+        # its §13 policy. Emitted as part of the stage under test when that
+        # stage IS validation — a second `validation:` key would silently win
+        # in YAML and re-create the bug this loop is meant to catch.
+        policy = (
+            "    on_fail: warn\n"
+            "    min_ic: 0.05\n"
+            "    min_ic_count: 2\n"
+            "    min_return_std_bps: 5.0\n"
+            "    min_stability: 2.0\n"
+        )
         for sname in sorted(stage_names()):
+            own_policy = policy if sname == "validation" else ""
+            sibling = "" if sname == "validation" else f"  validation:\n{policy}"
             body = f"""
 experiment:
   name: h2_{sname}
   contract_version: "2.2"
 pipeline_root: "."
 stages:
-  {sname}:
+{sibling}  {sname}:
     definitely_not_a_field: 1
-"""
+{own_policy}"""
             p = tmp_path / f"m_{sname}.yaml"
             p.write_text(body)
             with warnings.catch_warnings(record=True) as caught:
@@ -97,6 +108,13 @@ pipeline_root: "."
 profiler_references:
   - some_ref
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   extraction:
     enabled: false
 """
@@ -105,9 +123,7 @@ stages:
             warnings.simplefilter("always")
             load_manifest(p)
         toplevel = [
-            w
-            for w in _runtime_warns(caught)
-            if "profiler_references" in str(w.message)
+            w for w in _runtime_warns(caught) if "profiler_references" in str(w.message)
         ]
         assert len(toplevel) == 1, (
             f"expected 1 top-level unknown-key WARN; got "
@@ -123,6 +139,13 @@ experiment:
   contract_version: "2.2"
 pipeline_root: "."
 stages:
+  validation:
+    enabled: true
+    on_fail: warn
+    min_ic: 0.05
+    min_ic_count: 2
+    min_return_std_bps: 5.0
+    min_stability: 2.0
   extraction:
     enabled: false
 """

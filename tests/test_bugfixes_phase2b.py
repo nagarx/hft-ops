@@ -61,17 +61,13 @@ def _load_compat_module():
     monorepo_root = require_monorepo_root(
         "lob-model-trainer/scripts/_hft_ops_compat.py",
     )
-    compat_path = (
-        monorepo_root / "lob-model-trainer" / "scripts" / "_hft_ops_compat.py"
-    )
+    compat_path = monorepo_root / "lob-model-trainer" / "scripts" / "_hft_ops_compat.py"
 
     # Drop any previously-imported version so the module is re-exec'd on
     # each test (idempotent load across test order permutations).
     sys.modules.pop("_hft_ops_compat", None)
 
-    spec = importlib.util.spec_from_file_location(
-        "_hft_ops_compat", compat_path
-    )
+    spec = importlib.util.spec_from_file_location("_hft_ops_compat", compat_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(
             f"Failed to load spec from {compat_path} — file exists "
@@ -135,8 +131,7 @@ class TestCompatBanner:
 
         # Must emit exactly one warning, of type UserWarning (C5 fix).
         assert len(record) == 1, (
-            f"Expected 1 warning, got {len(record)}: "
-            f"{[str(w.message) for w in record]}"
+            f"Expected 1 warning, got {len(record)}: {[str(w.message) for w in record]}"
         )
         assert issubclass(record[0].category, UserWarning), (
             f"Warning should be UserWarning (default-visible), got "
@@ -317,6 +312,9 @@ class TestValidatorEnabledStages:
             "experiment": {"name": "validation_only", "contract_version": "2.2"},
             "pipeline_root": "..",
             "stages": {
+                # ruling R2: declare the gate; these fixtures
+                # exercise validator purity, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {"enabled": False},
                 "dataset_analysis": {"enabled": False},
                 "validation": {
@@ -324,6 +322,12 @@ class TestValidatorEnabledStages:
                     "on_fail": "warn",
                     "target_horizon": "10",
                     "min_ic": 0.05,
+                    # Completed 2026-08-15 (ruling R2): an enabled gate must
+                    # declare all five §13 thresholds, not the two this
+                    # fixture happened to care about.
+                    "min_ic_count": 2,
+                    "min_return_std_bps": 5.0,
+                    "min_stability": 2.0,
                 },
                 "training": {"enabled": False},
                 "backtesting": {"enabled": False},
@@ -341,8 +345,7 @@ class TestValidatorEnabledStages:
             str(w) for w in result.warnings if "No stages enabled" in str(w)
         ]
         assert not no_stages_msgs, (
-            "Validation-only manifest falsely flagged as empty: "
-            f"{no_stages_msgs}"
+            f"Validation-only manifest falsely flagged as empty: {no_stages_msgs}"
         )
 
     def test_signal_export_only_manifest_not_flagged_empty(self, tmp_pipeline):
@@ -357,6 +360,9 @@ class TestValidatorEnabledStages:
             "experiment": {"name": "export_only", "contract_version": "2.2"},
             "pipeline_root": "..",
             "stages": {
+                # ruling R2: declare the gate; these fixtures
+                # exercise validator purity, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {"enabled": False},
                 "dataset_analysis": {"enabled": False},
                 "validation": {"enabled": False},
@@ -381,8 +387,7 @@ class TestValidatorEnabledStages:
             str(w) for w in result.warnings if "No stages enabled" in str(w)
         ]
         assert not no_stages_msgs, (
-            "signal_export-only manifest falsely flagged as empty: "
-            f"{no_stages_msgs}"
+            f"signal_export-only manifest falsely flagged as empty: {no_stages_msgs}"
         )
 
     def test_post_training_gate_only_manifest_not_flagged_empty(self, tmp_pipeline):
@@ -399,11 +404,15 @@ class TestValidatorEnabledStages:
             "experiment": {"name": "ptg_only", "contract_version": "2.2"},
             "pipeline_root": "..",
             "stages": {
+                # ruling R2: declare the gate; these fixtures
+                # exercise validator purity, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {"enabled": False},
                 "dataset_analysis": {"enabled": False},
                 "validation": {"enabled": False},
                 "training": {"enabled": False},
-                "post_training_gate": {"enabled": True},
+                # ruling R2: an enabled post-training gate must name its metric.
+                "post_training_gate": {"enabled": True, "primary_metric": "test_ic"},
                 "signal_export": {"enabled": False},
                 "backtesting": {"enabled": False},
             },
@@ -436,6 +445,9 @@ class TestValidatorEnabledStages:
             "experiment": {"name": "all_off", "contract_version": "2.2"},
             "pipeline_root": "..",
             "stages": {
+                # ruling R2: declare the gate; these fixtures
+                # exercise validator purity, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {"enabled": False},
                 "dataset_analysis": {"enabled": False},
                 "validation": {"enabled": False},
@@ -478,7 +490,9 @@ class TestValidatorNoMutation:
         from hft_ops.manifest.validator import validate_manifest
         from hft_ops.paths import PipelinePaths
 
-        extractor_toml = tmp_pipeline / "feature-extractor-MBO-LOB" / "configs" / "ext.toml"
+        extractor_toml = (
+            tmp_pipeline / "feature-extractor-MBO-LOB" / "configs" / "ext.toml"
+        )
         extractor_toml.write_text(
             """
 [experiment]
@@ -514,7 +528,9 @@ max_horizons = [10, 60, 300]
 """
         )
 
-        trainer_yaml = tmp_pipeline / "lob-model-trainer" / "configs" / "experiments" / "t.yaml"
+        trainer_yaml = (
+            tmp_pipeline / "lob-model-trainer" / "configs" / "experiments" / "t.yaml"
+        )
         trainer_yaml.parent.mkdir(parents=True, exist_ok=True)
         with open(trainer_yaml, "w") as f:
             yaml.dump({"data": {"feature_count": 98}}, f)
@@ -523,6 +539,9 @@ max_horizons = [10, 60, 300]
             "experiment": {"name": "no_mutation", "contract_version": "2.2"},
             "pipeline_root": "..",
             "stages": {
+                # ruling R2: declare the gate; these fixtures
+                # exercise validator purity, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {
                     "enabled": True,
                     "config": "feature-extractor-MBO-LOB/configs/ext.toml",
@@ -565,7 +584,9 @@ max_horizons = [10, 60, 300]
         from hft_ops.manifest.validator import resolve_manifest_context
         from hft_ops.paths import PipelinePaths
 
-        extractor_toml = tmp_pipeline / "feature-extractor-MBO-LOB" / "configs" / "ext.toml"
+        extractor_toml = (
+            tmp_pipeline / "feature-extractor-MBO-LOB" / "configs" / "ext.toml"
+        )
         extractor_toml.write_text(
             """
 [experiment]
@@ -605,6 +626,9 @@ max_horizons = [10, 60, 300]
             "experiment": {"name": "res_ctx", "contract_version": "2.2"},
             "pipeline_root": "..",
             "stages": {
+                # ruling R2: declare the gate; these fixtures
+                # exercise validator purity, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {
                     "enabled": True,
                     "config": "feature-extractor-MBO-LOB/configs/ext.toml",
@@ -627,7 +651,9 @@ max_horizons = [10, 60, 300]
 
         ctx = resolve_manifest_context(manifest, paths)
         assert ctx.horizon_value == 60
-        assert ctx.horizon_idx == 1, f"expected idx 1 for value 60, got {ctx.horizon_idx}"
+        assert ctx.horizon_idx == 1, (
+            f"expected idx 1 for value 60, got {ctx.horizon_idx}"
+        )
         assert ctx.feature_count == 98, (
             f"expected 98 features (10*4 + 8 + 36 + 14), got {ctx.feature_count}"
         )
@@ -646,6 +672,9 @@ max_horizons = [10, 60, 300]
             "experiment": {"name": "idempotent", "contract_version": "2.2"},
             "pipeline_root": "..",
             "stages": {
+                # ruling R2: declare the gate; these fixtures
+                # exercise validator purity, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {"enabled": False},
                 "training": {"enabled": False},
                 "backtesting": {
@@ -680,12 +709,7 @@ class TestBackfillDuplicateBenignSkip:
 
     def test_duplicate_exit_code_is_zero(self):
         """The duplicate-skip code path must use sys.exit(0), not 1."""
-        cli_path = (
-            Path(__file__).resolve().parents[1]
-            / "src"
-            / "hft_ops"
-            / "cli.py"
-        )
+        cli_path = Path(__file__).resolve().parents[1] / "src" / "hft_ops" / "cli.py"
         source = cli_path.read_text()
 
         # Locate the backfill duplicate-skip block; must exit 0 not 1.
@@ -731,12 +755,7 @@ class TestBackfillCorruptMetricsFileFailLoud:
     def test_corrupt_metrics_file_raises_click_exception(self):
         """The metrics_file JSONDecodeError/OSError branch must raise
         ``click.ClickException``, NOT silent log + continue."""
-        cli_path = (
-            Path(__file__).resolve().parents[1]
-            / "src"
-            / "hft_ops"
-            / "cli.py"
-        )
+        cli_path = Path(__file__).resolve().parents[1] / "src" / "hft_ops" / "cli.py"
         source = cli_path.read_text()
 
         # Locate the F3 except block.
@@ -772,12 +791,7 @@ class TestBackfillCorruptMetricsFileFailLoud:
 
     def test_metrics_file_diagnostic_message_is_actionable(self):
         """The error message must tell the operator HOW to fix the issue."""
-        cli_path = (
-            Path(__file__).resolve().parents[1]
-            / "src"
-            / "hft_ops"
-            / "cli.py"
-        )
+        cli_path = Path(__file__).resolve().parents[1] / "src" / "hft_ops" / "cli.py"
         source = cli_path.read_text()
         except_idx = source.index("except (json.JSONDecodeError, OSError)")
         window = source[except_idx : except_idx + 800]

@@ -339,15 +339,11 @@ class TestValidationFingerprintStability:
         tmp_pipeline, rel = synthetic_ops_env
         paths = PipelinePaths(pipeline_root=tmp_pipeline)
 
-        m1 = _make_manifest(
-            tmp_pipeline, rel, on_fail="warn", min_ic=0.05
-        )
+        m1 = _make_manifest(tmp_pipeline, rel, on_fail="warn", min_ic=0.05)
         manifest1 = load_manifest(m1)
         fp1 = compute_fingerprint(manifest1, paths)
 
-        m2 = _make_manifest(
-            tmp_pipeline, rel, on_fail="abort", min_ic=0.10
-        )
+        m2 = _make_manifest(tmp_pipeline, rel, on_fail="abort", min_ic=0.10)
         manifest2 = load_manifest(m2)
         fp2 = compute_fingerprint(manifest2, paths)
 
@@ -421,6 +417,12 @@ class TestValidationInputErrors:
                     "enabled": True,
                     "on_fail": "warn",
                     "target_horizon": "1",
+                    # Completed 2026-08-15 (ruling R2) — an enabled gate must
+                    # declare all five §13 thresholds.
+                    "min_ic": 0.05,
+                    "min_ic_count": 2,
+                    "min_return_std_bps": 5.0,
+                    "min_stability": 2.0,
                 },
                 "training": {"enabled": False},
             },
@@ -442,12 +444,7 @@ class TestValidationInputErrors:
         This is the orphan-bug regression guard — pre-fix the runner existed
         only as a schema-level concept, with no runner in the CLI loop.
         """
-        cli_path = (
-            Path(__file__).resolve().parents[1]
-            / "src"
-            / "hft_ops"
-            / "cli.py"
-        )
+        cli_path = Path(__file__).resolve().parents[1] / "src" / "hft_ops" / "cli.py"
         source = cli_path.read_text()
         assert "ValidationRunner()" in source, (
             "cli.py must instantiate ValidationRunner() in stage_runners "

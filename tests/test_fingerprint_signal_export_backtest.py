@@ -41,6 +41,19 @@ _REAL_PIPELINE_ROOT = require_monorepo_root(
 # -----------------------------------------------------------------------------
 
 
+# ruling R2 (2026-08-15): an ENABLED gate must declare all five §13
+# thresholds. min_ic still varies per-test — that is the mutation under
+# test — but it can no longer be the ONLY declared threshold.
+_GATE_POLICY = {
+    "enabled": True,
+    "on_fail": "warn",
+    "min_ic": 0.05,
+    "min_ic_count": 2,
+    "min_return_std_bps": 5.0,
+    "min_stability": 2.0,
+}
+
+
 def _write_manifest(
     exp_dir: Path,
     name: str,
@@ -240,9 +253,9 @@ class TestValidationStillExcluded:
     def test_validation_min_ic_mutation_preserves_fingerprint(self, scratch):
         paths, exp_dir = scratch
         m1 = _write_manifest(exp_dir, "val_05",
-                             validation_overrides={"enabled": True, "min_ic": 0.05})
+                             validation_overrides={**_GATE_POLICY, "min_ic": 0.05})
         m2 = _write_manifest(exp_dir, "val_03",
-                             validation_overrides={"enabled": True, "min_ic": 0.03})
+                             validation_overrides={**_GATE_POLICY, "min_ic": 0.03})
         fp1, _ = compute_fingerprint_explain(load_manifest(m1), paths)
         fp2, _ = compute_fingerprint_explain(load_manifest(m2), paths)
         assert fp1 == fp2, (

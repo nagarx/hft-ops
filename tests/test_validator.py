@@ -62,6 +62,9 @@ class TestValidateManifest:
                 "contract_version": "2.2",
             },
             "stages": {
+                # ruling R2: an enabled gate must declare its policy;
+                # these fixtures exercise the validator, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {
                     "enabled": True,
                     "config": "feature-extractor-MBO-LOB/configs/nonexistent.toml",
@@ -147,6 +150,9 @@ class TestValidateManifest:
                 "contract_version": "2.2",
             },
             "stages": {
+                # ruling R2: an enabled gate must declare its policy;
+                # these fixtures exercise the validator, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {
                     "enabled": True,
                     "config": str(
@@ -176,6 +182,9 @@ class TestValidateManifest:
         manifest_data = {
             "experiment": {"name": "no_data"},
             "stages": {
+                # ruling R2: an enabled gate must declare its policy;
+                # these fixtures exercise the validator, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {
                     "enabled": False,
                     "output_dir": "",
@@ -199,6 +208,9 @@ class TestValidateManifest:
         manifest_data = {
             "experiment": {"name": "no_training_config"},
             "stages": {
+                # ruling R2: an enabled gate must declare its policy;
+                # these fixtures exercise the validator, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {"enabled": False},
                 "training": {"enabled": True},  # neither config nor trainer_config
                 "backtesting": {"enabled": False},
@@ -224,6 +236,9 @@ class TestValidateManifest:
         manifest_data = {
             "experiment": {"name": "inline_ok"},
             "stages": {
+                # ruling R2: an enabled gate must declare its policy;
+                # these fixtures exercise the validator, not the gate.
+                "validation": {"enabled": False},
                 "extraction": {"enabled": False, "output_dir": ""},
                 "training": {
                     "enabled": True,

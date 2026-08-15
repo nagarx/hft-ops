@@ -46,6 +46,7 @@ from hft_ops.manifest.schema import (
     SweepConfig,
     TrainingStage,
     ValidationStage,
+    require_gate_policy,
 )
 
 if TYPE_CHECKING:
@@ -171,6 +172,7 @@ def _resolve_variables(
 
     def _substitute(value: Any, current_dotted_path: str = "") -> Any:
         if isinstance(value, str):
+
             def _replacer(match: re.Match) -> str:
                 key = match.group(1)
                 if any(key.startswith(p) for p in _DEFERRED_PREFIXES):
@@ -180,7 +182,9 @@ def _resolve_variables(
                 # Extra-vars lookup: dotted-path walk into the extras dict
                 if extras:
                     resolved_extra = _get_nested(extras, key)
-                    if resolved_extra is not None and isinstance(resolved_extra, (str, int, float)):
+                    if resolved_extra is not None and isinstance(
+                        resolved_extra, (str, int, float)
+                    ):
                         return _maybe_rebase_path(
                             str(resolved_extra),
                             source_key=key,
@@ -502,12 +506,21 @@ def _build_signal_export(raw: Dict[str, Any]) -> SignalExportStage:
     )
 
 
-def _build_validation(raw: Dict[str, Any]) -> ValidationStage:
+def _build_validation(
+    raw: Dict[str, Any], *, manifest_path: str = ""
+) -> ValidationStage:
     """Parse stages.validation from raw YAML.
 
     Validates ``on_fail`` is one of the three accepted values; any other
     input raises early at load time (fail-fast — researchers shouldn't
     discover typos at gate-invocation time).
+
+    2026-08-15 (ruling R2): an ENABLED gate must declare its own §13 policy —
+    see ``schema.require_gate_policy``. The ``.get(key, default)`` fallbacks
+    below therefore survive only for the DISABLED path (a gate that never runs
+    applies no thresholds) and for ``resolver.py``, which feeds this helper
+    ``asdict(manifest)`` — every field present by construction, so the
+    requirement is a no-op on a round-trip and fires only on raw YAML.
     """
     _warn_unknown_stage_keys("validation", raw)
 
@@ -517,6 +530,16 @@ def _build_validation(raw: Dict[str, Any]) -> ValidationStage:
             f"stages.validation.on_fail must be one of "
             f"{{'warn', 'abort', 'record_only'}}, got {on_fail!r}"
         )
+
+    # Validate what IS declared before demanding what ISN'T: a typo in a
+    # declared value is a definite mistake and the more specific signal, so it
+    # should not be masked by the (broader) missing-policy demand.
+    require_gate_policy(
+        "validation",
+        raw,
+        enabled=bool(raw.get("enabled", True)),
+        manifest_path=manifest_path,
+    )
 
     allow_zero = raw.get("allow_zero_ic_names", [])
     if not isinstance(allow_zero, list):
@@ -541,7 +564,9 @@ def _build_validation(raw: Dict[str, Any]) -> ValidationStage:
     )
 
 
-def _build_post_training_gate(raw: Dict[str, Any]) -> "PostTrainingGateStage":
+def _build_post_training_gate(
+    raw: Dict[str, Any], *, manifest_path: str = ""
+) -> "PostTrainingGateStage":
     """Parse stages.post_training_gate from raw YAML.
 
     Phase 7 Stage 7.4 Round 6 (2026-04-20, post-push-audit fix): this
@@ -583,6 +608,16 @@ def _build_post_training_gate(raw: Dict[str, Any]) -> "PostTrainingGateStage":
             f"stages.post_training_gate.match_on_signature must be a list, "
             f"got {type(match_sig).__name__}"
         )
+
+    # 2026-08-15 (ruling R2): an ENABLED post-training gate must NAME the
+    # metric it judges — auto-inference silently chose what a gate measured.
+    # Ordered after the value checks for the same reason as `_build_validation`.
+    require_gate_policy(
+        "post_training_gate",
+        raw,
+        enabled=bool(raw.get("enabled", False)),
+        manifest_path=manifest_path,
+    )
 
     return PostTrainingGateStage(
         enabled=bool(raw.get("enabled", False)),
@@ -686,6 +721,7 @@ def load_manifest(
         # get the path-base-aware substitution.
         try:
             from hft_ops.paths import PipelinePaths
+
             for ancestor in [manifest_path, *manifest_path.parents]:
                 if (ancestor / "contracts" / "pipeline_contract.toml").exists():
                     paths = PipelinePaths(pipeline_root=ancestor)
@@ -747,10 +783,13 @@ def load_manifest(
         dataset_analysis=_build_dataset_analysis(
             stages_raw.get("dataset_analysis", {})
         ),
-        validation=_build_validation(stages_raw.get("validation", {})),
+        validation=_build_validation(
+            stages_raw.get("validation", {}), manifest_path=str(manifest_path)
+        ),
         training=_build_training(stages_raw.get("training", {})),
         post_training_gate=_build_post_training_gate(
-            stages_raw.get("post_training_gate", {})
+            stages_raw.get("post_training_gate", {}),
+            manifest_path=str(manifest_path),
         ),
         signal_export=_build_signal_export(stages_raw.get("signal_export", {})),
         backtesting=_build_backtesting(stages_raw.get("backtesting", {})),
