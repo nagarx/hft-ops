@@ -423,3 +423,63 @@ class TestReturnTypeDiscrimination:
         assert "CONCLUSIVE" in S, "'differ' must be stated as conclusive"
         assert "NOT SUFFICIENT" in S, "'match' must be stated as insufficient"
         assert "unknown" in S, "the third state must be documented too"
+
+
+class TestReturnTypeDiscriminationComposition:
+    """The FALSIFIER the first cut of this fix shipped WITHOUT.
+
+    ⚠️ WHY THIS CLASS EXISTS. `c8f93c9` added `return_type_match` with 5 tests —
+    and every one locked a HELPER (`_normalize_return_type`,
+    `_export_declared_return_type`) or the semantics STRING. None asserted the
+    COMPOSITION. A pre-compaction audit lens mutated the discriminator so it
+    could never emit `"differ"` and the suite stayed at **96 passed, exit 0**.
+
+    That is `hft-rules` §1 — *an instrument that cannot go red is not an
+    instrument* — occurring inside the fix for `FINDING-164`, which is itself
+    about a gate that could not tell what it was measuring. Helpers passing is
+    not the same as the mechanism working.
+    """
+
+    def _cfg(self):
+        return OpsConfig(paths=PipelinePaths(pipeline_root=REPO_ROOT))
+
+    @staticmethod
+    def _declare(export_root, return_type):
+        """Stamp `labeling.return_type` onto every day of the export fixture."""
+        for md in (export_root / "train").glob("*_metadata.json"):
+            meta = json.loads(md.read_text())
+            meta.setdefault("labeling", {})["return_type"] = return_type
+            md.write_text(json.dumps(meta))
+
+    def _identity(self, export, declared, fitted):
+        self._declare(export, declared)
+        m = load_manifest(EXPERIMENTS / "sweeps/cycle6_r16a_point_vs_peak_H60.yaml")
+        m.stages.training.overrides["data.labels.return_type"] = fitted
+        return _build_label_identity(m, self._cfg(), export, "train")
+
+    def test_differing_return_types_are_reported_as_differ(self, export):
+        """THE headline case: 64 of 88 passing ledger records look like this."""
+        got = self._identity(export, "SmoothedReturn", "point_return")
+        assert got["return_type_match"] == "differ", got
+        assert got["scored_return_type"] == "smoothedreturn"
+        assert got["fitted_return_type"] == "pointreturn"
+
+    def test_matching_return_types_survive_the_convention_gap(self, export):
+        """The 24. Exporter PascalCase vs trainer snake_case must NOT read as
+        divergent — raw comparison would report every record as differing."""
+        got = self._identity(export, "PointReturn", "point_return")
+        assert got["return_type_match"] == "match", got
+
+    def test_an_undeclared_export_is_unknown_not_agreement(self, export):
+        """The fixture's metadata carries no `labeling.return_type`."""
+        m = load_manifest(EXPERIMENTS / "sweeps/cycle6_r16a_point_vs_peak_H60.yaml")
+        got = _build_label_identity(m, self._cfg(), export, "train")
+        assert got["return_type_match"] == "unknown", got
+        assert got["scored_return_type"] is None
+
+    def test_divergence_keeps_its_old_values_for_existing_consumers(self, export):
+        """The change was ADDITIVE by design. A consumer keying on
+        `divergence == "derived_at_load"` must not change behaviour."""
+        got = self._identity(export, "SmoothedReturn", "point_return")
+        assert got["divergence"] == "derived_at_load"
+        assert got["schema"] == "label_identity/1.1"
