@@ -268,14 +268,33 @@ class ValidationRunner:
             result.captured_metrics["fitted_label_strategy_hash"] = label_identity[
                 "will_fit"
             ].get("label_strategy_hash")
-            if label_identity["divergence"] == "derived_at_load":
+            result.captured_metrics["label_return_type_match"] = label_identity[
+                "return_type_match"
+            ]
+            # WARN ONLY ON THE CONCLUSIVE CASE (FINDING-164). Warning on
+            # `derived_at_load` fired for ALL 88 passing ledger records,
+            # including the 24 whose fitted return type matches what was
+            # scored — a warning wrong on 27% of its own subject, which is how
+            # a gate earns being routed around.
+            if label_identity["return_type_match"] == "differ":
                 logger.warning(
-                    "Gate for %s scored the ON-DISK label array, but the "
-                    "trainer will DERIVE labels at load time (%s). The gate "
-                    "verdict describes a different dependent variable than "
-                    "the model will fit. Recorded, not blocked.",
+                    "Gate for %s scored return_type=%s but the trainer will FIT "
+                    "return_type=%s — the PASS above is about a DIFFERENT "
+                    "dependent variable and is not admissible evidence (%s). "
+                    "Recorded, not blocked.",
+                    manifest.experiment.name,
+                    label_identity["scored_return_type"],
+                    label_identity["fitted_return_type"],
+                    label_identity["divergence_detail"],
+                )
+            elif label_identity["divergence"] == "derived_at_load":
+                logger.info(
+                    "Gate for %s: the trainer will DERIVE labels at load time "
+                    "(%s). Return types %s — see label_identity in the gate "
+                    "report.",
                     manifest.experiment.name,
                     label_identity["divergence_detail"],
+                    label_identity["return_type_match"],
                 )
             try:
                 report_path.write_text(
@@ -540,6 +559,59 @@ def _export_declares_forward_prices(data_dir: Path, split: str) -> Optional[bool
         return None
 
 
+# The runtime contract a consumer reads off `label_identity`. A NAMED CONSTANT
+# rather than an inline literal so a test can lock the emitted VALUE: an earlier
+# test asserted these words appeared in the function's SOURCE and passed even
+# after they were deleted from the string, because the same words also sat in a
+# nearby comment. Locking source text instead of runtime value is the same
+# passes-for-the-wrong-reason defect this module documents elsewhere.
+RETURN_TYPE_MATCH_SEMANTICS = (
+    "'differ' is CONCLUSIVE — the gate scored a different dependent variable "
+    "than the model will fit, and its verdict is not admissible evidence. "
+    "'match' is NECESSARY, NOT SUFFICIENT — horizons, smoothing offset k and "
+    "the forward-price contract also determine the array. 'unknown' means one "
+    "side did not declare."
+)
+
+
+def _normalize_return_type(value: Any) -> Optional[str]:
+    """Fold a return-type name to a comparable form, or None.
+
+    ⚠️ THE CONVENTIONS DIFFER ACROSS THE BOUNDARY AND THIS IS THE WHOLE POINT.
+    The Rust exporter writes PascalCase (``SmoothedReturn``, ``PointReturn``);
+    the Python trainer config writes snake_case (``smoothed_return``,
+    ``point_return``). Comparing them raw reports every record as divergent —
+    the same class of error as comparing a name where an identity was meant.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip().replace("_", "").replace("-", "").lower()
+
+
+def _export_declared_return_type(data_dir: Path, split: str) -> Optional[str]:
+    """The return type the EXPORT declares produced its on-disk label array.
+
+    Read from ``labeling.return_type`` in the per-day metadata sidecar —
+    an explicit field, present on all 234 regression-export days surveyed
+    2026-08-17 (SmoothedReturn 199, PointReturn 35). Deliberately NOT parsed
+    out of ``label_encoding.description``, which carries the same information
+    as prose and would be a string-shaped guess.
+
+    Returns None when unreadable or absent — an honest unknown, which the
+    caller must not treat as agreement.
+    """
+    try:
+        for md in sorted((data_dir / split).glob("*_metadata.json")):
+            with open(md) as fh:
+                meta = json.load(fh)
+            return _normalize_return_type(
+                (meta.get("labeling") or {}).get("return_type")
+            )
+        return None
+    except Exception:  # noqa: BLE001 — an unreadable export is an unknown, not a failure
+        return None
+
+
 def _build_label_identity(
     manifest: ExperimentManifest,
     config: OpsConfig,
@@ -586,13 +658,45 @@ def _build_label_identity(
             verdict = "scores_fitted_array"
             detail = f"labels.source={source!r} — no load-time derivation"
 
+    # ---- RETURN-TYPE DISCRIMINATION (added 2026-08-17, FINDING-164) ----
+    #
+    # `divergence` above answers "will the trainer DERIVE?" — keyed on
+    # `labels.source` alone. That is NECESSARY but NOT SUFFICIENT, and measured
+    # on the 189-record ledger it reads `derived_at_load` for ALL 88 passing
+    # records, INCLUDING the 24 whose derived array is the same kind of object
+    # the gate scored. A warning wrong on 24 of 88 is the cry-wolf shape this
+    # repo measures agents routing around.
+    #
+    # This adds the discriminating comparison WITHOUT changing `divergence`'s
+    # values: existing consumers keying on `derived_at_load` are unaffected, and
+    # readers who need the sharper answer get `return_type_match`.
+    #
+    # ⚠️ IT IS A NAME COMPARISON AND SAYS SO. Equal return types do NOT prove
+    # the arrays are identical — horizons, the smoothing offset `k` and the
+    # forward-price contract also determine the values. `differ` is therefore
+    # CONCLUSIVE (the arrays cannot match) while `match` is only NECESSARY.
+    # An adversarial lens demanded a true re-derivation instead; that would mean
+    # replicating the trainer's OmegaConf parameter resolution here, which
+    # `_resolve_trainer_labels_config` already refuses to do by name as a §0
+    # reuse-first violation. Conclusive-on-difference is the honest half.
+    scored_rt = _export_declared_return_type(data_dir, split)
+    fitted_rt = _normalize_return_type((will_fit or {}).get("return_type"))
+    if scored_rt and fitted_rt:
+        rt_match = "match" if scored_rt == fitted_rt else "differ"
+    else:
+        rt_match = "unknown"
+
     return {
-        "schema": "label_identity/1.0",
+        "schema": "label_identity/1.1",
         "scored": scored,
         "will_fit": will_fit,
         "export_declares_forward_prices": declares_fp,
         "divergence": verdict,
         "divergence_detail": detail,
+        "scored_return_type": scored_rt,
+        "fitted_return_type": fitted_rt,
+        "return_type_match": rt_match,
+        "return_type_match_semantics": RETURN_TYPE_MATCH_SEMANTICS,
         # Stated so nobody reads a non-blocking record as a silent pass:
         "policy": (
             "RECORDED, NEVER BLOCKING (ruling R3) — a deliberate label "

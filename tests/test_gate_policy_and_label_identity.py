@@ -332,3 +332,94 @@ class TestIdentityReachesTheArtifactAndTheLedger:
         assert result.status is StageStatus.COMPLETED
         assert result.captured_metrics["validation_verdict"] == "PASS"
         assert "label_identity" not in result.captured_metrics["gate_report"]
+
+
+class TestReturnTypeDiscrimination:
+    """FINDING-164: `divergence` alone cannot tell the 64 from the 24.
+
+    `divergence` is keyed on `labels.source` ALONE, so it reads
+    `derived_at_load` for ALL 88 passing ledger records -- including the 24
+    whose fitted return type is the one the export already holds. A warning
+    wrong on 27% of its own subject is how a gate earns being routed around.
+
+    These lock the discriminating comparison added 2026-08-17. It is ADDITIVE:
+    `divergence` keeps its old values so no existing consumer changes
+    behaviour.
+    """
+
+    def test_conventions_are_folded_across_the_language_boundary(self):
+        """The exporter writes PascalCase, the trainer config snake_case.
+
+        Comparing them raw reports EVERY record as divergent -- the same class
+        of error as comparing a name where an identity was meant.
+        """
+        from hft_ops.stages.validation import _normalize_return_type
+
+        assert _normalize_return_type("SmoothedReturn") == _normalize_return_type(
+            "smoothed_return"
+        )
+        assert _normalize_return_type("PointReturn") == _normalize_return_type(
+            "point_return"
+        )
+        assert _normalize_return_type("PointReturn") != _normalize_return_type(
+            "smoothed_return"
+        )
+
+    @pytest.mark.parametrize("bad", [None, "", "   ", 3, [], {}])
+    def test_a_missing_return_type_is_unknown_not_agreement(self, bad):
+        """An absent declaration must never read as a match."""
+        from hft_ops.stages.validation import _normalize_return_type
+
+        assert _normalize_return_type(bad) is None
+
+    def test_export_declaration_is_read_from_the_explicit_field(self, tmp_path):
+        """Read `labeling.return_type`, NOT the prose in label_encoding.
+
+        The field is present on all 234 regression-export days surveyed
+        2026-08-17. Parsing the description string instead would be a
+        string-shaped guess at an identity.
+        """
+        from hft_ops.stages.validation import _export_declared_return_type
+
+        split = tmp_path / "train"
+        split.mkdir()
+        (split / "2025-02-03_metadata.json").write_text(
+            json.dumps(
+                {
+                    "labeling": {
+                        "return_type": "PointReturn",
+                        "label_encoding": {
+                            "description": "SmoothedReturn forward return in bps"
+                        },
+                    }
+                }
+            )
+        )
+        # The explicit field wins over the contradictory prose.
+        assert _export_declared_return_type(tmp_path, "train") == "pointreturn"
+
+    def test_unreadable_export_is_unknown_not_agreement(self, tmp_path):
+        from hft_ops.stages.validation import _export_declared_return_type
+
+        assert _export_declared_return_type(tmp_path, "train") is None
+        split = tmp_path / "train"
+        split.mkdir()
+        (split / "2025-02-03_metadata.json").write_text("{not json")
+        assert _export_declared_return_type(tmp_path, "train") is None
+
+    def test_differ_is_conclusive_and_match_is_only_necessary(self):
+        """Lock the RUNTIME semantics string, not the source text.
+
+        The first version of this test asserted the words appeared in the
+        function's SOURCE — and passed even after they were deleted from the
+        emitted string, because the same words sat in a nearby comment. Caught
+        by mutation: 3 of 4 mutants went red, this one stayed green.
+
+        Acting on 'match' as if it were proof is the next version of the defect
+        FINDING-164 records, so the asymmetry must reach the consumer.
+        """
+        from hft_ops.stages.validation import RETURN_TYPE_MATCH_SEMANTICS as S
+
+        assert "CONCLUSIVE" in S, "'differ' must be stated as conclusive"
+        assert "NOT SUFFICIENT" in S, "'match' must be stated as insufficient"
+        assert "unknown" in S, "the third state must be documented too"
