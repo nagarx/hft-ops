@@ -20,6 +20,12 @@ import json
 import math
 from pathlib import Path
 
+import pytest
+from hft_contracts.provenance import (
+    ALLOW_UNTRACKED_SOURCE_ENV,
+    UntrackedSourceError,
+)
+
 from hft_ops.stages.backtesting import _harvest_backtest_metrics
 
 NAN = float("nan")
@@ -484,7 +490,9 @@ class TestRecordExperimentBacktestWire:
         )
         return ExperimentLedger(paths.ledger_dir).get(eid)
 
-    def test_backtest_metrics_persisted_on_record_and_index(self, tmp_path):
+    def test_backtest_metrics_persisted_on_record_and_index(
+        self, tmp_path, exploratory_provenance_override,
+    ):
         m = {"total_return": 0.03, "sharpe_ratio": 1.5, "max_drawdown": 0.01, "win_rate": 0.55}
         record = self._record(tmp_path, name="rec_bt", backtesting_metrics=m)
         assert record.backtest_metrics == m
@@ -493,11 +501,15 @@ class TestRecordExperimentBacktestWire:
         assert idx["backtest_metrics"]["total_return"] == 0.03
         assert idx["backtest_metrics"]["sharpe_ratio"] == 1.5
 
-    def test_empty_backtest_metrics_leaves_default(self, tmp_path):
+    def test_empty_backtest_metrics_leaves_default(
+        self, tmp_path, exploratory_provenance_override,
+    ):
         record = self._record(tmp_path, name="rec_empty", backtesting_metrics={})
         assert record.backtest_metrics == {}
 
-    def test_no_backtesting_stage_leaves_default(self, tmp_path):
+    def test_no_backtesting_stage_leaves_default(
+        self, tmp_path, exploratory_provenance_override,
+    ):
         record = self._record(tmp_path, name="rec_none", include_backtesting=False)
         assert record.backtest_metrics == {}
 
@@ -616,7 +628,9 @@ class TestC3SpreadScriptIncompatible:
 # BacktestRunner.run StageResult and the REAL _record_experiment, end to end.
 # ==========================================================================
 class TestAssembledProducerToLedger:
-    def test_real_run_result_flows_to_ledger_record_and_index(self, tmp_path, monkeypatch):
+    def test_real_run_result_flows_to_ledger_record_and_index(
+        self, tmp_path, monkeypatch, exploratory_provenance_override,
+    ):
         import subprocess
         from hft_ops.config import OpsConfig, PipelinePaths
         from hft_ops.manifest.schema import (
@@ -667,3 +681,39 @@ class TestAssembledProducerToLedger:
             "max_drawdown": 0.013, "win_rate": 0.552,
         }
         assert record.index_entry()["backtest_metrics"]["total_return"] == 0.021
+
+
+# ==========================================================================
+# NEGATIVE CONTROL — the untracked-source guard opted out of above is ARMED
+# ==========================================================================
+class TestUntrackedSourceGuardIsLive:
+    """Four tests in this file take ``exploratory_provenance_override``.
+
+    Rationale for the override lives ONCE, in the fixture's docstring at
+    ``tests/conftest.py`` — not copied here, where it would diverge. This class
+    exists for the other half of that bargain: without it, setting the override
+    would be indistinguishable from having DELETED the guard, and a fully green
+    file would be the only evidence a future reader ever saw.
+
+    Bound to THIS file's own harness (``TestRecordExperimentBacktestWire._record``)
+    rather than to ``build_provenance`` directly, so the arm also fails if the
+    backtest-harvest wire starts passing ``allow_untracked_source=True`` itself.
+    """
+
+    def test_record_wire_refuses_an_untracked_tree(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(ALLOW_UNTRACKED_SOURCE_ENV, raising=False)
+        with pytest.raises(UntrackedSourceError):
+            TestRecordExperimentBacktestWire._record(
+                tmp_path, name="guard_probe", backtesting_metrics={},
+            )
+
+    def test_override_admits_the_same_call(
+        self, tmp_path, exploratory_provenance_override,
+    ):
+        """Matched positive — proves the arm above failed for the GUARD's
+        reason and not because ``_record`` is broken for every input."""
+        record = TestRecordExperimentBacktestWire._record(
+            tmp_path, name="guard_probe", backtesting_metrics={},
+        )
+        assert record is not None
+        assert record.backtest_metrics == {}

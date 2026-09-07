@@ -11,6 +11,12 @@ follow-on needing a pinned analyzer-output contract).
 
 from __future__ import annotations
 
+import pytest
+from hft_contracts.provenance import (
+    ALLOW_UNTRACKED_SOURCE_ENV,
+    UntrackedSourceError,
+)
+
 from hft_ops.stages.dataset_analysis import _summarize_dataset_health
 
 
@@ -95,15 +101,55 @@ class TestRecordExperimentDatasetHealthWire:
         )
         return ExperimentLedger(paths.ledger_dir).get(eid)
 
-    def test_dataset_health_persisted_on_record(self, tmp_path):
+    def test_dataset_health_persisted_on_record(
+        self, tmp_path, exploratory_provenance_override,
+    ):
         dh = {"report_dir": "/x/reports", "profile": "full", "split": "train"}
         record = self._record(tmp_path, dataset_health=dh)
         assert record.dataset_health == dh
 
-    def test_empty_dataset_health_leaves_default(self, tmp_path):
+    def test_empty_dataset_health_leaves_default(
+        self, tmp_path, exploratory_provenance_override,
+    ):
         record = self._record(tmp_path, dataset_health={})
         assert record.dataset_health == {}
 
-    def test_no_dataset_analysis_stage_leaves_default(self, tmp_path):
+    def test_no_dataset_analysis_stage_leaves_default(
+        self, tmp_path, exploratory_provenance_override,
+    ):
         record = self._record(tmp_path, include_da=False)
+        assert record.dataset_health == {}
+
+
+# --------------------------------------------------------------------------
+# NEGATIVE CONTROL — the untracked-source guard opted out of above is ARMED
+# --------------------------------------------------------------------------
+class TestUntrackedSourceGuardIsLive:
+    """Three tests in this file take ``exploratory_provenance_override``.
+
+    Rationale for the override lives ONCE, in the fixture's docstring at
+    ``tests/conftest.py``. This class is the other half of that bargain:
+    without it, taking the override would be indistinguishable from having
+    DELETED the guard (hft-contracts ``2ecbfcc``), and a green file would be
+    the only evidence a future reader ever saw.
+
+    Bound to THIS file's own harness (``TestRecordExperimentDatasetHealthWire._record``)
+    so the arm also fails if the dataset-health wire starts passing
+    ``allow_untracked_source=True`` itself.
+    """
+
+    def test_record_wire_refuses_an_untracked_tree(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(ALLOW_UNTRACKED_SOURCE_ENV, raising=False)
+        with pytest.raises(UntrackedSourceError):
+            TestRecordExperimentDatasetHealthWire._record(tmp_path, dataset_health={})
+
+    def test_override_admits_the_same_call(
+        self, tmp_path, exploratory_provenance_override,
+    ):
+        """Matched positive — proves the arm above failed for the GUARD's
+        reason and not because ``_record`` is broken for every input."""
+        record = TestRecordExperimentDatasetHealthWire._record(
+            tmp_path, dataset_health={}
+        )
+        assert record is not None
         assert record.dataset_health == {}

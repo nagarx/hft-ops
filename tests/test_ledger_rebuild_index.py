@@ -19,6 +19,10 @@ import pytest
 from click.testing import CliRunner
 
 from hft_contracts.experiment_record import ExperimentRecord
+from hft_contracts.provenance import (
+    ALLOW_UNTRACKED_SOURCE_ENV,
+    UntrackedSourceError,
+)
 from hft_ops.cli import main
 from hft_ops.ledger import ExperimentLedger
 
@@ -206,7 +210,9 @@ class TestGateReportPersistedInRecord:
     integration point.
     """
 
-    def test_gate_report_lands_in_gate_reports(self, tmp_path: Path):
+    def test_gate_report_lands_in_gate_reports(
+        self, tmp_path: Path, exploratory_provenance_override,
+    ):
         """When post_training_gate ran, its serialized GateReport is
         stored under ``ExperimentRecord.gate_reports["post_training_gate"]``
         (Round 4 Option C design).
@@ -276,7 +282,9 @@ class TestGateReportPersistedInRecord:
         idx = record.index_entry()
         assert idx["gate_reports"]["post_training_gate"]["status"] == "pass"
 
-    def test_gate_report_absent_when_gate_not_run(self, tmp_path: Path):
+    def test_gate_report_absent_when_gate_not_run(
+        self, tmp_path: Path, exploratory_provenance_override,
+    ):
         """When post_training_gate was not in results (disabled / skipped),
         training_metrics does NOT contain the gate keys."""
         from hft_ops.cli import _record_experiment
@@ -305,3 +313,56 @@ class TestGateReportPersistedInRecord:
         assert "post_training_gate_summary" not in record.training_metrics
         # Training metrics preserved
         assert record.training_metrics["test_ic"] == 0.38
+
+
+# --------------------------------------------------------------------------
+# NEGATIVE CONTROL — the untracked-source guard opted out of above is ARMED
+# --------------------------------------------------------------------------
+class TestUntrackedSourceGuardIsLive:
+    """The two ``TestGateReportPersistedInRecord`` tests take
+    ``exploratory_provenance_override``.
+
+    Rationale for the override lives ONCE, in the fixture's docstring at
+    ``tests/conftest.py``. This class is the other half of that bargain:
+    without it, taking the override would be indistinguishable from having
+    DELETED the guard (hft-contracts ``2ecbfcc``), and a green file would be
+    the only evidence a future reader ever saw.
+
+    Bound to ``cli._record_experiment`` — the exact production entry point
+    those two tests drive — so the arm also fails if the orchestrator's
+    recording wire starts passing ``allow_untracked_source=True`` itself.
+    """
+
+    @staticmethod
+    def _record(tmp_path: Path):
+        from hft_ops.cli import _record_experiment
+        from hft_ops.manifest.schema import ExperimentHeader, ExperimentManifest
+        from hft_ops.paths import PipelinePaths
+        from hft_ops.stages.base import StageResult, StageStatus
+
+        training = StageResult(stage_name="training")
+        training.status = StageStatus.COMPLETED
+        training.captured_metrics = {"test_ic": 0.1}
+        return _record_experiment(
+            ExperimentManifest(experiment=ExperimentHeader(name="guard_probe")),
+            PipelinePaths(pipeline_root=tmp_path),
+            fingerprint="c" * 64,
+            results={"training": training},
+            total_duration=1.0,
+        )
+
+    def test_record_experiment_refuses_an_untracked_tree(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        monkeypatch.delenv(ALLOW_UNTRACKED_SOURCE_ENV, raising=False)
+        with pytest.raises(UntrackedSourceError):
+            self._record(tmp_path)
+
+    def test_override_admits_the_same_call(
+        self, tmp_path: Path, exploratory_provenance_override,
+    ):
+        """Matched positive — proves the arm above failed for the GUARD's
+        reason and not because ``_record_experiment`` is broken for every
+        input."""
+        experiment_id = self._record(tmp_path)
+        assert experiment_id

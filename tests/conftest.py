@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 import pytest
 import yaml
+from hft_contracts.provenance import ALLOW_UNTRACKED_SOURCE_ENV
 
 
 @pytest.fixture(autouse=True)
@@ -257,3 +258,67 @@ def sample_manifest_yaml(
     with open(manifest_path, "w") as f:
         yaml.dump(manifest, f, default_flow_style=False)
     return manifest_path
+
+
+# ---------------------------------------------------------------------------
+# STALE-TEST REPAIR — 2026-09-07 — the untracked-source provenance guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def exploratory_provenance_override(monkeypatch):
+    """Opt THIS test out of the ``build_provenance`` untracked-source guard.
+
+    THE GUARD BEING OPTED OUT OF
+        ``hft_contracts.provenance.build_provenance`` raises
+        :class:`~hft_contracts.provenance.UntrackedSourceError` when it cannot
+        identify the code that produced a record (hft-contracts ``2ecbfcc``,
+        2026-08-14, *"refuse to record an experiment whose code cannot be
+        identified"*). ``pytest``'s ``tmp_path`` lives under
+        ``/private/var/folders/.../pytest-of-<user>``, which is not a git
+        repository, so every test that drives a ledger WRITE trips it.
+
+        Unlike the sibling repair in ``lob-model-trainer`` — where
+        ``write_minimal_ledger_record`` swallows the exception per hft-rules §8
+        and the tests failed on ``assert record_path is not None`` — hft-ops
+        lets the error PROPAGATE: ``cli._record_experiment`` and
+        ``ledger.discovery_record.record_from_verdict`` call
+        ``record_from_artifacts`` → ``build_provenance`` with no except clause.
+        The 15 tests repaired here therefore failed with a raised
+        ``UntrackedSourceError``, not with a swallowed ``None``.
+
+    WHY TAKING THE HATCH IS LEGITIMATE HERE
+        The guard's own message names two remedies, and this is explicitly the
+        second: *"Deliberate override (exploratory runs)"*. A throwaway record
+        written into a tmpdir and deleted at teardown genuinely IS
+        un-re-derivable — and that is fine, because nothing will ever be
+        re-derived from it. The override is RECORDED at
+        ``provenance.allow_untracked_source`` in the emitted JSON, so the choice
+        is visible in the artifact rather than hidden in the harness. The
+        ``TestUntrackedSourceGuardIsLive`` negative control in
+        ``test_discovery_record.py`` asserts exactly that.
+
+    WHY NOT THE OTHER REMEDY (``pipeline_root=<a real git checkout>``)
+        It is the *preferred* fix for a PRODUCTION run and the WRONG one for a
+        unit test, on two grounds measured in the sibling repair
+        (``lob-model-trainer`` ``b94f462``):
+
+        1. It would stop testing a production line. Every repaired test here
+           passes ``pipeline_root=tmp_path`` precisely BECAUSE the record must
+           be isolated from the developer's checkout; redirecting it at a real
+           repo means the tmpdir-scoped ledger path is never exercised again —
+           the repair would BUY green by SELLING coverage.
+        2. It imports an unrelated failure mode. Pointing at the real checkout
+           binds unit tests to ambient git state: no ``.git`` (source tarball,
+           shallow CI export) or no ``git`` on PATH turns all 15 red again for
+           a reason that has nothing to do with ledger-record writing. That is
+           the same stale-test failure re-armed on a new trigger.
+
+    SCOPE
+        ``monkeypatch.setenv`` is function-scoped and auto-reverted, so the
+        hatch CANNOT leak into a negative control or any other test. This
+        fixture is deliberately NOT ``autouse`` — an opt-out must be visible in
+        the signature of every test that takes it.
+    """
+    monkeypatch.setenv(ALLOW_UNTRACKED_SOURCE_ENV, "1")
+    return ALLOW_UNTRACKED_SOURCE_ENV
